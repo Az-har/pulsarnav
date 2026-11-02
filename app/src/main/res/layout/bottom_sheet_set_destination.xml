@@ -15,7 +15,7 @@
         android:layout_gravity="center_horizontal"
         android:layout_marginBottom="18dp"
         android:background="@drawable/pill_badge"
-        android:backgroundTint="#33333F" />
+        android:backgroundTint="@color/surface_border" />
 
     <!-- Header Row -->
     <LinearLayout
@@ -29,7 +29,7 @@
             android:layout_width="44dp"
             android:layout_height="44dp"
             android:background="@drawable/circle_dot"
-            android:backgroundTint="#201F28"
+            android:backgroundTint="@color/surface_elevated"
             android:padding="10dp"
             android:src="@drawable/ic_home"
             app:tint="@color/wine_red_light" />
@@ -67,7 +67,7 @@
         android:layout_marginVertical="16dp"
         android:background="@color/surface_border_subtle" />
 
-    <!-- Option 1: Google Maps Saved Home/Work -->
+    <!-- Option 1: Saved Home/Work -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/cardOptionMapsSaved"
         android:layout_width="match_parent"
@@ -75,7 +75,7 @@
         android:layout_marginBottom="12dp"
         android:clickable="true"
         android:focusable="true"
-        app:cardBackgroundColor="#1A1922"
+        app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp"
         app:cardElevation="0dp"
         app:strokeColor="@color/surface_border"
@@ -90,14 +90,14 @@
             android:paddingHorizontal="16dp"
             android:paddingVertical="12dp">
 
-            <TextView
+            <ImageView
                 android:layout_width="38dp"
                 android:layout_height="38dp"
                 android:background="@drawable/circle_dot"
-                android:backgroundTint="#262534"
-                android:gravity="center"
-                android:text="⭐"
-                android:textSize="18sp" />
+                android:backgroundTint="@color/surface_elevated"
+                android:padding="9dp"
+                android:src="@drawable/ic_navigation"
+                app:tint="@color/text_primary" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -127,11 +127,11 @@
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
                         android:background="@drawable/pill_badge"
-                        android:backgroundTint="#1B3322"
+                        android:backgroundTint="@color/surface_elevated"
                         android:paddingHorizontal="6dp"
                         android:paddingVertical="2dp"
                         android:text="RECOMMENDED"
-                        android:textColor="#34D399"
+                        android:textColor="@color/status_connected"
                         android:textSize="9sp"
                         android:textStyle="bold" />
                 </LinearLayout>
@@ -140,7 +140,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="Zero typing. Deep links directly to your Google account favorite"
+                    android:text="Zero typing. Deep links directly to your saved favourite"
                     android:textColor="@color/text_tertiary"
                     android:textSize="11sp" />
             </LinearLayout>
@@ -155,7 +155,7 @@
         android:layout_marginBottom="16dp"
         android:clickable="true"
         android:focusable="true"
-        app:cardBackgroundColor="#1A1922"
+        app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp"
         app:cardElevation="0dp"
         app:strokeColor="@color/surface_border"
@@ -170,14 +170,14 @@
             android:paddingHorizontal="16dp"
             android:paddingVertical="12dp">
 
-            <TextView
+            <ImageView
                 android:layout_width="38dp"
                 android:layout_height="38dp"
                 android:background="@drawable/circle_dot"
-                android:backgroundTint="#262534"
-                android:gravity="center"
-                android:text=""
-                android:textSize="18sp" />
+                android:backgroundTint="@color/surface_elevated"
+                android:padding="9dp"
+                android:src="@drawable/ic_search"
+                app:tint="@color/text_primary" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -211,7 +211,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="16dp"
-        app:cardBackgroundColor="#1A1922"
+        app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp"
         app:cardElevation="0dp"
         app:strokeColor="@color/surface_border"
@@ -229,14 +229,14 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <TextView
+                <ImageView
                     android:layout_width="38dp"
                     android:layout_height="38dp"
                     android:background="@drawable/circle_dot"
-                    android:backgroundTint="#262534"
-                    android:gravity="center"
-                    android:text=""
-                    android:textSize="18sp" />
+                    android:backgroundTint="@color/surface_elevated"
+                    android:padding="9dp"
+                    android:src="@drawable/ic_edit"
+                    app:tint="@color/text_primary" />
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -274,7 +274,7 @@
                 android:inputType="textPostalAddress|textCapSentences"
                 android:paddingHorizontal="16dp"
                 android:textColor="@color/text_primary"
-                android:textColorHint="#6B6A78"
+                android:textColorHint="@color/text_tertiary"
                 android:textSize="14sp" />
 
             <com.google.android.material.button.MaterialButton

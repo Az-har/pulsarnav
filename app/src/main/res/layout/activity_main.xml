@@ -1205,79 +1205,6 @@
                                 android:textColor="@color/status_connected"
                                 android:textSize="22sp"
                                 android:textStyle="bold" />
-
-                            <!-- Milestones Line -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="16dp"
-                                android:gravity="center_vertical"
-                                android:orientation="horizontal">
-
-                                <View
-                                    android:layout_width="12dp"
-                                    android:layout_height="12dp"
-                                    android:background="@drawable/circle_dot"
-                                    android:backgroundTint="@color/status_connected" />
-
-                                <View
-                                    android:layout_width="0dp"
-                                    android:layout_height="2dp"
-                                    android:layout_weight="1"
-                                    android:background="@color/status_connected" />
-
-                                <View
-                                    android:layout_width="12dp"
-                                    android:layout_height="12dp"
-                                    android:background="@drawable/circle_dot"
-                                    android:backgroundTint="@color/status_connected" />
-
-                                <View
-                                    android:layout_width="0dp"
-                                    android:layout_height="2dp"
-                                    android:layout_weight="1"
-                                    android:background="@color/surface_border" />
-
-                                <View
-                                    android:layout_width="12dp"
-                                    android:layout_height="12dp"
-                                    android:background="@drawable/circle_dot"
-                                    android:backgroundTint="@color/surface_border" />
-                            </LinearLayout>
-
-                            <!-- Milestone Labels -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="6dp"
-                                android:orientation="horizontal">
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:text="Buy a cool helmet"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="10sp" />
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:gravity="center"
-                                    android:text="Plan a Ladakh ride"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="10sp" />
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:gravity="end"
-                                    android:text="NS200 legend"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="10sp" />
-                            </LinearLayout>
                         </LinearLayout>
 
                         <!-- View All Riding Stats Action -->
@@ -1503,6 +1430,7 @@
                             </LinearLayout>
 
                             <TextView
+                                android:id="@+id/tvEditFuelPriceAction"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="Edit Price →"
@@ -1777,6 +1705,7 @@
                             android:orientation="horizontal">
 
                             <ImageView
+                                android:id="@+id/ivServiceHistoryIcon"
                                 android:layout_width="28dp"
                                 android:layout_height="28dp"
                                 android:src="@drawable/ic_trips"
@@ -2310,12 +2239,11 @@
                         android:padding="@dimen/card_padding">
 
                         <ImageView
-                            android:layout_width="48dp"
-                            android:layout_height="48dp"
-                            android:background="@drawable/rounded_box"
-                            android:padding="8dp"
+                            android:id="@+id/ivMyBikeIcon"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
                             android:src="@drawable/ic_motorcycle"
-                            app:tint="@color/text_primary" />
+                            app:tint="@color/wine_red_light" />
 
                         <LinearLayout
                             android:layout_width="0dp"
@@ -2527,6 +2455,7 @@
                             </LinearLayout>
 
                             <TextView
+                                android:id="@+id/tvVaultQrAction"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="Manage"
@@ -2585,6 +2514,7 @@
                             </LinearLayout>
 
                             <TextView
+                                android:id="@+id/tvVaultBackupAction"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="Backup"
@@ -3094,7 +3024,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:text="Bike-specific routes &amp; motorcycle ETA"
-                                    android:textColor="@color/wine_red_light"
+                                    android:textColor="@color/text_tertiary"
                                     android:textSize="11sp" />
                             </LinearLayout>
 

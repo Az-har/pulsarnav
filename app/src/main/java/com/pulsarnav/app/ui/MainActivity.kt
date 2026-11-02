@@ -1599,6 +1599,42 @@ class MainActivity : AppCompatActivity() {
             showEditDocumentDetailsDialog("puc", "Pollution Under Control (PUC)", appSettings.docPucCert, appSettings.docPucExpiry)
         }
 
+        // Apply theme to glovebox cards and action buttons
+        val docCards = listOf(
+            view.findViewById<MaterialCardView>(R.id.cardGloveboxRc),
+            view.findViewById<MaterialCardView>(R.id.cardGloveboxInsurance),
+            view.findViewById<MaterialCardView>(R.id.cardGloveboxPuc)
+        )
+        for (c in docCards) {
+            c?.setCardBackgroundColor(currentTheme.cardColor)
+            c?.strokeColor = currentTheme.cardBorderColor
+        }
+        val actionButtons = listOf(
+            view.findViewById<MaterialButton>(R.id.btnViewRc),
+            view.findViewById<MaterialButton>(R.id.btnViewInsurance),
+            view.findViewById<MaterialButton>(R.id.btnViewPuc)
+        )
+        for (btn in actionButtons) {
+            btn?.setTextColor(currentTheme.accentColor)
+            btn?.iconTint = ColorStateList.valueOf(currentTheme.accentColor)
+            btn?.strokeColor = ColorStateList.valueOf(currentTheme.borderColor)
+        }
+        val secondaryButtons = listOf(
+            view.findViewById<MaterialButton>(R.id.btnUploadRc),
+            view.findViewById<MaterialButton>(R.id.btnUploadInsurance),
+            view.findViewById<MaterialButton>(R.id.btnUploadPuc),
+            view.findViewById<MaterialButton>(R.id.btnEditRc),
+            view.findViewById<MaterialButton>(R.id.btnEditInsurance),
+            view.findViewById<MaterialButton>(R.id.btnEditPuc)
+        )
+        for (btn in secondaryButtons) {
+            btn?.strokeColor = ColorStateList.valueOf(currentTheme.cardBorderColor)
+        }
+        view.findViewById<MaterialButton>(R.id.btnGloveboxClose)?.apply {
+            backgroundTintList = ColorStateList.valueOf(currentTheme.primaryColor)
+            setTextColor(currentTheme.onPrimaryColor)
+        }
+
         view.findViewById<View>(R.id.btnGloveboxClose)?.setOnClickListener {
             sheet.dismiss()
         }
@@ -2197,10 +2233,12 @@ class MainActivity : AppCompatActivity() {
             binding.ivIconFuel,
             binding.ivFuelHeaderIcon,
             binding.ivServiceCenterIcon,
+            binding.ivServiceHistoryIcon,
             binding.ivRsaIcon,
             binding.ivManualIcon,
             binding.ivIssuesIcon,
             binding.ivProfileAvatar,
+            binding.ivMyBikeIcon,
             binding.ivGloveboxIcon,
             binding.ivVaultQrIcon,
             binding.ivVaultBackupIcon,
@@ -2376,6 +2414,7 @@ class MainActivity : AppCompatActivity() {
         // Support Tab
         binding.tvServiceCentersAction.setTextColor(theme.accentColor)
         binding.tvServiceHistoryAction.setTextColor(theme.accentColor)
+        binding.tvIssuesAction.setTextColor(theme.accentColor)
         binding.tvServiceRemaining.setTextColor(theme.accentColor)
         binding.progressService.setIndicatorColor(theme.primaryColor)
         binding.progressService.trackColor = theme.cardBorderColor
@@ -2395,9 +2434,21 @@ class MainActivity : AppCompatActivity() {
         binding.btnMarkChainLubed.strokeColor = ColorStateList.valueOf(theme.borderColor)
         binding.btnMarkChainLubed.setTextColor(theme.accentColor)
 
+        // Fuel Tab
         binding.btnAddFuel.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnAddFuel.strokeColor = ColorStateList.valueOf(theme.borderColor)
         binding.btnAddFuel.setTextColor(theme.accentColor)
+
+        val fuelPriceBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dpToPx(12).toFloat()
+            setColor(if (theme.isLight) Color.parseColor("#F1F3F7") else Color.parseColor("#1C1B20"))
+            setStroke(dpToPx(1), theme.cardBorderColor)
+        }
+        binding.rowFuelPriceSetting.background = fuelPriceBg
+        binding.tvFuelPriceTitle.setTextColor(theme.textPrimaryColor)
+        binding.tvFuelPriceCountrySubtitle.setTextColor(theme.textSecondaryColor)
+        binding.tvEditFuelPriceAction.setTextColor(theme.accentColor)
 
         // Account Tab
         binding.ivProfileAvatar.imageTintList = ColorStateList.valueOf(theme.accentColor)
@@ -2406,6 +2457,10 @@ class MainActivity : AppCompatActivity() {
         binding.btnSetupBikeModel.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnSetupBikeModel.setTextColor(theme.accentColor)
         binding.tvDocumentsBadge.setTextColor(theme.accentColor)
+        binding.tvVaultQrAction.setTextColor(theme.accentColor)
+        binding.tvVaultBackupAction.setTextColor(theme.accentColor)
+        binding.btnViewRideDetails.setTextColor(theme.textPrimaryColor)
+        binding.btnShareRide.imageTintList = ColorStateList.valueOf(theme.textPrimaryColor)
 
         binding.btnConfigHome.setTextColor(theme.accentColor)
         binding.btnConfigWork.setTextColor(theme.accentColor)
@@ -2712,11 +2767,10 @@ class MainActivity : AppCompatActivity() {
         val tvSheetMedicalNotes = sheetView.findViewById<TextView>(R.id.tvSheetMedicalNotes)
         val btnEditMedicalProfile = sheetView.findViewById<TextView>(R.id.btnEditMedicalProfile)
 
-        cardSos108?.strokeColor = currentTheme.cardBorderColor
-        cardSos112?.strokeColor = currentTheme.cardBorderColor
-        cardSosIce?.strokeColor = currentTheme.cardBorderColor
-        cardFindHospitals?.strokeColor = currentTheme.cardBorderColor
-        cardMedicalProfile?.strokeColor = currentTheme.cardBorderColor
+        listOf(cardSos108, cardSos112, cardSosIce, cardFindHospitals, cardMedicalProfile).forEach { card ->
+            card?.setCardBackgroundColor(currentTheme.cardColor)
+            card?.strokeColor = currentTheme.cardBorderColor
+        }
 
         val icePhone = appSettings.emergencyContactPhone
         val iceName = appSettings.emergencyContactName
@@ -3035,9 +3089,11 @@ class MainActivity : AppCompatActivity() {
 
         btnSaveCustom.backgroundTintList = ColorStateList.valueOf(currentTheme.primaryColor)
         btnSaveCustom.setTextColor(currentTheme.onPrimaryColor)
-        cardOptionMapsSaved.strokeColor = currentTheme.cardBorderColor
-        cardOptionPinGps.strokeColor = currentTheme.cardBorderColor
-        cardOptionCustom.strokeColor = currentTheme.cardBorderColor
+        ivIcon?.imageTintList = ColorStateList.valueOf(currentTheme.accentColor)
+        listOf(cardOptionMapsSaved, cardOptionPinGps, cardOptionCustom).forEach { card ->
+            card.setCardBackgroundColor(currentTheme.cardColor)
+            card.strokeColor = currentTheme.cardBorderColor
+        }
 
         cardOptionMapsSaved.setOnClickListener {
             provideHapticFeedback()
@@ -3290,6 +3346,9 @@ class MainActivity : AppCompatActivity() {
         val currSymbol = appSettings.currentCurrencySymbol
         binding.tvFuelPriceTitle.text = "Fuel Price: %s%.2f / L".format(currSymbol, appSettings.petrolPricePerLiter)
         binding.tvFuelPriceCountrySubtitle.text = "Tap to update default ${appSettings.currentCurrencyCode} rate"
+        binding.tvFuelPriceTitle.setTextColor(currentTheme.textPrimaryColor)
+        binding.tvFuelPriceCountrySubtitle.setTextColor(currentTheme.textSecondaryColor)
+        binding.tvEditFuelPriceAction.setTextColor(currentTheme.accentColor)
     }
 
     private fun showEditPetrolPriceDialog() {
@@ -3515,6 +3574,7 @@ class MainActivity : AppCompatActivity() {
             val bikeDisplayName = VehicleCatalog.getLocalizedBikeName(model, country)
 
             tvPreviewTitle?.text = "$bikeDisplayName Specs Preview"
+            tvPreviewTitle?.setTextColor(currentTheme.accentColor)
             tvPreviewEngine?.text = model.engineSpec
             tvPreviewFrontTire?.text = "${model.coldTireFrontPsiSolo} PSI (Solo) • ${model.coldTireFrontPsiPillion} PSI (Pillion)\n${model.tireFrontSize}"
             tvPreviewRearTire?.text = "${model.coldTireRearPsiSolo} PSI (Solo) • ${model.coldTireRearPsiPillion} PSI (Pillion)\n${model.tireRearSize}"
@@ -4187,7 +4247,7 @@ class MainActivity : AppCompatActivity() {
             binding.tvIssuesCountBadge.setTextColor(currentTheme.accentColor)
         } else {
             binding.tvIssuesCountBadge.text = "0 Pending"
-            binding.tvIssuesCountBadge.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_elevated))
+            binding.tvIssuesCountBadge.backgroundTintList = ColorStateList.valueOf(if (currentTheme.isLight) Color.parseColor("#EAECEF") else Color.parseColor("#2A2832"))
             binding.tvIssuesCountBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connected))
         }
     }
@@ -4198,14 +4258,14 @@ class MainActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 40, 48, 48)
-            setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.surface_card))
+            setBackgroundColor(currentTheme.cardColor)
         }
 
         val title = TextView(this).apply {
             text = "Bike Issues & Repair Checklist"
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
         }
         val subtitle = TextView(this).apply {
             text = "Track mechanical symptoms and parts needing attention before your next service."
@@ -4272,6 +4332,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 val chk = MaterialCheckBox(this).apply {
                     isChecked = issue.isResolved
+                    buttonTintList = ColorStateList.valueOf(currentTheme.accentColor)
                     setOnCheckedChangeListener { _, _ ->
                         provideHapticFeedback()
                         appSettings.toggleBikeIssue(issue.id)

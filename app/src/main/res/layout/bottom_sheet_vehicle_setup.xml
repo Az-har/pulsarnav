@@ -14,7 +14,7 @@
         android:layout_gravity="center_horizontal"
         android:layout_marginBottom="16dp"
         android:background="@drawable/pill_badge"
-        android:backgroundTint="#33333F" />
+        android:backgroundTint="@color/surface_border" />
 
     <TextView
         android:layout_width="wrap_content"
