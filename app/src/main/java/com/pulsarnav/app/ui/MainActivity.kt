@@ -208,6 +208,7 @@ class MainActivity : AppCompatActivity() {
         updateQuickNavButtons()
         updateFuelPriceUi()
         updateBikeIssuesSummary()
+        updateNavAppSelectionUi()
 
         binding.root.post {
             if (!appSettings.isSetupCompleted) {
@@ -250,6 +251,7 @@ class MainActivity : AppCompatActivity() {
         updateQuickNavButtons()
         updateFuelPriceUi()
         updateBikeIssuesSummary()
+        updateNavAppSelectionUi()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -1002,6 +1004,22 @@ class MainActivity : AppCompatActivity() {
         binding.rowVaultBackup.setOnClickListener {
             provideHapticFeedback()
             showDataVaultBottomSheet(openQrDirectly = false)
+        }
+
+        // Navigation Provider Preference in Account Tab
+        binding.btnNavChooseGmaps.setOnClickListener {
+            provideHapticFeedback()
+            appSettings.preferredNavApp = AppSettings.NAV_APP_GOOGLE_MAPS
+            updateNavAppSelectionUi()
+            updateQuickNavButtons()
+            showFeedback("Default navigation app set to Google Maps")
+        }
+        binding.btnNavChooseWaze.setOnClickListener {
+            provideHapticFeedback()
+            appSettings.preferredNavApp = AppSettings.NAV_APP_WAZE
+            updateNavAppSelectionUi()
+            updateQuickNavButtons()
+            showFeedback("Default navigation app set to Waze")
         }
     }
 
@@ -2299,6 +2317,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateNavAppSelectionUi() {
+        val isWaze = appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE
+        if (isWaze) {
+            binding.tvNavAppCurrentStatus.text = "Currently: Waze (Turn-by-turn routing active)"
+            binding.btnNavChooseWaze.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_subtle))
+            binding.btnNavChooseWaze.setTextColor(ContextCompat.getColor(this, R.color.wine_red_light))
+            binding.btnNavChooseWaze.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_border))
+
+            binding.btnNavChooseGmaps.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_elevated))
+            binding.btnNavChooseGmaps.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            binding.btnNavChooseGmaps.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_border))
+        } else {
+            binding.tvNavAppCurrentStatus.text = "Currently: Google Maps (Two-Wheeler routing active)"
+            binding.btnNavChooseGmaps.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_subtle))
+            binding.btnNavChooseGmaps.setTextColor(ContextCompat.getColor(this, R.color.wine_red_light))
+            binding.btnNavChooseGmaps.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_border))
+
+            binding.btnNavChooseWaze.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_elevated))
+            binding.btnNavChooseWaze.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            binding.btnNavChooseWaze.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_border))
+        }
+    }
+
     private fun updateQuickNavButtons() {
         val home = appSettings.homeAddress
         val work = appSettings.workAddress
@@ -2690,7 +2731,7 @@ class MainActivity : AppCompatActivity() {
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_set_destination, null)
         sheet.setContentView(sheetView)
 
-        val tvIcon = sheetView.findViewById<TextView>(R.id.tvSheetIcon)
+        val ivIcon = sheetView.findViewById<ImageView>(R.id.ivSheetIcon)
         val tvTitle = sheetView.findViewById<TextView>(R.id.tvSheetTitle)
         val tvOptionMapsTitle = sheetView.findViewById<TextView>(R.id.tvOptionMapsTitle)
         val cardOptionMapsSaved = sheetView.findViewById<MaterialCardView>(R.id.cardOptionMapsSaved)
@@ -2700,9 +2741,10 @@ class MainActivity : AppCompatActivity() {
         val btnSaveCustom = sheetView.findViewById<MaterialButton>(R.id.btnSaveCustomAddress)
         val btnDismiss = sheetView.findViewById<MaterialButton>(R.id.btnDismissSheet)
 
-        tvIcon.text = if (isHome) "Home" else "Work"
+        ivIcon?.setImageResource(if (isHome) R.drawable.ic_home else R.drawable.ic_work)
         tvTitle.text = "Set $label Destination"
-        tvOptionMapsTitle.text = "Google Maps Saved $label"
+        val isWaze = appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE
+        tvOptionMapsTitle.text = if (isWaze) "Waze Saved $label" else "Google Maps Saved $label"
 
         val current = if (isHome) appSettings.homeAddress else appSettings.workAddress
         if (current.isNotBlank() && current != "Home" && current != "Work") {
@@ -3241,6 +3283,7 @@ class MainActivity : AppCompatActivity() {
             updateHeroRangeDisplay()
             updateBikeInfoDisplay()
             updateQuickNavButtons()
+            updateNavAppSelectionUi()
             val bikeDisplayName = VehicleCatalog.getLocalizedBikeName(model, country)
             showFeedback("Configured for $bikeDisplayName (${country.name})")
             sheet.dismiss()

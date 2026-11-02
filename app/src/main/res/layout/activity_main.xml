@@ -445,11 +445,11 @@
                             android:gravity="center_vertical"
                             android:orientation="horizontal">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="22sp" />
+                            <ImageView
+                                android:layout_width="26dp"
+                                android:layout_height="26dp"
+                                android:src="@drawable/ic_warning_amber"
+                                app:tint="@color/amber_accent" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -556,12 +556,12 @@
                                 android:orientation="vertical"
                                 android:padding="6dp">
 
-                                <TextView
-                                    android:id="@+id/tvIconHome"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="INFO"
-                                    android:textSize="18sp" />
+                                <ImageView
+                                    android:id="@+id/ivIconHome"
+                                    android:layout_width="22dp"
+                                    android:layout_height="22dp"
+                                    android:src="@drawable/ic_home"
+                                    app:tint="@color/wine_red_light" />
 
                                 <TextView
                                     android:id="@+id/tvQuickHomeTitle"
@@ -598,12 +598,12 @@
                                 android:orientation="vertical"
                                 android:padding="6dp">
 
-                                <TextView
-                                    android:id="@+id/tvIconWork"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="INFO"
-                                    android:textSize="18sp" />
+                                <ImageView
+                                    android:id="@+id/ivIconWork"
+                                    android:layout_width="22dp"
+                                    android:layout_height="22dp"
+                                    android:src="@drawable/ic_work"
+                                    app:tint="@color/wine_red_light" />
 
                                 <TextView
                                     android:id="@+id/tvQuickWorkTitle"
@@ -640,11 +640,12 @@
                                 android:orientation="vertical"
                                 android:padding="6dp">
 
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="INFO"
-                                    android:textSize="18sp" />
+                                <ImageView
+                                    android:id="@+id/ivIconFuel"
+                                    android:layout_width="22dp"
+                                    android:layout_height="22dp"
+                                    android:src="@drawable/ic_fuel"
+                                    app:tint="@color/wine_red_light" />
 
                                 <TextView
                                     android:id="@+id/tvQuickFuelTitle"
@@ -1364,11 +1365,11 @@
                             android:gravity="center_vertical"
                             android:orientation="horizontal">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="22sp" />
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:src="@drawable/ic_fuel"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -1704,11 +1705,11 @@
                             android:gravity="center_vertical"
                             android:orientation="horizontal">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="24sp" />
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:src="@drawable/ic_service"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -1773,11 +1774,11 @@
                             android:gravity="center_vertical"
                             android:orientation="horizontal">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="24sp" />
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:src="@drawable/ic_trips"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -2096,11 +2097,11 @@
                             android:paddingHorizontal="16dp"
                             android:paddingVertical="10dp">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="20sp" />
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_phone_rsa"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -2152,11 +2153,11 @@
                             android:paddingHorizontal="16dp"
                             android:paddingVertical="10dp">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="20sp" />
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_book_manual"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -2398,11 +2399,11 @@
                             android:paddingHorizontal="16dp"
                             android:paddingVertical="8dp">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="18sp" />
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_health_shield"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -2455,11 +2456,11 @@
                             android:paddingHorizontal="16dp"
                             android:paddingVertical="8dp">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="18sp" />
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_vault_folder"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -2538,11 +2539,11 @@
                             android:paddingHorizontal="16dp"
                             android:paddingVertical="8dp">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="18sp" />
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_qr_code"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -2595,11 +2596,11 @@
                             android:paddingHorizontal="16dp"
                             android:paddingVertical="8dp">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="INFO"
-                                android:textSize="18sp" />
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_settings"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -2901,6 +2902,113 @@
                     </LinearLayout>
                 </HorizontalScrollView>
 
+                <!-- Default Navigation Provider Selection -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.06"
+                    android:text="DEFAULT NAVIGATION APP"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardNavPreference"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="@dimen/card_margin_bottom"
+                    app:cardBackgroundColor="@color/surface_card"
+                    app:cardCornerRadius="@dimen/card_corner_radius"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="@dimen/card_stroke_width">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="@dimen/card_padding">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_navigation"
+                                app:tint="@color/wine_red_light" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Turn-by-Turn Navigation App"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="14sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvNavAppCurrentStatus"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="Currently: Google Maps"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:orientation="horizontal">
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnNavChooseGmaps"
+                                android:layout_width="0dp"
+                                android:layout_height="@dimen/btn_height_secondary"
+                                android:layout_marginEnd="6dp"
+                                android:layout_weight="1"
+                                android:backgroundTint="@color/wine_red_subtle"
+                                android:letterSpacing="0.02"
+                                android:text="Google Maps"
+                                android:textColor="@color/wine_red_light"
+                                android:textSize="12sp"
+                                android:textStyle="bold"
+                                app:cornerRadius="@dimen/btn_corner_radius"
+                                app:strokeColor="@color/wine_red_border"
+                                app:strokeWidth="1dp" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnNavChooseWaze"
+                                android:layout_width="0dp"
+                                android:layout_height="@dimen/btn_height_secondary"
+                                android:layout_marginStart="6dp"
+                                android:layout_weight="1"
+                                android:backgroundTint="@color/surface_elevated"
+                                android:letterSpacing="0.02"
+                                android:text="Waze"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp"
+                                android:textStyle="bold"
+                                app:cornerRadius="@dimen/btn_corner_radius"
+                                app:strokeColor="@color/surface_border"
+                                app:strokeWidth="1dp" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
                 <!-- Modular Feature Toggles -->
                 <TextView
                     android:layout_width="wrap_content"
@@ -3139,14 +3247,14 @@
                             android:paddingHorizontal="4dp"
                             android:paddingVertical="8dp">
 
-                            <TextView
+                            <ImageView
                                 android:layout_width="38dp"
                                 android:layout_height="38dp"
                                 android:background="@drawable/circle_dot"
                                 android:backgroundTint="@color/surface_elevated"
-                                android:gravity="center"
-                                android:text="INFO"
-                                android:textSize="18sp" />
+                                android:padding="9dp"
+                                android:src="@drawable/ic_navigation"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
