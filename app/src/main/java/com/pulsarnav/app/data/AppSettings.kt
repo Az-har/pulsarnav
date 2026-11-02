@@ -38,6 +38,7 @@ class AppSettings(context: Context) {
         const val KEY_WORK_ADDRESS = "quicknav_work_address"
 
         const val KEY_APP_THEME = "app_theme"
+        const val KEY_DARK_MODE = "is_dark_mode"
         const val KEY_PETROL_PRICE = "petrol_price_per_liter"
         const val KEY_LAST_BIKE_MAC = "last_connected_bike_mac"
         const val KEY_BIKE_ISSUES_JSON = "bike_issues_checklist_json"
@@ -181,6 +182,12 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_APP_THEME, THEME_WINE_RED) ?: THEME_WINE_RED
         set(value) {
             prefs.edit().putString(KEY_APP_THEME, value).apply()
+        }
+
+    var isDarkMode: Boolean
+        get() = prefs.getBoolean(KEY_DARK_MODE, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_DARK_MODE, value).apply()
         }
 
     var petrolPricePerLiter: Double

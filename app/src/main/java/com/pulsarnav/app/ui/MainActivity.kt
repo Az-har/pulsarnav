@@ -50,6 +50,7 @@ import java.util.Locale
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
@@ -81,10 +82,14 @@ data class CockpitTheme(
     val id: String,
     val name: String,
     val displayName: String,
+    val isLight: Boolean,
     val backgroundColor: Int,
     val surfaceColor: Int,
     val cardColor: Int,
     val cardBorderColor: Int,
+    val textPrimaryColor: Int,
+    val textSecondaryColor: Int,
+    val textTertiaryColor: Int,
     val primaryColor: Int,
     val onPrimaryColor: Int,
     val accentColor: Int,
@@ -105,7 +110,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fuelLogManager: FuelLogManager
     private lateinit var mediaControlManager: MediaControlManager
 
-    private var currentTheme: CockpitTheme = getThemeDefinition(AppSettings.THEME_WINE_RED)
+    private var currentTheme: CockpitTheme = getThemeDefinition(AppSettings.THEME_WINE_RED, isLightMode = false)
 
     private var pendingDocType: String? = null
     private var activeGloveboxSheet: BottomSheetDialog? = null
@@ -146,6 +151,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        appSettings = AppSettings.getInstance(this)
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+            if (appSettings.isDarkMode) androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+            else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+        )
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -164,7 +174,6 @@ class MainActivity : AppCompatActivity() {
         bleManager = BajajBleManager.getInstance(this)
         callManager = CallManager.getInstance(this)
         telemetryManager = PhoneTelemetryManager.getInstance(this)
-        appSettings = AppSettings.getInstance(this)
         parkingManager = ParkingManager.getInstance(this)
         rideTracker = RideTracker.getInstance(this)
         maintenanceManager = MaintenanceManager.getInstance(this)
@@ -178,6 +187,7 @@ class MainActivity : AppCompatActivity() {
         updateBikeInfoDisplay()
         updateDocumentsSummary()
         updateServiceHistorySummary()
+        updateNavAppSelectionUi()
         updateHeroRangeDisplay()
         updateEmergencyHomeCard()
         updateOwnershipDays()
@@ -920,11 +930,6 @@ class MainActivity : AppCompatActivity() {
             showSupportIssueDialog()
         }
 
-        // True Health
-        binding.rowTrueHealth.setOnClickListener {
-            provideHapticFeedback()
-            showTrueHealthDialog()
-        }
 
         // Digital Glovebox Documents & Uploads
         binding.rowDocuments.setOnClickListener {
@@ -1881,18 +1886,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun showTrueHealthDialog() {
-        val sheet = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
-        val view = layoutInflater.inflate(R.layout.bottom_sheet_true_health, null)
-        sheet.setContentView(view)
-
-        view.findViewById<View>(R.id.btnTrueHealthClose)?.setOnClickListener {
-            provideHapticFeedback()
-            sheet.dismiss()
-        }
-
-        sheet.show()
-    }
 
     private fun setupFeatureToggles() {
         // Two-Wheeler Mode Switch
@@ -1956,84 +1949,231 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun getThemeDefinition(themeKey: String): CockpitTheme {
-        return when (themeKey) {
-            AppSettings.THEME_AMOLED -> CockpitTheme(
-                AppSettings.THEME_AMOLED, "AMOLED Black", "AMOLED Black",
-                backgroundColor = Color.parseColor("#000000"),
-                surfaceColor = Color.parseColor("#000000"),
-                cardColor = Color.parseColor("#0B0B0E"),
-                cardBorderColor = Color.parseColor("#262630"),
-                primaryColor = Color.parseColor("#FFFFFF"),
-                onPrimaryColor = Color.BLACK,
-                accentColor = Color.parseColor("#FFFFFF"),
-                subtleColor = Color.parseColor("#141418"),
-                borderColor = Color.parseColor("#383844")
-            )
-            AppSettings.THEME_STEALTH -> CockpitTheme(
-                AppSettings.THEME_STEALTH, "Stealth Mono", "⬛ Stealth Mono",
-                backgroundColor = Color.parseColor("#131215"),
-                surfaceColor = Color.parseColor("#1C1B20"),
-                cardColor = Color.parseColor("#222128"),
-                cardBorderColor = Color.parseColor("#32303B"),
-                primaryColor = Color.parseColor("#475569"),
-                onPrimaryColor = Color.WHITE,
-                accentColor = Color.parseColor("#94A3B8"),
-                subtleColor = Color.parseColor("#1E293B"),
-                borderColor = Color.parseColor("#334155")
-            )
-            AppSettings.THEME_AMBER -> CockpitTheme(
-                AppSettings.THEME_AMBER, "Neon Amber", "Neon Amber",
-                backgroundColor = Color.parseColor("#131215"),
-                surfaceColor = Color.parseColor("#1C1B20"),
-                cardColor = Color.parseColor("#222128"),
-                cardBorderColor = Color.parseColor("#32303B"),
-                primaryColor = Color.parseColor("#D97706"),
-                onPrimaryColor = Color.WHITE,
-                accentColor = Color.parseColor("#F59E0B"),
-                subtleColor = Color.parseColor("#2E1E08"),
-                borderColor = Color.parseColor("#5C3D10")
-            )
-            AppSettings.THEME_MINT -> CockpitTheme(
-                AppSettings.THEME_MINT, "Hyper Mint", "Hyper Mint",
-                backgroundColor = Color.parseColor("#131215"),
-                surfaceColor = Color.parseColor("#1C1B20"),
-                cardColor = Color.parseColor("#222128"),
-                cardBorderColor = Color.parseColor("#32303B"),
-                primaryColor = Color.parseColor("#059669"),
-                onPrimaryColor = Color.WHITE,
-                accentColor = Color.parseColor("#10B981"),
-                subtleColor = Color.parseColor("#0D2E21"),
-                borderColor = Color.parseColor("#134E35")
-            )
-            AppSettings.THEME_BLUE -> CockpitTheme(
-                AppSettings.THEME_BLUE, "Liquid Blue", "Liquid Blue",
-                backgroundColor = Color.parseColor("#131215"),
-                surfaceColor = Color.parseColor("#1C1B20"),
-                cardColor = Color.parseColor("#222128"),
-                cardBorderColor = Color.parseColor("#32303B"),
-                primaryColor = Color.parseColor("#0284C7"),
-                onPrimaryColor = Color.WHITE,
-                accentColor = Color.parseColor("#38BDF8"),
-                subtleColor = Color.parseColor("#0C253B"),
-                borderColor = Color.parseColor("#144566")
-            )
-            else -> CockpitTheme(
-                AppSettings.THEME_WINE_RED, "Wine Red", "Wine Red",
-                backgroundColor = Color.parseColor("#131215"),
-                surfaceColor = Color.parseColor("#1C1B20"),
-                cardColor = Color.parseColor("#222128"),
-                cardBorderColor = Color.parseColor("#32303B"),
-                primaryColor = Color.parseColor("#9E1B32"),
-                onPrimaryColor = Color.WHITE,
-                accentColor = Color.parseColor("#C92A45"),
-                subtleColor = Color.parseColor("#2C1218"),
-                borderColor = Color.parseColor("#541B26")
-            )
+    private fun getThemeDefinition(themeKey: String, isLightMode: Boolean? = null): CockpitTheme {
+        val isLight = isLightMode ?: if (::appSettings.isInitialized) !appSettings.isDarkMode else false
+        return if (isLight) {
+            when (themeKey) {
+                AppSettings.THEME_AMOLED -> CockpitTheme(
+                    AppSettings.THEME_AMOLED, "Pearl Minimal", "Pearl Minimal",
+                    isLight = true,
+                    backgroundColor = Color.parseColor("#F4F5F8"),
+                    surfaceColor = Color.parseColor("#FFFFFF"),
+                    cardColor = Color.parseColor("#FFFFFF"),
+                    cardBorderColor = Color.parseColor("#E2E8F0"),
+                    textPrimaryColor = Color.parseColor("#0F172A"),
+                    textSecondaryColor = Color.parseColor("#475569"),
+                    textTertiaryColor = Color.parseColor("#64748B"),
+                    primaryColor = Color.parseColor("#0F172A"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#0F172A"),
+                    subtleColor = Color.parseColor("#F1F5F9"),
+                    borderColor = Color.parseColor("#CBD5E1")
+                )
+                AppSettings.THEME_STEALTH -> CockpitTheme(
+                    AppSettings.THEME_STEALTH, "Stealth Platinum", "Stealth Platinum",
+                    isLight = true,
+                    backgroundColor = Color.parseColor("#F4F5F8"),
+                    surfaceColor = Color.parseColor("#FFFFFF"),
+                    cardColor = Color.parseColor("#FFFFFF"),
+                    cardBorderColor = Color.parseColor("#E2E8F0"),
+                    textPrimaryColor = Color.parseColor("#0F172A"),
+                    textSecondaryColor = Color.parseColor("#475569"),
+                    textTertiaryColor = Color.parseColor("#64748B"),
+                    primaryColor = Color.parseColor("#334155"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#334155"),
+                    subtleColor = Color.parseColor("#F1F5F9"),
+                    borderColor = Color.parseColor("#CBD5E1")
+                )
+                AppSettings.THEME_AMBER -> CockpitTheme(
+                    AppSettings.THEME_AMBER, "Neon Amber", "Neon Amber",
+                    isLight = true,
+                    backgroundColor = Color.parseColor("#F4F5F8"),
+                    surfaceColor = Color.parseColor("#FFFFFF"),
+                    cardColor = Color.parseColor("#FFFFFF"),
+                    cardBorderColor = Color.parseColor("#E2E8F0"),
+                    textPrimaryColor = Color.parseColor("#0F172A"),
+                    textSecondaryColor = Color.parseColor("#475569"),
+                    textTertiaryColor = Color.parseColor("#64748B"),
+                    primaryColor = Color.parseColor("#D97706"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#B45309"),
+                    subtleColor = Color.parseColor("#FEF3C7"),
+                    borderColor = Color.parseColor("#FDE68A")
+                )
+                AppSettings.THEME_MINT -> CockpitTheme(
+                    AppSettings.THEME_MINT, "Hyper Mint", "Hyper Mint",
+                    isLight = true,
+                    backgroundColor = Color.parseColor("#F4F5F8"),
+                    surfaceColor = Color.parseColor("#FFFFFF"),
+                    cardColor = Color.parseColor("#FFFFFF"),
+                    cardBorderColor = Color.parseColor("#E2E8F0"),
+                    textPrimaryColor = Color.parseColor("#0F172A"),
+                    textSecondaryColor = Color.parseColor("#475569"),
+                    textTertiaryColor = Color.parseColor("#64748B"),
+                    primaryColor = Color.parseColor("#059669"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#047857"),
+                    subtleColor = Color.parseColor("#ECFDF5"),
+                    borderColor = Color.parseColor("#A7F3D0")
+                )
+                AppSettings.THEME_BLUE -> CockpitTheme(
+                    AppSettings.THEME_BLUE, "Liquid Blue", "Liquid Blue",
+                    isLight = true,
+                    backgroundColor = Color.parseColor("#F4F5F8"),
+                    surfaceColor = Color.parseColor("#FFFFFF"),
+                    cardColor = Color.parseColor("#FFFFFF"),
+                    cardBorderColor = Color.parseColor("#E2E8F0"),
+                    textPrimaryColor = Color.parseColor("#0F172A"),
+                    textSecondaryColor = Color.parseColor("#475569"),
+                    textTertiaryColor = Color.parseColor("#64748B"),
+                    primaryColor = Color.parseColor("#0284C7"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#0369A1"),
+                    subtleColor = Color.parseColor("#F0F9FF"),
+                    borderColor = Color.parseColor("#BAE6FD")
+                )
+                else -> CockpitTheme(
+                    AppSettings.THEME_WINE_RED, "Wine Red", "Wine Red",
+                    isLight = true,
+                    backgroundColor = Color.parseColor("#F4F5F8"),
+                    surfaceColor = Color.parseColor("#FFFFFF"),
+                    cardColor = Color.parseColor("#FFFFFF"),
+                    cardBorderColor = Color.parseColor("#E2E8F0"),
+                    textPrimaryColor = Color.parseColor("#0F172A"),
+                    textSecondaryColor = Color.parseColor("#475569"),
+                    textTertiaryColor = Color.parseColor("#64748B"),
+                    primaryColor = Color.parseColor("#9E1B32"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#9E1B32"),
+                    subtleColor = Color.parseColor("#FDF2F4"),
+                    borderColor = Color.parseColor("#F8D7DA")
+                )
+            }
+        } else {
+            when (themeKey) {
+                AppSettings.THEME_AMOLED -> CockpitTheme(
+                    AppSettings.THEME_AMOLED, "AMOLED Black", "AMOLED Black",
+                    isLight = false,
+                    backgroundColor = Color.parseColor("#000000"),
+                    surfaceColor = Color.parseColor("#000000"),
+                    cardColor = Color.parseColor("#0B0B0E"),
+                    cardBorderColor = Color.parseColor("#262630"),
+                    textPrimaryColor = Color.parseColor("#F8FAFC"),
+                    textSecondaryColor = Color.parseColor("#A5A4AF"),
+                    textTertiaryColor = Color.parseColor("#72707D"),
+                    primaryColor = Color.parseColor("#FFFFFF"),
+                    onPrimaryColor = Color.BLACK,
+                    accentColor = Color.parseColor("#FFFFFF"),
+                    subtleColor = Color.parseColor("#141418"),
+                    borderColor = Color.parseColor("#383844")
+                )
+                AppSettings.THEME_STEALTH -> CockpitTheme(
+                    AppSettings.THEME_STEALTH, "Stealth Mono", "Stealth Mono",
+                    isLight = false,
+                    backgroundColor = Color.parseColor("#131215"),
+                    surfaceColor = Color.parseColor("#1C1B20"),
+                    cardColor = Color.parseColor("#222128"),
+                    cardBorderColor = Color.parseColor("#32303B"),
+                    textPrimaryColor = Color.parseColor("#F7F7F8"),
+                    textSecondaryColor = Color.parseColor("#A5A4AF"),
+                    textTertiaryColor = Color.parseColor("#72707D"),
+                    primaryColor = Color.parseColor("#475569"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#94A3B8"),
+                    subtleColor = Color.parseColor("#1E293B"),
+                    borderColor = Color.parseColor("#334155")
+                )
+                AppSettings.THEME_AMBER -> CockpitTheme(
+                    AppSettings.THEME_AMBER, "Neon Amber", "Neon Amber",
+                    isLight = false,
+                    backgroundColor = Color.parseColor("#131215"),
+                    surfaceColor = Color.parseColor("#1C1B20"),
+                    cardColor = Color.parseColor("#222128"),
+                    cardBorderColor = Color.parseColor("#32303B"),
+                    textPrimaryColor = Color.parseColor("#F7F7F8"),
+                    textSecondaryColor = Color.parseColor("#A5A4AF"),
+                    textTertiaryColor = Color.parseColor("#72707D"),
+                    primaryColor = Color.parseColor("#D97706"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#F59E0B"),
+                    subtleColor = Color.parseColor("#2E1E08"),
+                    borderColor = Color.parseColor("#5C3D10")
+                )
+                AppSettings.THEME_MINT -> CockpitTheme(
+                    AppSettings.THEME_MINT, "Hyper Mint", "Hyper Mint",
+                    isLight = false,
+                    backgroundColor = Color.parseColor("#131215"),
+                    surfaceColor = Color.parseColor("#1C1B20"),
+                    cardColor = Color.parseColor("#222128"),
+                    cardBorderColor = Color.parseColor("#32303B"),
+                    textPrimaryColor = Color.parseColor("#F7F7F8"),
+                    textSecondaryColor = Color.parseColor("#A5A4AF"),
+                    textTertiaryColor = Color.parseColor("#72707D"),
+                    primaryColor = Color.parseColor("#059669"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#10B981"),
+                    subtleColor = Color.parseColor("#0D2E21"),
+                    borderColor = Color.parseColor("#134E35")
+                )
+                AppSettings.THEME_BLUE -> CockpitTheme(
+                    AppSettings.THEME_BLUE, "Liquid Blue", "Liquid Blue",
+                    isLight = false,
+                    backgroundColor = Color.parseColor("#131215"),
+                    surfaceColor = Color.parseColor("#1C1B20"),
+                    cardColor = Color.parseColor("#222128"),
+                    cardBorderColor = Color.parseColor("#32303B"),
+                    textPrimaryColor = Color.parseColor("#F7F7F8"),
+                    textSecondaryColor = Color.parseColor("#A5A4AF"),
+                    textTertiaryColor = Color.parseColor("#72707D"),
+                    primaryColor = Color.parseColor("#0284C7"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#38BDF8"),
+                    subtleColor = Color.parseColor("#0C253B"),
+                    borderColor = Color.parseColor("#144566")
+                )
+                else -> CockpitTheme(
+                    AppSettings.THEME_WINE_RED, "Wine Red", "Wine Red",
+                    isLight = false,
+                    backgroundColor = Color.parseColor("#131215"),
+                    surfaceColor = Color.parseColor("#1C1B20"),
+                    cardColor = Color.parseColor("#222128"),
+                    cardBorderColor = Color.parseColor("#32303B"),
+                    textPrimaryColor = Color.parseColor("#F7F7F8"),
+                    textSecondaryColor = Color.parseColor("#A5A4AF"),
+                    textTertiaryColor = Color.parseColor("#72707D"),
+                    primaryColor = Color.parseColor("#9E1B32"),
+                    onPrimaryColor = Color.WHITE,
+                    accentColor = Color.parseColor("#C92A45"),
+                    subtleColor = Color.parseColor("#2C1218"),
+                    borderColor = Color.parseColor("#541B26")
+                )
+            }
         }
     }
 
     private fun setupThemeSelector() {
+        binding.btnModeDark.setOnClickListener {
+            provideHapticFeedback()
+            if (!appSettings.isDarkMode) {
+                appSettings.isDarkMode = true
+                androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES)
+            } else {
+                applyTheme(appSettings.appTheme)
+                showFeedback("Dark mode active")
+            }
+        }
+        binding.btnModeLight.setOnClickListener {
+            provideHapticFeedback()
+            if (appSettings.isDarkMode) {
+                appSettings.isDarkMode = false
+                androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO)
+            } else {
+                applyTheme(appSettings.appTheme)
+                showFeedback("Light mode active")
+            }
+        }
+
         binding.cardThemeWineRed.setOnClickListener {
             provideHapticFeedback()
             applyTheme(AppSettings.THEME_WINE_RED)
@@ -2042,12 +2182,12 @@ class MainActivity : AppCompatActivity() {
         binding.cardThemeAmoled.setOnClickListener {
             provideHapticFeedback()
             applyTheme(AppSettings.THEME_AMOLED)
-            showFeedback("AMOLED Pure Black active")
+            showFeedback(if (appSettings.isDarkMode) "AMOLED Pure Black active" else "Pearl Minimal active")
         }
         binding.cardThemeStealth.setOnClickListener {
             provideHapticFeedback()
             applyTheme(AppSettings.THEME_STEALTH)
-            showFeedback("⬛ Stealth Mono theme active")
+            showFeedback("Stealth Mono theme active")
         }
         binding.cardThemeAmber.setOnClickListener {
             provideHapticFeedback()
@@ -2072,12 +2212,16 @@ class MainActivity : AppCompatActivity() {
         appSettings.appTheme = themeKey
 
         // 1. System Navigation & Status Bars
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = theme.isLight
+            isAppearanceLightNavigationBars = theme.isLight
+        }
         window.statusBarColor = theme.backgroundColor
-        window.navigationBarColor = theme.backgroundColor
+        window.navigationBarColor = theme.surfaceColor
 
         // 2. Root Canvases, ScrollViews & Dividers
         binding.rootLayout.setBackgroundColor(theme.backgroundColor)
-        binding.layoutTopBar.setBackgroundColor(theme.backgroundColor)
+        binding.layoutTopBar.setBackgroundColor(theme.surfaceColor)
         binding.layoutContentFrame.setBackgroundColor(theme.backgroundColor)
         binding.scrollCockpit.setBackgroundColor(theme.backgroundColor)
         binding.scrollFuel.setBackgroundColor(theme.backgroundColor)
@@ -2085,6 +2229,51 @@ class MainActivity : AppCompatActivity() {
         binding.scrollSettings.setBackgroundColor(theme.backgroundColor)
         binding.scrollTrips.setBackgroundColor(theme.backgroundColor)
         binding.viewTopDivider.setBackgroundColor(theme.cardBorderColor)
+        binding.tvTopBarTitle.setTextColor(theme.textPrimaryColor)
+
+        // Appearance Mode Buttons
+        if (theme.isLight) {
+            binding.btnModeLight.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+            binding.btnModeLight.strokeColor = ColorStateList.valueOf(theme.accentColor)
+            binding.btnModeLight.setTextColor(theme.accentColor)
+            binding.btnModeLight.strokeWidth = dpToPx(2)
+
+            binding.btnModeDark.backgroundTintList = ColorStateList.valueOf(theme.cardColor)
+            binding.btnModeDark.strokeColor = ColorStateList.valueOf(theme.cardBorderColor)
+            binding.btnModeDark.setTextColor(theme.textSecondaryColor)
+            binding.btnModeDark.strokeWidth = dpToPx(1)
+        } else {
+            binding.btnModeDark.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+            binding.btnModeDark.strokeColor = ColorStateList.valueOf(theme.accentColor)
+            binding.btnModeDark.setTextColor(theme.accentColor)
+            binding.btnModeDark.strokeWidth = dpToPx(2)
+
+            binding.btnModeLight.backgroundTintList = ColorStateList.valueOf(theme.cardColor)
+            binding.btnModeLight.strokeColor = ColorStateList.valueOf(theme.cardBorderColor)
+            binding.btnModeLight.setTextColor(theme.textSecondaryColor)
+            binding.btnModeLight.strokeWidth = dpToPx(1)
+        }
+
+        // Themed Icons across all Tabs
+        val allThemedIcons = listOf(
+            binding.ivIconHome,
+            binding.ivIconWork,
+            binding.ivIconFuel,
+            binding.ivFuelHeaderIcon,
+            binding.ivServiceCenterIcon,
+            binding.ivRsaIcon,
+            binding.ivManualIcon,
+            binding.ivIssuesIcon,
+            binding.ivProfileAvatar,
+            binding.ivGloveboxIcon,
+            binding.ivVaultQrIcon,
+            binding.ivVaultBackupIcon,
+            binding.ivNavAppPrefIcon,
+            binding.ivInterceptorIcon
+        )
+        for (icon in allThemedIcons) {
+            icon.imageTintList = ColorStateList.valueOf(theme.accentColor)
+        }
 
         // 3. Content Cards across all Tabs
         val contentCards = listOf(
@@ -2106,9 +2295,12 @@ class MainActivity : AppCompatActivity() {
             binding.cardChainLube,
             binding.cardService,
             binding.cardSupportOptions,
+            binding.cardBikeIssues,
             binding.cardProfile,
             binding.cardMyBike,
             binding.cardOwnership,
+            binding.cardDataVault,
+            binding.cardNavPreference,
             binding.cardHudMirror,
             binding.cardCallerId,
             binding.cardToggles,
@@ -2155,9 +2347,20 @@ class MainActivity : AppCompatActivity() {
 
         binding.tvQuickHomeTitle.setTextColor(theme.accentColor)
         binding.tvQuickWorkTitle.setTextColor(theme.accentColor)
+        binding.tvQuickFuelTitle.setTextColor(theme.accentColor)
         binding.cardQuickHome.strokeColor = theme.borderColor
         binding.cardQuickWork.strokeColor = theme.borderColor
         binding.cardQuickFuel.strokeColor = theme.borderColor
+
+        val searchBg = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = dpToPx(14).toFloat()
+            setColor(if (theme.isLight) Color.parseColor("#FFFFFF") else Color.parseColor("#222128"))
+            setStroke(dpToPx(1), theme.cardBorderColor)
+        }
+        binding.layoutSearchBar.background = searchBg
+        binding.tvConnectionStatus.setTextColor(theme.textPrimaryColor)
+        binding.tvSubStatus.setTextColor(theme.textSecondaryColor)
 
         binding.layoutManeuverIcon.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.tvManeuverIcon.setTextColor(theme.accentColor)
@@ -2335,6 +2538,7 @@ class MainActivity : AppCompatActivity() {
             updateFuelList(fuelLogManager.entries.value)
         } catch (_: Exception) {}
 
+        updateNavAppSelectionUi()
         updateHeroRangeDisplay()
     }
 
@@ -2408,22 +2612,22 @@ class MainActivity : AppCompatActivity() {
         val isWaze = appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE
         if (isWaze) {
             binding.tvNavAppCurrentStatus.text = "Currently: Waze (Turn-by-turn routing active)"
-            binding.btnNavChooseWaze.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_subtle))
-            binding.btnNavChooseWaze.setTextColor(ContextCompat.getColor(this, R.color.wine_red_light))
-            binding.btnNavChooseWaze.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_border))
+            binding.btnNavChooseWaze.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
+            binding.btnNavChooseWaze.setTextColor(currentTheme.accentColor)
+            binding.btnNavChooseWaze.strokeColor = ColorStateList.valueOf(currentTheme.borderColor)
 
-            binding.btnNavChooseGmaps.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_elevated))
-            binding.btnNavChooseGmaps.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
-            binding.btnNavChooseGmaps.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_border))
+            binding.btnNavChooseGmaps.backgroundTintList = ColorStateList.valueOf(currentTheme.cardColor)
+            binding.btnNavChooseGmaps.setTextColor(currentTheme.textSecondaryColor)
+            binding.btnNavChooseGmaps.strokeColor = ColorStateList.valueOf(currentTheme.cardBorderColor)
         } else {
             binding.tvNavAppCurrentStatus.text = "Currently: Google Maps (Two-Wheeler routing active)"
-            binding.btnNavChooseGmaps.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_subtle))
-            binding.btnNavChooseGmaps.setTextColor(ContextCompat.getColor(this, R.color.wine_red_light))
-            binding.btnNavChooseGmaps.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_border))
+            binding.btnNavChooseGmaps.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
+            binding.btnNavChooseGmaps.setTextColor(currentTheme.accentColor)
+            binding.btnNavChooseGmaps.strokeColor = ColorStateList.valueOf(currentTheme.borderColor)
 
-            binding.btnNavChooseWaze.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_elevated))
-            binding.btnNavChooseWaze.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
-            binding.btnNavChooseWaze.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_border))
+            binding.btnNavChooseWaze.backgroundTintList = ColorStateList.valueOf(currentTheme.cardColor)
+            binding.btnNavChooseWaze.setTextColor(currentTheme.textSecondaryColor)
+            binding.btnNavChooseWaze.strokeColor = ColorStateList.valueOf(currentTheme.cardBorderColor)
         }
     }
 
@@ -2725,6 +2929,7 @@ class MainActivity : AppCompatActivity() {
         updateBikeInfoDisplay()
         updateDocumentsSummary()
         updateServiceHistorySummary()
+        updateNavAppSelectionUi()
         updateHeroRangeDisplay()
         updateEmergencyHomeCard()
         updateOwnershipDays()
@@ -3386,7 +3591,9 @@ class MainActivity : AppCompatActivity() {
                     is BleConnectionState.Disconnected -> {
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
                         binding.tvConnectionStatus.text = "Disconnected"
+                        binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
                         binding.tvSubStatus.text = "Auto-reconnects when ignition turns ON"
+                        binding.tvSubStatus.setTextColor(currentTheme.textSecondaryColor)
                         binding.btnScan.text = "Scan"
                         binding.btnScan.backgroundTintList = ColorStateList.valueOf(currentTheme.primaryColor)
                         binding.btnScan.setTextColor(currentTheme.onPrimaryColor)
@@ -3399,7 +3606,9 @@ class MainActivity : AppCompatActivity() {
                     is BleConnectionState.Scanning -> {
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_scanning)
                         binding.tvConnectionStatus.text = "Searching for bikes..."
+                        binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
                         binding.tvSubStatus.text = "Looking for Pulsar NS200 cluster"
+                        binding.tvSubStatus.setTextColor(currentTheme.textSecondaryColor)
                         binding.btnScan.text = "Stop"
                         binding.btnScan.backgroundTintList = ColorStateList.valueOf(currentTheme.primaryColor)
                         binding.btnScan.setTextColor(currentTheme.onPrimaryColor)
@@ -3412,7 +3621,9 @@ class MainActivity : AppCompatActivity() {
                     is BleConnectionState.Connecting -> {
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_scanning)
                         binding.tvConnectionStatus.text = "Connecting..."
+                        binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
                         binding.tvSubStatus.text = state.deviceName
+                        binding.tvSubStatus.setTextColor(currentTheme.textSecondaryColor)
                         binding.btnScan.text = "Cancel"
                         binding.btnScan.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
                         binding.btnScan.setTextColor(currentTheme.accentColor)
@@ -3424,7 +3635,9 @@ class MainActivity : AppCompatActivity() {
                     is BleConnectionState.Connected -> {
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_connected)
                         binding.tvConnectionStatus.text = "Connected • ${state.deviceName}"
+                        binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
                         binding.tvSubStatus.text = "Cluster synced (${state.address})"
+                        binding.tvSubStatus.setTextColor(currentTheme.textSecondaryColor)
                         binding.btnScan.text = "Disconnect"
                         binding.btnScan.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
                         binding.btnScan.setTextColor(currentTheme.accentColor)

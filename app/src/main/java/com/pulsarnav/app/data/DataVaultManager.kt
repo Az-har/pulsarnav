@@ -347,6 +347,11 @@ class DataVaultManager private constructor(private val context: Context) {
             put("th", settings.appTheme)
             put("ha", settings.homeAddress)
             put("wa", settings.workAddress)
+            put("pnav", settings.preferredNavApp)
+            put("mid", settings.selectedModelId)
+            put("cc", settings.selectedCountryCode)
+            put("fpr", settings.petrolPricePerLiter)
+            put("dm", settings.isDarkMode)
             put("odo", maintenanceManager.status.value.totalOdometerKm)
             put("dte", settings.projectedDteKm)
         }
@@ -401,6 +406,11 @@ class DataVaultManager private constructor(private val context: Context) {
             if (obj.has("th")) settings.appTheme = obj.getString("th")
             if (obj.has("ha")) settings.homeAddress = obj.getString("ha")
             if (obj.has("wa")) settings.workAddress = obj.getString("wa")
+            if (obj.has("pnav")) settings.preferredNavApp = obj.getString("pnav")
+            if (obj.has("mid")) settings.selectedModelId = obj.getString("mid")
+            if (obj.has("cc")) settings.selectedCountryCode = obj.getString("cc")
+            if (obj.has("fpr")) settings.petrolPricePerLiter = obj.getDouble("fpr")
+            if (obj.has("dm")) settings.isDarkMode = obj.getBoolean("dm")
 
             val odo = obj.optDouble("odo", -1.0)
             if (odo > 0) maintenanceManager.setOdometer(odo)

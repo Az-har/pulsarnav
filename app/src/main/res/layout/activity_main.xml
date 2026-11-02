@@ -1366,6 +1366,7 @@
                             android:orientation="horizontal">
 
                             <ImageView
+                                android:id="@+id/ivFuelHeaderIcon"
                                 android:layout_width="28dp"
                                 android:layout_height="28dp"
                                 android:src="@drawable/ic_fuel"
@@ -1706,6 +1707,7 @@
                             android:orientation="horizontal">
 
                             <ImageView
+                                android:id="@+id/ivServiceCenterIcon"
                                 android:layout_width="28dp"
                                 android:layout_height="28dp"
                                 android:src="@drawable/ic_service"
@@ -2023,6 +2025,14 @@
                             android:gravity="center_vertical"
                             android:orientation="horizontal">
 
+                            <ImageView
+                                android:id="@+id/ivIssuesIcon"
+                                android:layout_width="22dp"
+                                android:layout_height="22dp"
+                                android:layout_marginEnd="10dp"
+                                android:src="@drawable/ic_checklist"
+                                app:tint="@color/wine_red_light" />
+
                             <TextView
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
@@ -2098,6 +2108,7 @@
                             android:paddingVertical="10dp">
 
                             <ImageView
+                                android:id="@+id/ivRsaIcon"
                                 android:layout_width="24dp"
                                 android:layout_height="24dp"
                                 android:src="@drawable/ic_phone_rsa"
@@ -2154,6 +2165,7 @@
                             android:paddingVertical="10dp">
 
                             <ImageView
+                                android:id="@+id/ivManualIcon"
                                 android:layout_width="24dp"
                                 android:layout_height="24dp"
                                 android:src="@drawable/ic_book_manual"
@@ -2385,62 +2397,6 @@
                         android:layout_height="wrap_content"
                         android:orientation="vertical">
 
-                        <!-- True Health -->
-                        <LinearLayout
-                            android:id="@+id/rowTrueHealth"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:minHeight="56dp"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:foreground="?attr/selectableItemBackground"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal"
-                            android:paddingHorizontal="16dp"
-                            android:paddingVertical="8dp">
-
-                            <ImageView
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_health_shield"
-                                app:tint="@color/wine_red_light" />
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginStart="14dp"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="True Health"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="14sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="Coolant OK • Chain OK • Dual ABS Active"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Good"
-                                android:textColor="@color/status_connected"
-                                android:textSize="12sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-
-                        <View
-                            android:layout_width="match_parent"
-                            android:layout_height="1dp"
-                            android:background="@color/surface_border_subtle" />
 
                         <!-- Digital Glovebox Documents -->
                         <LinearLayout
@@ -2457,6 +2413,7 @@
                             android:paddingVertical="8dp">
 
                             <ImageView
+                                android:id="@+id/ivGloveboxIcon"
                                 android:layout_width="24dp"
                                 android:layout_height="24dp"
                                 android:src="@drawable/ic_vault_folder"
@@ -2540,6 +2497,7 @@
                             android:paddingVertical="8dp">
 
                             <ImageView
+                                android:id="@+id/ivVaultQrIcon"
                                 android:layout_width="24dp"
                                 android:layout_height="24dp"
                                 android:src="@drawable/ic_qr_code"
@@ -2597,6 +2555,7 @@
                             android:paddingVertical="8dp">
 
                             <ImageView
+                                android:id="@+id/ivVaultBackupIcon"
                                 android:layout_width="24dp"
                                 android:layout_height="24dp"
                                 android:src="@drawable/ic_settings"
@@ -2635,6 +2594,71 @@
                         </LinearLayout>
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
+
+                <!-- Light / Dark Appearance Mode Selection -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.06"
+                    android:text="DISPLAY APPEARANCE"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvAppearanceModeSubtext"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Switch between dark obsidian and daytime light mode"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="16dp"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnModeDark"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/btn_height_secondary"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="@color/surface_elevated"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:text="Dark Mode"
+                        android:textAllCaps="false"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="12dp"
+                        app:strokeColor="@color/wine_red_light"
+                        app:strokeWidth="1.5dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnModeLight"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/btn_height_secondary"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="@color/surface_card"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:text="Light Mode"
+                        android:textAllCaps="false"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="12dp"
+                        app:strokeColor="@color/surface_border"
+                        app:strokeWidth="1dp" />
+                </LinearLayout>
 
                 <!-- Cockpit Themes Selection -->
                 <TextView
@@ -2776,7 +2800,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="6dp"
-                                    android:text="⬛ Stealth Mono"
+                                    android:text="Stealth Mono"
                                     android:textColor="@color/text_primary"
                                     android:textSize="12sp"
                                     android:textStyle="bold" />
@@ -2937,6 +2961,7 @@
                             android:orientation="horizontal">
 
                             <ImageView
+                                android:id="@+id/ivNavAppPrefIcon"
                                 android:layout_width="24dp"
                                 android:layout_height="24dp"
                                 android:src="@drawable/ic_navigation"
@@ -3248,6 +3273,7 @@
                             android:paddingVertical="8dp">
 
                             <ImageView
+                                android:id="@+id/ivInterceptorIcon"
                                 android:layout_width="38dp"
                                 android:layout_height="38dp"
                                 android:background="@drawable/circle_dot"

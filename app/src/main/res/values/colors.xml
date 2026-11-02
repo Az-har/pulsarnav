@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Claude Aesthetic Deep Obsidian Palette -->
-    <color name="background">#131215</color>
-    <color name="surface">#1C1B20</color>
-    <color name="surface_card">#222128</color>
-    <color name="surface_elevated">#2A2832</color>
-    <color name="surface_border">#32303B</color>
-    <color name="surface_border_subtle">#26252F</color>
+    <!-- Daylight Surface Palette (Default / Light Mode) -->
+    <color name="background">#F4F5F8</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="surface_elevated">#EAECEF</color>
+    <color name="surface_border">#E2E8F0</color>
+    <color name="surface_border_subtle">#CBD5E1</color>
 
     <!-- Pulsar Glossy Wine Red Color System -->
     <color name="wine_red">#9E1B32</color>
@@ -50,10 +50,10 @@
     <color name="amoled_subtle">#141418</color>
     <color name="amoled_btn_border">#383844</color>
 
-    <!-- Claude Typography Hierarchy -->
-    <color name="text_primary">#F7F7F8</color>
-    <color name="text_secondary">#A5A4AF</color>
-    <color name="text_tertiary">#72707D</color>
+    <!-- Typography Hierarchy (Default / Light Mode) -->
+    <color name="text_primary">#0F172A</color>
+    <color name="text_secondary">#475569</color>
+    <color name="text_tertiary">#64748B</color>
 
     <!-- Status Accents -->
     <color name="status_connected">#22C55E</color>
