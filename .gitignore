@@ -39,6 +39,7 @@ proguard/
 # Keystore files
 *.jks
 *.keystore
+!app/keystore/pulsarnav-release.jks
 
 # Reverse-engineering / proprietary OEM bundles and decompiled assets
 *.bundle
