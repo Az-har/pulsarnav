@@ -2,6 +2,9 @@
 
 Turn-by-turn navigation bridge and companion app for Bajaj Pulsar and Dominar motorcycles.
 
+[![Download Latest APK](https://img.shields.io/github/v/release/nikhilmaity00/pulsarnav?label=Download%20APK&logo=android)](https://github.com/nikhilmaity00/pulsarnav/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > **Note**: This is a vibe-coded project built by a rider to solve real annoyances with the stock motorcycle cluster. Expect bugs, quirks, and rough edges. If something breaks or you want to improve it, feel free to open an issue or submit a pull request!
 
 ---
