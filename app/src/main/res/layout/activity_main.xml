@@ -1986,13 +1986,13 @@
                                 android:layout_width="0dp"
                                 android:layout_height="@dimen/btn_height_primary"
                                 android:layout_weight="1"
-                                android:backgroundTint="@color/wine_red_subtle"
+                                android:backgroundTint="@color/surface_card"
                                 android:text="Target ODO"
-                                android:textColor="@color/wine_red_light"
+                                android:textColor="@color/text_primary"
                                 android:textSize="12sp"
                                 android:textStyle="bold"
                                 app:cornerRadius="@dimen/btn_corner_radius"
-                                app:strokeColor="@color/wine_red_border"
+                                app:strokeColor="@color/surface_border"
                                 app:strokeWidth="@dimen/card_stroke_width" />
                         </LinearLayout>
                     </LinearLayout>
@@ -2051,7 +2051,7 @@
                                 android:paddingHorizontal="8dp"
                                 android:paddingVertical="3dp"
                                 android:text="0 Pending"
-                                android:textColor="@color/wine_red_light"
+                                android:textColor="@color/text_secondary"
                                 android:textSize="11sp"
                                 android:textStyle="bold" />
                         </LinearLayout>

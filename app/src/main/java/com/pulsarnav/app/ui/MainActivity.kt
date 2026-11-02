@@ -11,7 +11,10 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
+import androidx.core.graphics.ColorUtils
 import android.location.Location
 import android.location.LocationManager
 import android.net.Uri
@@ -189,6 +192,7 @@ class MainActivity : AppCompatActivity() {
         updateServiceHistorySummary()
         updateNavAppSelectionUi()
         updateHeroRangeDisplay()
+        updateBikeIssuesSummary()
         updateEmergencyHomeCard()
         updateOwnershipDays()
         setupStatsNavigation()
@@ -480,6 +484,7 @@ class MainActivity : AppCompatActivity() {
         val etDte = sheetView.findViewById<EditText>(R.id.etRecalibrateDte)
         val etOdo = sheetView.findViewById<EditText>(R.id.etRecalibrateOdo)
         val etFuel = sheetView.findViewById<EditText>(R.id.etRecalibrateFuelLiters)
+        listOfNotNull(etDte, etOdo, etFuel).forEach { applyThemeToEditText(it) }
         val chipReserve = sheetView.findViewById<MaterialButton>(R.id.chipPresetReserve)
         val chipQuarter = sheetView.findViewById<MaterialButton>(R.id.chipPresetQuarter)
         val chipHalf = sheetView.findViewById<MaterialButton>(R.id.chipPresetHalf)
@@ -1047,58 +1052,37 @@ class MainActivity : AppCompatActivity() {
         // Bike Name
         val tvNameLabel = TextView(this).apply {
             text = "Motorcycle Name / Nickname:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvNameLabel)
 
-        val etName = EditText(this).apply {
-            setText(appSettings.bikeName)
-            hint = "e.g. Pulsar NS200"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etName = createThemedEditText(hintText = "e.g. Pulsar NS200", initialText = appSettings.bikeName)
         layout.addView(etName)
 
         // Registration Number (Plate)
         val tvRegLabel = TextView(this).apply {
             text = "\nRegistration Number (Plate):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvRegLabel)
 
-        val etReg = EditText(this).apply {
-            setText(appSettings.bikeRegNumber)
-            hint = "e.g. MH02GC2593"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etReg = createThemedEditText(hintText = "e.g. MH02GC2593", initialText = appSettings.bikeRegNumber)
         layout.addView(etReg)
 
         // Model / Spec
         val tvSpecLabel = TextView(this).apply {
             text = "\nModel & Spec Details:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvSpecLabel)
 
-        val etSpec = EditText(this).apply {
-            setText(appSettings.bikeModelSpec)
-            hint = "e.g. BS6 DTS-i 4V Liquid-Cooled"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etSpec = createThemedEditText(hintText = "e.g. BS6 DTS-i 4V Liquid-Cooled", initialText = appSettings.bikeModelSpec)
         layout.addView(etSpec)
 
         val scrollView: View = ScrollView(this).apply { addView(layout) }
@@ -1143,39 +1127,28 @@ class MainActivity : AppCompatActivity() {
 
         val tvNameLabel = TextView(this).apply {
             text = "Rider Name:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvNameLabel)
 
-        val etName = EditText(this).apply {
-            setText(appSettings.riderName)
-            hint = "e.g. Alex Rider"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etName = createThemedEditText(hintText = "e.g. Alex Rider", initialText = appSettings.riderName)
         layout.addView(etName)
 
         val tvPhoneLabel = TextView(this).apply {
             text = "\nPhone Number:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvPhoneLabel)
 
-        val etPhone = EditText(this).apply {
-            setText(appSettings.riderPhone)
-            hint = "e.g. +91 98765 43210"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-            inputType = android.text.InputType.TYPE_CLASS_PHONE
-        }
+        val etPhone = createThemedEditText(
+            hintText = "e.g. +91 98765 43210",
+            initialText = appSettings.riderPhone,
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_PHONE
+        )
         layout.addView(etPhone)
 
         val scrollView: View = ScrollView(this).apply { addView(layout) }
@@ -1349,118 +1322,94 @@ class MainActivity : AppCompatActivity() {
         // Title
         val tvTitleLabel = TextView(this).apply {
             text = "Service Title / Type:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvTitleLabel)
 
-        val etTitle = EditText(this).apply {
-            setText(existing?.title ?: "Periodic Maintenance")
-            hint = "e.g. 4th Paid Service, Synthetic Oil Flush"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etTitle = createThemedEditText(
+            hintText = "e.g. 4th Paid Service, Synthetic Oil Flush",
+            initialText = existing?.title ?: "Periodic Maintenance"
+        )
         layout.addView(etTitle)
 
         // Date
         val tvDateLabel = TextView(this).apply {
             text = "\nService Date:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvDateLabel)
 
-        val etDate = EditText(this).apply {
-            val today = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
-            setText(existing?.date ?: today)
-            hint = "e.g. 29 Oct 2026"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val today = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
+        val etDate = createThemedEditText(
+            hintText = "e.g. 29 Oct 2026",
+            initialText = existing?.date ?: today
+        )
         layout.addView(etDate)
 
         // Odometer
         val currentOdo = maintenanceManager.status.value.totalOdometerKm
         val tvOdoLabel = TextView(this).apply {
             text = "\nOdometer Reading (km):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvOdoLabel)
 
-        val etOdo = EditText(this).apply {
-            setText(if (isEdit) "%.1f".format(existing!!.odoKm) else "%.1f".format(currentOdo))
-            hint = "e.g. 14250.0"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val etOdo = createThemedEditText(
+            hintText = "e.g. 14250.0",
+            initialText = if (isEdit) "%.1f".format(existing!!.odoKm) else "%.1f".format(currentOdo),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
         layout.addView(etOdo)
 
         // Workshop
         val tvWorkshopLabel = TextView(this).apply {
             text = "\nWorkshop / Service Center:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvWorkshopLabel)
 
-        val etWorkshop = EditText(this).apply {
-            setText(existing?.workshop ?: "Bajaj Authorized Service")
-            hint = "e.g. Bajaj Authorized Service"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etWorkshop = createThemedEditText(
+            hintText = "e.g. Bajaj Authorized Service",
+            initialText = existing?.workshop ?: "Bajaj Authorized Service"
+        )
         layout.addView(etWorkshop)
 
         // Cost
         val tvCostLabel = TextView(this).apply {
             text = "\nTotal Bill Cost (%s):".format(appSettings.currentCurrencySymbol)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvCostLabel)
 
-        val etCost = EditText(this).apply {
-            setText(existing?.cost ?: "%s0".format(appSettings.currentCurrencySymbol))
-            hint = "e.g. %s550".format(appSettings.currentCurrencySymbol)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etCost = createThemedEditText(
+            hintText = "e.g. %s550".format(appSettings.currentCurrencySymbol),
+            initialText = existing?.cost ?: "%s0".format(appSettings.currentCurrencySymbol)
+        )
         layout.addView(etCost)
 
         // Notes
         val tvNotesLabel = TextView(this).apply {
             text = "\nService Notes & Parts Replaced:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvNotesLabel)
 
-        val etNotes = EditText(this).apply {
-            setText(existing?.notes ?: "")
-            hint = "e.g. Synthetic oil replaced, chain slack adjusted, air filter cleaned"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etNotes = createThemedEditText(
+            hintText = "e.g. Synthetic oil replaced, chain slack adjusted, air filter cleaned",
+            initialText = existing?.notes ?: ""
+        )
         layout.addView(etNotes)
 
         val scrollView: View = ScrollView(this).apply { addView(layout) }
@@ -1668,38 +1617,25 @@ class MainActivity : AppCompatActivity() {
 
         val tvNumLabel = TextView(this).apply {
             text = if (docType == "insurance") "Policy Name / Number:" else "Document / Plate Number:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvNumLabel)
 
-        val etNum = EditText(this).apply {
-            setText(numberOrPolicy(docType))
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(30, 24, 30, 24)
-        }
+        val etNum = createThemedEditText(initialText = numberOrPolicy(docType))
         layout.addView(etNum)
 
         val etExpiry = if (expiryRequired(docType)) {
             val tvExpLabel = TextView(this).apply {
                 text = "\nExpiry Date:"
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+                setTextColor(currentTheme.textPrimaryColor)
                 textSize = 13f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
             }
             layout.addView(tvExpLabel)
 
-            val et = EditText(this).apply {
-                setText(currentExpiry ?: "")
-                hint = "e.g. 15 Nov 2027"
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-                setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-                setBackgroundResource(R.drawable.bg_obsidian_input)
-                setPadding(30, 24, 30, 24)
-            }
+            val et = createThemedEditText(hintText = "e.g. 15 Nov 2027", initialText = currentExpiry ?: "")
             layout.addView(et)
             et
         } else null
@@ -2447,6 +2383,10 @@ class MainActivity : AppCompatActivity() {
         binding.btnMarkServiced.strokeColor = ColorStateList.valueOf(theme.borderColor)
         binding.btnMarkServiced.setTextColor(theme.accentColor)
 
+        binding.btnSetServiceTarget.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+        binding.btnSetServiceTarget.strokeColor = ColorStateList.valueOf(theme.borderColor)
+        binding.btnSetServiceTarget.setTextColor(theme.accentColor)
+
         binding.tvChainRemaining.setTextColor(theme.accentColor)
         binding.progressChain.setIndicatorColor(theme.primaryColor)
         binding.progressChain.trackColor = theme.cardBorderColor
@@ -2540,6 +2480,54 @@ class MainActivity : AppCompatActivity() {
 
         updateNavAppSelectionUi()
         updateHeroRangeDisplay()
+        updateBikeIssuesSummary()
+    }
+
+    private fun createThemedInputDrawable(): Drawable {
+        val fillColor = if (currentTheme.isLight) Color.parseColor("#FFFFFF") else Color.parseColor("#1C1B20")
+        val normalBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dpToPx(12).toFloat()
+            setColor(fillColor)
+            setStroke(dpToPx(1), currentTheme.cardBorderColor)
+        }
+        val focusedBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dpToPx(12).toFloat()
+            setColor(fillColor)
+            setStroke(dpToPx(2), currentTheme.accentColor)
+        }
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), focusedBg)
+            addState(intArrayOf(), normalBg)
+        }
+    }
+
+    private fun applyThemeToEditText(editText: EditText) {
+        editText.setTextColor(currentTheme.textPrimaryColor)
+        editText.setHintTextColor(currentTheme.textTertiaryColor)
+        editText.highlightColor = ColorUtils.setAlphaComponent(currentTheme.accentColor, 60)
+        editText.background = createThemedInputDrawable()
+        editText.setPadding(dpToPx(14), dpToPx(12), dpToPx(14), dpToPx(12))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            editText.textCursorDrawable = null
+            editText.textSelectHandle?.setTint(currentTheme.accentColor)
+            editText.textSelectHandleLeft?.setTint(currentTheme.accentColor)
+            editText.textSelectHandleRight?.setTint(currentTheme.accentColor)
+        }
+    }
+
+    private fun createThemedEditText(
+        hintText: String? = null,
+        initialText: String? = null,
+        inputTypeFlags: Int? = null
+    ): EditText {
+        return EditText(this).apply {
+            if (!hintText.isNullOrEmpty()) hint = hintText
+            if (!initialText.isNullOrEmpty()) setText(initialText)
+            if (inputTypeFlags != null) inputType = inputTypeFlags
+            applyThemeToEditText(this)
+        }
     }
 
     private fun dpToPx(dp: Int): Int {
@@ -2931,6 +2919,7 @@ class MainActivity : AppCompatActivity() {
         updateServiceHistorySummary()
         updateNavAppSelectionUi()
         updateHeroRangeDisplay()
+        updateBikeIssuesSummary()
         updateEmergencyHomeCard()
         updateOwnershipDays()
         updateQuickNavButtons()
@@ -3030,6 +3019,7 @@ class MainActivity : AppCompatActivity() {
         val cardOptionPinGps = sheetView.findViewById<MaterialCardView>(R.id.cardOptionPinGps)
         val cardOptionCustom = sheetView.findViewById<MaterialCardView>(R.id.cardOptionCustom)
         val etCustom = sheetView.findViewById<EditText>(R.id.etCustomAddress)
+        etCustom?.let { applyThemeToEditText(it) }
         val btnSaveCustom = sheetView.findViewById<MaterialButton>(R.id.btnSaveCustomAddress)
         val btnDismiss = sheetView.findViewById<MaterialButton>(R.id.btnDismissSheet)
 
@@ -3111,15 +3101,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun showEditOdometerDialog() {
         val current = maintenanceManager.status.value.totalOdometerKm
-        val input = EditText(this).apply {
-            setText("%.1f".format(current))
-            hint = "Odometer in km"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(40, 30, 40, 30)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val input = createThemedEditText(
+            hintText = "Odometer in km",
+            initialText = "%.1f".format(current),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
         val container = FrameLayout(this).apply {
             setPadding(50, 30, 50, 10)
             addView(input)
@@ -3163,33 +3149,21 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 16)
         }
 
-        val odoInput = EditText(this).apply {
-            hint = "Current Odometer (km)"
-            setText("%.1f".format(currentOdo))
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        val costInput = EditText(this).apply {
-            hint = "Total Paid $currSymbol"
-            setText("500")
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        val litersInput = EditText(this).apply {
-            hint = "Fuel Litres"
-            setText("%.2f".format(500.0 / petrolRate))
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val odoInput = createThemedEditText(
+            hintText = "Current Odometer (km)",
+            initialText = "%.1f".format(currentOdo),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
+        val costInput = createThemedEditText(
+            hintText = "Total Paid $currSymbol",
+            initialText = "500",
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
+        val litersInput = createThemedEditText(
+            hintText = "Fuel Litres",
+            initialText = "%.2f".format(500.0 / petrolRate),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
 
         costInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
@@ -3320,14 +3294,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun showEditPetrolPriceDialog() {
         val currSymbol = appSettings.currentCurrencySymbol
-        val input = EditText(this).apply {
-            setText("%.2f".format(appSettings.petrolPricePerLiter))
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(40, 30, 40, 30)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val input = createThemedEditText(
+            hintText = "Price in $currSymbol",
+            initialText = "%.2f".format(appSettings.petrolPricePerLiter),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
         val container = FrameLayout(this).apply {
             setPadding(50, 30, 50, 10)
             addView(input)
@@ -4019,15 +3990,11 @@ class MainActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
             textSize = 11f
         }
-        val etTitle = EditText(this).apply {
-            setText(trip.routeTitle)
-            hint = "e.g. Work Commute"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        }
+        val etTitle = createThemedEditText(
+            hintText = "e.g. Work Commute",
+            initialText = trip.routeTitle,
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        )
         layout.addView(tvTitleLabel)
         layout.addView(etTitle)
 
@@ -4037,15 +4004,11 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f
             setPadding(0, 12, 0, 0)
         }
-        val etDistance = EditText(this).apply {
-            setText("%.1f".format(trip.distanceKm))
-            hint = "e.g. 14.2"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val etDistance = createThemedEditText(
+            hintText = "e.g. 14.2",
+            initialText = "%.1f".format(trip.distanceKm),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
         layout.addView(tvDistLabel)
         layout.addView(etDistance)
 
@@ -4055,16 +4018,12 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f
             setPadding(0, 12, 0, 0)
         }
-        val etDuration = EditText(this).apply {
-            val mins = (trip.durationSec / 60).coerceAtLeast(1)
-            setText(mins.toString())
-            hint = "e.g. 28"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        }
+        val mins = (trip.durationSec / 60).coerceAtLeast(1)
+        val etDuration = createThemedEditText(
+            hintText = "e.g. 28",
+            initialText = mins.toString(),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER
+        )
         layout.addView(tvDurationLabel)
         layout.addView(etDuration)
 
@@ -4074,15 +4033,11 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f
             setPadding(0, 12, 0, 0)
         }
-        val etSpeed = EditText(this).apply {
-            setText("%.0f".format(trip.topSpeedKmh))
-            hint = "e.g. 84"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val etSpeed = createThemedEditText(
+            hintText = "e.g. 84",
+            initialText = "%.0f".format(trip.topSpeedKmh),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
         layout.addView(tvSpeedLabel)
         layout.addView(etSpeed)
 
@@ -4196,15 +4151,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCustomServiceTargetDialog() {
-        val input = EditText(this).apply {
-            setText("%.0f".format(maintenanceManager.status.value.nextServiceTargetOdoKm))
-            hint = "Target Odometer in km"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(40, 30, 40, 30)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val input = createThemedEditText(
+            hintText = "Target Odometer in km",
+            initialText = "%.0f".format(maintenanceManager.status.value.nextServiceTargetOdoKm),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
         val container = FrameLayout(this).apply {
             setPadding(50, 30, 50, 10)
             addView(input)
@@ -4232,8 +4183,8 @@ class MainActivity : AppCompatActivity() {
         val openCount = issues.count { !it.isResolved }
         if (openCount > 0) {
             binding.tvIssuesCountBadge.text = "$openCount Open"
-            binding.tvIssuesCountBadge.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.wine_red_subtle))
-            binding.tvIssuesCountBadge.setTextColor(ContextCompat.getColor(this, R.color.wine_red_light))
+            binding.tvIssuesCountBadge.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
+            binding.tvIssuesCountBadge.setTextColor(currentTheme.accentColor)
         } else {
             binding.tvIssuesCountBadge.text = "0 Pending"
             binding.tvIssuesCountBadge.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_elevated))
@@ -4270,12 +4221,9 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 0, 0, 24)
         }
-        val etNewIssue = EditText(this).apply {
-            hint = "Add issue (e.g. front brake squeal)..."
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(32, 24, 32, 24)
+        val etNewIssue = createThemedEditText(
+            hintText = "Add issue (e.g. front brake squeal)..."
+        ).apply {
             textSize = 13f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
@@ -4504,33 +4452,21 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(tvInfo)
 
-        val odoInput = EditText(this).apply {
-            hint = "Odometer (km)"
-            setText("%.1f".format(entry.odometerKm))
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        val litersInput = EditText(this).apply {
-            hint = "Fuel Litres"
-            setText("%.2f".format(entry.liters))
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        val costInput = EditText(this).apply {
-            hint = "Total Cost (%s)".format(appSettings.currentCurrencySymbol)
-            setText("%.0f".format(entry.totalCostInr))
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val odoInput = createThemedEditText(
+            hintText = "Odometer (km)",
+            initialText = "%.1f".format(entry.odometerKm),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
+        val litersInput = createThemedEditText(
+            hintText = "Fuel Litres",
+            initialText = "%.2f".format(entry.liters),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
+        val costInput = createThemedEditText(
+            hintText = "Total Cost (%s)".format(appSettings.currentCurrencySymbol),
+            initialText = "%.0f".format(entry.totalCostInr),
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
 
         fun addField(label: String, field: View) {
             val tv = TextView(this).apply {
@@ -4622,42 +4558,26 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(tvHint)
 
-        val titleInput = EditText(this).apply {
-            hint = "Trip Route / Title (e.g. Local Market Run)"
-            setText("Local Drop-off")
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS
-        }
-        val distInput = EditText(this).apply {
-            hint = "Distance in km (e.g. 4.5)"
-            setText("4.5")
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        val durInput = EditText(this).apply {
-            hint = "Duration in minutes (e.g. 15)"
-            setText("15")
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        }
-        val speedInput = EditText(this).apply {
-            hint = "Top speed in km/h (optional, e.g. 60)"
-            setText("58")
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        val titleInput = createThemedEditText(
+            hintText = "Trip Route / Title (e.g. Local Market Run)",
+            initialText = "Local Drop-off",
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS
+        )
+        val distInput = createThemedEditText(
+            hintText = "Distance in km (e.g. 4.5)",
+            initialText = "4.5",
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
+        val durInput = createThemedEditText(
+            hintText = "Duration in minutes (e.g. 15)",
+            initialText = "15",
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER
+        )
+        val speedInput = createThemedEditText(
+            hintText = "Top speed in km/h (optional, e.g. 60)",
+            initialText = "58",
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        )
 
         val cbOdo = com.google.android.material.checkbox.MaterialCheckBox(this).apply {
             text = "Add distance to motorcycle odometer"
@@ -4755,30 +4675,19 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val iceNameInput = EditText(this).apply {
-            hint = "ICE Contact Name / Relation"
-            setText(appSettings.emergencyContactName)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-        }
-        val icePhoneInput = EditText(this).apply {
-            hint = "ICE Phone Number"
-            setText(appSettings.emergencyContactPhone)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
-            inputType = android.text.InputType.TYPE_CLASS_PHONE
-        }
-        val notesInput = EditText(this).apply {
-            hint = "Medical Allergies / Conditions"
-            setText(appSettings.medicalNotes)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-            setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            setBackgroundResource(R.drawable.bg_obsidian_input)
-            setPadding(36, 24, 36, 24)
+        val iceNameInput = createThemedEditText(
+            hintText = "ICE Contact Name / Relation",
+            initialText = appSettings.emergencyContactName
+        )
+        val icePhoneInput = createThemedEditText(
+            hintText = "ICE Phone Number",
+            initialText = appSettings.emergencyContactPhone,
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_PHONE
+        )
+        val notesInput = createThemedEditText(
+            hintText = "Medical Allergies / Conditions",
+            initialText = appSettings.medicalNotes
+        ).apply {
             minLines = 2
         }
 
