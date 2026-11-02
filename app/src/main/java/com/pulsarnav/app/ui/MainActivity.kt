@@ -108,6 +108,8 @@ class MainActivity : AppCompatActivity() {
     private var currentTheme: CockpitTheme = getThemeDefinition(AppSettings.THEME_WINE_RED)
 
     private var pendingDocType: String? = null
+    private var activeGloveboxSheet: BottomSheetDialog? = null
+    private var activeGloveboxView: View? = null
     private val documentPicker = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -1048,7 +1050,7 @@ class MainActivity : AppCompatActivity() {
 
         val etName = EditText(this).apply {
             setText(appSettings.bikeName)
-            hint = "e.g. Nikhil's Pulsar NS200"
+            hint = "e.g. Pulsar NS200"
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
             setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
             setBackgroundResource(R.drawable.bg_obsidian_input)
@@ -1144,7 +1146,7 @@ class MainActivity : AppCompatActivity() {
 
         val etName = EditText(this).apply {
             setText(appSettings.riderName)
-            hint = "e.g. Nikhil Maity"
+            hint = "e.g. Alex Rider"
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
             setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
             setBackgroundResource(R.drawable.bg_obsidian_input)
@@ -1501,66 +1503,151 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showDocumentsDialog() {
-        val hasRcFile = appSettings.docRcPath.isNotBlank() && File(appSettings.docRcPath).exists()
-        val hasInsFile = appSettings.docInsurancePath.isNotBlank() && File(appSettings.docInsurancePath).exists()
-        val hasPucFile = appSettings.docPucPath.isNotBlank() && File(appSettings.docPucPath).exists()
+        val sheet = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_digital_glovebox, null)
+        sheet.setContentView(view)
 
-        val items = arrayOf(
-            "Registration Certificate (RC)\n   Number: ${appSettings.docRcNumber}\n   File: ${if (hasRcFile) "Attached (Tap to manage)" else "No file uploaded"}",
-            "Comprehensive Insurance\n   Policy: ${appSettings.docInsurancePolicy}\n   Expiry: ${appSettings.docInsuranceExpiry}\n   File: ${if (hasInsFile) "Attached (Tap to manage)" else "No file uploaded"}",
-            "Pollution Under Control (PUC)\n   Cert: ${appSettings.docPucCert}\n   Expiry: ${appSettings.docPucExpiry}\n   File: ${if (hasPucFile) "Attached (Tap to manage)" else "No file uploaded"}"
-        )
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Digital Glovebox Documents")
-            .setItems(items) { _, which ->
-                provideHapticFeedback()
-                when (which) {
-                    0 -> showDocumentActionDialog("rc", "Registration Certificate (RC)", appSettings.docRcNumber, null, appSettings.docRcPath)
-                    1 -> showDocumentActionDialog("insurance", "Comprehensive Insurance", appSettings.docInsurancePolicy, appSettings.docInsuranceExpiry, appSettings.docInsurancePath)
-                    2 -> showDocumentActionDialog("puc", "Pollution Under Control (PUC)", appSettings.docPucCert, appSettings.docPucExpiry, appSettings.docPucPath)
-                }
-            }
-            .setPositiveButton("Close", null)
-            .show()
-    }
-
-    private fun showDocumentActionDialog(
-        docType: String,
-        title: String,
-        numberOrPolicy: String,
-        expiry: String?,
-        filePath: String
-    ) {
-        val hasFile = filePath.isNotBlank() && File(filePath).exists()
-        val options = mutableListOf<String>()
-        options.add("Edit Details & Expiry Dates")
-        options.add("Upload / Replace Document (Image/PDF)")
-        if (hasFile) {
-            options.add("View Uploaded Document")
+        activeGloveboxSheet = sheet
+        activeGloveboxView = view
+        sheet.setOnDismissListener {
+            activeGloveboxSheet = null
+            activeGloveboxView = null
         }
 
-        MaterialAlertDialogBuilder(this)
-            .setTitle(title)
-            .setItems(options.toTypedArray()) { _, which ->
-                provideHapticFeedback()
-                when (which) {
-                    0 -> showEditDocumentDetailsDialog(docType, title, numberOrPolicy, expiry)
-                    1 -> {
-                        pendingDocType = docType
-                        try {
-                            documentPicker.launch(arrayOf("image/*", "application/pdf"))
-                        } catch (e: Exception) {
-                            showFeedback("Could not open file picker: ${e.message}", isAlert = true)
-                        }
-                    }
-                    2 -> {
-                        if (hasFile) viewDocument(filePath, title)
-                    }
+        bindGloveboxData(view, sheet)
+        sheet.show()
+    }
+
+    private fun bindGloveboxData(view: View, sheet: BottomSheetDialog) {
+        // --- RC Document ---
+        val rcNumber = appSettings.docRcNumber.ifBlank { "Not set" }
+        val hasRcFile = appSettings.docRcPath.isNotBlank() && File(appSettings.docRcPath).exists()
+        val rcFileName = if (hasRcFile) File(appSettings.docRcPath).name else "No document attached"
+
+        view.findViewById<TextView>(R.id.tvRcNumber)?.text = rcNumber
+        view.findViewById<TextView>(R.id.tvRcFileName)?.text = rcFileName
+        view.findViewById<TextView>(R.id.badgeRcStatus)?.apply {
+            if (hasRcFile) {
+                text = "ATTACHED"
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
+                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.status_connected_subtle))
+            } else {
+                text = "NO FILE"
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.surface_elevated))
+            }
+        }
+        view.findViewById<View>(R.id.btnViewRc)?.apply {
+            isEnabled = hasRcFile
+            alpha = if (hasRcFile) 1.0f else 0.4f
+            setOnClickListener {
+                if (hasRcFile) {
+                    provideHapticFeedback()
+                    viewDocument(appSettings.docRcPath, "Registration Certificate (RC)")
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+        }
+        view.findViewById<View>(R.id.btnUploadRc)?.setOnClickListener {
+            provideHapticFeedback()
+            pendingDocType = "rc"
+            try {
+                documentPicker.launch(arrayOf("image/*", "application/pdf"))
+            } catch (e: Exception) {
+                showFeedback("Could not open file picker: ${e.message}", isAlert = true)
+            }
+        }
+        view.findViewById<View>(R.id.btnEditRc)?.setOnClickListener {
+            provideHapticFeedback()
+            showEditDocumentDetailsDialog("rc", "Registration Certificate (RC)", appSettings.docRcNumber, null)
+        }
+
+        // --- Insurance Document ---
+        val insPolicy = appSettings.docInsurancePolicy.ifBlank { "Not set" }
+        val insExpiry = appSettings.docInsuranceExpiry.ifBlank { "Expiry not set" }
+        val hasInsFile = appSettings.docInsurancePath.isNotBlank() && File(appSettings.docInsurancePath).exists()
+
+        view.findViewById<TextView>(R.id.tvInsurancePolicy)?.text = insPolicy
+        view.findViewById<TextView>(R.id.tvInsuranceExpiry)?.text = insExpiry
+        view.findViewById<TextView>(R.id.badgeInsuranceStatus)?.apply {
+            if (hasInsFile) {
+                text = "ACTIVE"
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
+                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.status_connected_subtle))
+            } else {
+                text = "NO FILE"
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.surface_elevated))
+            }
+        }
+        view.findViewById<View>(R.id.btnViewInsurance)?.apply {
+            isEnabled = hasInsFile
+            alpha = if (hasInsFile) 1.0f else 0.4f
+            setOnClickListener {
+                if (hasInsFile) {
+                    provideHapticFeedback()
+                    viewDocument(appSettings.docInsurancePath, "Comprehensive Insurance")
+                }
+            }
+        }
+        view.findViewById<View>(R.id.btnUploadInsurance)?.setOnClickListener {
+            provideHapticFeedback()
+            pendingDocType = "insurance"
+            try {
+                documentPicker.launch(arrayOf("image/*", "application/pdf"))
+            } catch (e: Exception) {
+                showFeedback("Could not open file picker: ${e.message}", isAlert = true)
+            }
+        }
+        view.findViewById<View>(R.id.btnEditInsurance)?.setOnClickListener {
+            provideHapticFeedback()
+            showEditDocumentDetailsDialog("insurance", "Comprehensive Insurance", appSettings.docInsurancePolicy, appSettings.docInsuranceExpiry)
+        }
+
+        // --- PUC Document ---
+        val pucCert = appSettings.docPucCert.ifBlank { "Not set" }
+        val pucExpiry = appSettings.docPucExpiry.ifBlank { "Expiry not set" }
+        val hasPucFile = appSettings.docPucPath.isNotBlank() && File(appSettings.docPucPath).exists()
+
+        view.findViewById<TextView>(R.id.tvPucNumber)?.text = pucCert
+        view.findViewById<TextView>(R.id.tvPucExpiry)?.text = pucExpiry
+        view.findViewById<TextView>(R.id.badgePucStatus)?.apply {
+            if (hasPucFile) {
+                text = "VALID"
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
+                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.status_connected_subtle))
+            } else {
+                text = "NO FILE"
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.surface_elevated))
+            }
+        }
+        view.findViewById<View>(R.id.btnViewPuc)?.apply {
+            isEnabled = hasPucFile
+            alpha = if (hasPucFile) 1.0f else 0.4f
+            setOnClickListener {
+                if (hasPucFile) {
+                    provideHapticFeedback()
+                    viewDocument(appSettings.docPucPath, "Pollution Certificate (PUC)")
+                }
+            }
+        }
+        view.findViewById<View>(R.id.btnUploadPuc)?.setOnClickListener {
+            provideHapticFeedback()
+            pendingDocType = "puc"
+            try {
+                documentPicker.launch(arrayOf("image/*", "application/pdf"))
+            } catch (e: Exception) {
+                showFeedback("Could not open file picker: ${e.message}", isAlert = true)
+            }
+        }
+        view.findViewById<View>(R.id.btnEditPuc)?.setOnClickListener {
+            provideHapticFeedback()
+            showEditDocumentDetailsDialog("puc", "Pollution Under Control (PUC)", appSettings.docPucCert, appSettings.docPucExpiry)
+        }
+
+        view.findViewById<View>(R.id.btnGloveboxClose)?.setOnClickListener {
+            sheet.dismiss()
+        }
     }
 
     private fun showEditDocumentDetailsDialog(
@@ -1639,6 +1726,7 @@ class MainActivity : AppCompatActivity() {
                 updateDocumentsSummary()
                 updateBikeInfoDisplay()
                 recordSyncTime()
+                activeGloveboxView?.let { v -> activeGloveboxSheet?.let { s -> bindGloveboxData(v, s) } }
                 showFeedback("$title updated!")
             }
             .setNegativeButton("Cancel", null)
@@ -1681,6 +1769,7 @@ class MainActivity : AppCompatActivity() {
 
             recordSyncTime()
             updateDocumentsSummary()
+            activeGloveboxView?.let { v -> activeGloveboxSheet?.let { s -> bindGloveboxData(v, s) } }
             provideHapticFeedback()
             showFeedback("Document uploaded successfully!")
         } catch (e: Exception) {
@@ -1793,18 +1882,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showTrueHealthDialog() {
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Vehicle Health Status")
-            .setMessage(
-                "Electrical & Battery: 12.6V (Optimal)\n" +
-                "Engine Cooling: Liquid coolant level normal\n" +
-                "Engine Oil: 4,880 km until next 5,000 km oil service\n" +
-                "Drive Chain: 380 km until next 500 km lube cycle\n" +
-                "Braking System: Front & Rear Dual ABS Active\n" +
-                "Digital Instrument Cluster: BLE GATT Bridge Ready"
-            )
-            .setPositiveButton("Close", null)
-            .show()
+        val sheet = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_true_health, null)
+        sheet.setContentView(view)
+
+        view.findViewById<View>(R.id.btnTrueHealthClose)?.setOnClickListener {
+            provideHapticFeedback()
+            sheet.dismiss()
+        }
+
+        sheet.show()
     }
 
     private fun setupFeatureToggles() {

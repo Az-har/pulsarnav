@@ -2423,7 +2423,7 @@
                                 <TextView
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="Battery 12.6V • Chain OK • Coolant OK"
+                                    android:text="Coolant OK • Chain OK • Dual ABS Active"
                                     android:textColor="@color/text_tertiary"
                                     android:textSize="11sp" />
                             </LinearLayout>
