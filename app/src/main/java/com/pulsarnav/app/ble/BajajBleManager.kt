@@ -449,7 +449,7 @@ class BajajBleManager private constructor(private val context: Context) {
     private fun onLinkReady(reason: String) {
         if (isLinkReady) return
         isLinkReady = true
-        Log.i(TAG, "🚀 Pulsar Cluster Link READY ($reason)")
+        Log.i(TAG, "Pulsar Cluster Link READY ($reason)")
 
         // Keep foreground service active to protect BLE link and background streaming
         try {
@@ -562,7 +562,7 @@ class BajajBleManager private constructor(private val context: Context) {
         )
         activeNavStep = simStep
 
-        Log.i(TAG, "▶️ Started Cluster Simulation for ${maneuver.description} ($distanceMeters m)")
+        Log.i(TAG, "▶Started Cluster Simulation for ${maneuver.description} ($distanceMeters m)")
         mainHandler.removeCallbacks(tbtStreamRunnable)
         mainHandler.post(tbtStreamRunnable)
     }
@@ -577,7 +577,7 @@ class BajajBleManager private constructor(private val context: Context) {
             activeNavStep = null
             mainHandler.removeCallbacks(tbtStreamRunnable)
 
-            Log.i(TAG, "⏹️ Stopped Cluster Simulation -> Sending Stop Frame")
+            Log.i(TAG, "⏹Stopped Cluster Simulation -> Sending Stop Frame")
             val stopFrame = OtcPacketBuilder.buildTbtStopFrame()
             _lastSentPacket.value = stopFrame
             _lastSentPacketHex.value = OtcPacketBuilder.toHex(stopFrame)
@@ -646,16 +646,36 @@ class BajajBleManager private constructor(private val context: Context) {
         _lastSentPacket.value = pkt
         _lastSentPacketHex.value = OtcPacketBuilder.toHex(pkt)
         generalCharacteristic?.let { target ->
-            if (isLinkReady) enqueueWrite(target, pkt)
+            if (isLinkReady) {
+                enqueueWrite(target, pkt)
+                // If there is an active/incoming call, also send the 55-byte legacy frame
+                // to support older cluster firmware that does not accept 89-byte V2 frames
+                if (currentCallState != CallState.NO_CALL) {
+                    val legacyPkt = OtcPacketBuilder.buildGeneralPacketLegacy(
+                        batteryPercent = currentBattery,
+                        volumeLevel = currentVolume,
+                        callState = currentCallState,
+                        callerName = currentCallerName,
+                        callRejectAck = callAcceptCount,
+                        callRejectSmsAck = callRejectCount,
+                        missedCallCount = currentMissedCount
+                    )
+                    enqueueWrite(target, legacyPkt)
+                }
+            }
         }
     }
 
     fun sendWhatsAppAlert(senderName: String) {
         val pkt = OtcPacketBuilder.buildWhatsAppAlertPacket(senderName)
+        val legacyPkt = OtcPacketBuilder.buildWhatsAppAlertLegacyPacket(senderName)
         _lastSentPacket.value = pkt
         _lastSentPacketHex.value = OtcPacketBuilder.toHex(pkt)
         alertsCharacteristic?.let { target ->
-            if (isLinkReady) enqueueWrite(target, pkt)
+            if (isLinkReady) {
+                enqueueWrite(target, pkt)
+                enqueueWrite(target, legacyPkt)
+            }
         }
     }
 
@@ -669,7 +689,10 @@ class BajajBleManager private constructor(private val context: Context) {
             return
         }
 
-        val writeType = if ((char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) {
+        // OTC clusters specifically require WRITE_TYPE_NO_RESPONSE for real-time telemetry/alerts
+        val writeType = if ((char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        } else if ((char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) {
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         } else {
             BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE

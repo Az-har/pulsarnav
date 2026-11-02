@@ -75,7 +75,7 @@
                     android:foreground="?attr/selectableItemBackground"
                     android:gravity="center"
                     android:paddingHorizontal="7dp"
-                    android:text="BT OFF ⚠️"
+                    android:text="BT OFF"
                     android:textColor="@color/amber_accent"
                     android:textSize="9sp"
                     android:textStyle="bold"
@@ -91,7 +91,24 @@
                     android:foreground="?attr/selectableItemBackground"
                     android:gravity="center"
                     android:paddingHorizontal="7dp"
-                    android:text="GPS OFF ⚠️"
+                    android:text="GPS OFF"
+                    android:textColor="@color/amber_accent"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/chipPermWarning"
+                    android:layout_width="wrap_content"
+                    android:layout_height="22dp"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/pill_badge"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:paddingHorizontal="7dp"
+                    android:text="PERMS NEEDED"
                     android:textColor="@color/amber_accent"
                     android:textSize="9sp"
                     android:textStyle="bold"
@@ -108,7 +125,7 @@
             android:letterSpacing="0.04"
             android:paddingHorizontal="14dp"
             android:paddingVertical="0dp"
-            android:text="🚨 SOS"
+            android:text="SOS"
             android:textColor="@color/wine_red_light"
             android:textSize="12sp"
             android:textStyle="bold"
@@ -192,7 +209,7 @@
                                 android:letterSpacing="0.02"
                                 android:paddingHorizontal="12dp"
                                 android:paddingVertical="0dp"
-                                android:text="🔄  Recalibrate"
+                                android:text="Recalibrate"
                                 android:textColor="@color/wine_red_light"
                                 android:textSize="11sp"
                                 android:textStyle="bold"
@@ -395,7 +412,7 @@
                             android:layout_height="@dimen/btn_height_primary"
                             android:backgroundTint="@color/wine_red"
                             android:letterSpacing="0.02"
-                            android:text="🗺️  Start Ride with Google Maps"
+                            android:text="Start Ride with Google Maps"
                             android:textColor="@color/on_primary"
                             android:textSize="15sp"
                             android:textStyle="bold"
@@ -431,7 +448,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="⚠️"
+                                android:text="INFO"
                                 android:textSize="22sp" />
 
                             <LinearLayout
@@ -543,7 +560,7 @@
                                     android:id="@+id/tvIconHome"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="🏠"
+                                    android:text="INFO"
                                     android:textSize="18sp" />
 
                                 <TextView
@@ -585,7 +602,7 @@
                                     android:id="@+id/tvIconWork"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="🏢"
+                                    android:text="INFO"
                                     android:textSize="18sp" />
 
                                 <TextView
@@ -626,7 +643,7 @@
                                 <TextView
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="⛽"
+                                    android:text="INFO"
                                     android:textSize="18sp" />
 
                                 <TextView
@@ -704,7 +721,7 @@
                             android:layout_height="@dimen/btn_height_primary"
                             android:layout_marginTop="12dp"
                             android:backgroundTint="@color/wine_red_subtle"
-                            android:text="🚶  Navigate to Bike (Walking Directions)"
+                            android:text="Navigate to Bike (Walking Directions)"
                             android:textColor="@color/wine_red_light"
                             android:textSize="14sp"
                             android:textStyle="bold"
@@ -756,7 +773,7 @@
                                 android:backgroundTint="@color/wine_red_subtle"
                                 android:paddingHorizontal="8dp"
                                 android:paddingVertical="2dp"
-                                android:text="🚨 SOS HELP"
+                                android:text="SOS HELP"
                                 android:textColor="@color/wine_red_light"
                                 android:textSize="10sp"
                                 android:textStyle="bold" />
@@ -777,7 +794,7 @@
                                 android:layout_marginEnd="6dp"
                                 android:layout_weight="1"
                                 android:backgroundTint="@color/surface_elevated"
-                                android:text="🏥 Nearest Hospitals"
+                                android:text="Nearest Hospitals"
                                 android:textColor="@color/text_primary"
                                 android:textSize="12sp"
                                 android:textStyle="bold"
@@ -793,7 +810,7 @@
                                 android:layout_marginStart="6dp"
                                 android:layout_weight="1"
                                 android:backgroundTint="@color/wine_red_subtle"
-                                android:text="🚑 108 / 112 SOS"
+                                android:text="108 / 112 SOS"
                                 android:textColor="@color/wine_red_light"
                                 android:textSize="12sp"
                                 android:textStyle="bold"
@@ -828,7 +845,7 @@
                                     android:backgroundTint="@color/wine_red_subtle"
                                     android:paddingHorizontal="8dp"
                                     android:paddingVertical="3dp"
-                                    android:text="🩸 Blood Group --"
+                                    android:text="Blood Group --"
                                     android:textColor="@color/wine_red_light"
                                     android:textSize="11sp"
                                     android:textStyle="bold" />
@@ -850,7 +867,7 @@
                                     android:id="@+id/tvEditMedicalLink"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="✏️ Edit"
+                                    android:text="Edit"
                                     android:textColor="@color/wine_red_light"
                                     android:textSize="11sp"
                                     android:textStyle="bold" />
@@ -1350,7 +1367,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="⛽"
+                                android:text="INFO"
                                 android:textSize="22sp" />
 
                             <LinearLayout
@@ -1387,7 +1404,7 @@
                             android:layout_height="@dimen/btn_height_primary"
                             android:layout_marginTop="14dp"
                             android:backgroundTint="@color/wine_red"
-                            android:text="⛽  Find Nearest Fuel Station (Maps 2W)"
+                            android:text="Find Nearest Fuel Station (Maps 2W)"
                             android:textColor="@color/on_primary"
                             android:textSize="14sp"
                             android:textStyle="bold"
@@ -1443,6 +1460,54 @@
                             app:cornerRadius="@dimen/btn_corner_radius"
                             app:strokeColor="@color/wine_red_border"
                             app:strokeWidth="@dimen/card_stroke_width" />
+
+                        <LinearLayout
+                            android:id="@+id/rowFuelPriceSetting"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:background="@drawable/rounded_box"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="14dp"
+                            android:paddingVertical="10dp">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tvFuelPriceTitle"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Fuel Price: ₹104.5 / L"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="13sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvFuelPriceCountrySubtitle"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="Tap to change local fuel price"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Edit Price →"
+                                android:textColor="@color/wine_red_light"
+                                android:textSize="12sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -1642,7 +1707,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="📍"
+                                android:text="INFO"
                                 android:textSize="24sp" />
 
                             <LinearLayout
@@ -1711,7 +1776,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="📄"
+                                android:text="INFO"
                                 android:textSize="24sp" />
 
                             <LinearLayout
@@ -1779,7 +1844,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="⛓ Chain Clean &amp; Lube"
+                                android:text="Chain Clean &amp; Lube"
                                 android:textColor="@color/text_primary"
                                 android:textSize="15sp"
                                 android:textStyle="bold" />
@@ -1819,7 +1884,7 @@
                             android:layout_height="@dimen/btn_height_primary"
                             android:layout_marginTop="14dp"
                             android:backgroundTint="@color/wine_red_subtle"
-                            android:text="✓  Mark Chain Cleaned &amp; Lubed"
+                            android:text="Mark Chain Cleaned &amp; Lubed"
                             android:textColor="@color/wine_red_light"
                             android:textSize="13sp"
                             android:textStyle="bold"
@@ -1857,7 +1922,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="🔧 Periodic Service &amp; Oil"
+                                android:text="Periodic Service &amp; Oil"
                                 android:textColor="@color/text_primary"
                                 android:textSize="15sp"
                                 android:textStyle="bold" />
@@ -1873,10 +1938,11 @@
                         </LinearLayout>
 
                         <TextView
+                            android:id="@+id/tvServiceSubtitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="DTS-i 4V Liquid-Cooled Oil Service (Every 5,000 km)"
+                            android:text="1st Service: 500 km • Periodic: Every 5,000 km"
                             android:textColor="@color/text_tertiary"
                             android:textSize="11sp" />
 
@@ -1890,20 +1956,112 @@
                             app:trackColor="@color/surface_border"
                             app:trackCornerRadius="4dp" />
 
-                        <!-- Glove-Friendly Primary Action Button -->
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnMarkServiced"
+                        <!-- Glove-Friendly Primary Action Buttons -->
+                        <LinearLayout
                             android:layout_width="match_parent"
-                            android:layout_height="@dimen/btn_height_primary"
+                            android:layout_height="wrap_content"
                             android:layout_marginTop="14dp"
-                            android:backgroundTint="@color/surface_card"
-                            android:text="✓  Mark Service Completed"
-                            android:textColor="@color/text_primary"
+                            android:orientation="horizontal">
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnMarkServiced"
+                                android:layout_width="0dp"
+                                android:layout_height="@dimen/btn_height_primary"
+                                android:layout_weight="1.2"
+                                android:layout_marginEnd="6dp"
+                                android:backgroundTint="@color/surface_card"
+                                android:text="Service Done"
+                                android:textColor="@color/text_primary"
+                                android:textSize="12sp"
+                                android:textStyle="bold"
+                                app:cornerRadius="@dimen/btn_corner_radius"
+                                app:strokeColor="@color/surface_border"
+                                app:strokeWidth="@dimen/card_stroke_width" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnSetServiceTarget"
+                                android:layout_width="0dp"
+                                android:layout_height="@dimen/btn_height_primary"
+                                android:layout_weight="1"
+                                android:backgroundTint="@color/wine_red_subtle"
+                                android:text="Target ODO"
+                                android:textColor="@color/wine_red_light"
+                                android:textSize="12sp"
+                                android:textStyle="bold"
+                                app:cornerRadius="@dimen/btn_corner_radius"
+                                app:strokeColor="@color/wine_red_border"
+                                app:strokeWidth="@dimen/card_stroke_width" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Bike Issues & Repair Checklist Card (To-Do App) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardBikeIssues"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="@dimen/card_margin_bottom"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    app:cardBackgroundColor="@color/surface_card"
+                    app:cardCornerRadius="@dimen/card_corner_radius"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="@dimen/card_stroke_width">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="@dimen/card_padding">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Bike Issues &amp; Repair Checklist"
+                                android:textColor="@color/text_primary"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvIssuesCountBadge"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:background="@drawable/pill_badge"
+                                android:backgroundTint="@color/surface_elevated"
+                                android:paddingHorizontal="8dp"
+                                android:paddingVertical="3dp"
+                                android:text="0 Pending"
+                                android:textColor="@color/wine_red_light"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Track mechanical symptoms, todo repairs, and service fixes"
+                            android:textColor="@color/text_tertiary"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/tvIssuesAction"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:text="Open Checklist →"
+                            android:textColor="@color/wine_red_light"
                             android:textSize="13sp"
-                            android:textStyle="bold"
-                            app:cornerRadius="@dimen/btn_corner_radius"
-                            app:strokeColor="@color/surface_border"
-                            app:strokeWidth="@dimen/card_stroke_width" />
+                            android:textStyle="bold" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -1941,7 +2099,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="🚚"
+                                android:text="INFO"
                                 android:textSize="20sp" />
 
                             <LinearLayout
@@ -1997,7 +2155,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="📖"
+                                android:text="INFO"
                                 android:textSize="20sp" />
 
                             <LinearLayout
@@ -2042,7 +2200,7 @@
                     android:layout_marginTop="8dp"
                     android:backgroundTint="@color/surface_elevated"
                     android:paddingHorizontal="20dp"
-                    android:text="I have an issue 💬"
+                    android:text="I have an issue "
                     android:textColor="@color/text_primary"
                     android:textSize="13sp"
                     android:textStyle="bold"
@@ -2180,7 +2338,7 @@
                             android:background="@drawable/pill_badge"
                             android:paddingHorizontal="10dp"
                             android:paddingVertical="5dp"
-                            android:text="🏍️ Model"
+                            android:text="Model"
                             android:textColor="@color/wine_red_light"
                             android:textSize="11sp"
                             android:textStyle="bold" />
@@ -2192,7 +2350,7 @@
                             android:background="@drawable/pill_badge"
                             android:paddingHorizontal="10dp"
                             android:paddingVertical="5dp"
-                            android:text="✏️ Plate"
+                            android:text="Plate"
                             android:textColor="@color/text_primary"
                             android:textSize="11sp"
                             android:textStyle="bold" />
@@ -2243,7 +2401,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="🛡️"
+                                android:text="INFO"
                                 android:textSize="18sp" />
 
                             <LinearLayout
@@ -2300,7 +2458,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="📄"
+                                android:text="INFO"
                                 android:textSize="18sp" />
 
                             <LinearLayout
@@ -2383,7 +2541,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="📱"
+                                android:text="INFO"
                                 android:textSize="18sp" />
 
                             <LinearLayout
@@ -2440,7 +2598,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="🔐"
+                                android:text="INFO"
                                 android:textSize="18sp" />
 
                             <LinearLayout
@@ -2539,7 +2697,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="6dp"
-                                    android:text="🍷 Wine Red"
+                                    android:text="Wine Red"
                                     android:textColor="@color/text_primary"
                                     android:textSize="12sp"
                                     android:textStyle="bold" />
@@ -2578,7 +2736,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="6dp"
-                                    android:text="🖤 AMOLED Black"
+                                    android:text="AMOLED Black"
                                     android:textColor="@color/text_primary"
                                     android:textSize="12sp"
                                     android:textStyle="bold" />
@@ -2656,7 +2814,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="6dp"
-                                    android:text="⚡ Neon Amber"
+                                    android:text="Neon Amber"
                                     android:textColor="@color/text_primary"
                                     android:textSize="12sp"
                                     android:textStyle="bold" />
@@ -2695,7 +2853,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="6dp"
-                                    android:text="🟢 Hyper Mint"
+                                    android:text="Hyper Mint"
                                     android:textColor="@color/text_primary"
                                     android:textSize="12sp"
                                     android:textStyle="bold" />
@@ -2733,7 +2891,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="6dp"
-                                    android:text="🔵 Liquid Blue"
+                                    android:text="Liquid Blue"
                                     android:textColor="@color/text_primary"
                                     android:textSize="12sp"
                                     android:textStyle="bold" />
@@ -2794,7 +2952,7 @@
                                 <TextView
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="Two-Wheeler Navigation (🛵 mode=l)"
+                                    android:text="Two-Wheeler Navigation ( mode=l)"
                                     android:textColor="@color/text_primary"
                                     android:textSize="14sp"
                                     android:textStyle="bold" />
@@ -2987,7 +3145,7 @@
                                 android:background="@drawable/circle_dot"
                                 android:backgroundTint="@color/surface_elevated"
                                 android:gravity="center"
-                                android:text="🧭"
+                                android:text="INFO"
                                 android:textSize="18sp" />
 
                             <LinearLayout
@@ -3161,7 +3319,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="🏠 Home: Tap to configure"
+                                android:text="Home: Tap to configure"
                                 android:textColor="@color/text_primary"
                                 android:textSize="13sp" />
 
@@ -3196,7 +3354,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="🏢 Work: Tap to configure"
+                                android:text="Work: Tap to configure"
                                 android:textColor="@color/text_primary"
                                 android:textSize="13sp" />
 
@@ -3508,7 +3666,7 @@
                         android:layout_marginEnd="4dp"
                         android:layout_weight="1"
                         android:backgroundTint="@color/surface_card"
-                        android:text="📞 Call"
+                        android:text="Call"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp"
                         android:textStyle="bold"
@@ -3524,7 +3682,7 @@
                         android:layout_marginHorizontal="2dp"
                         android:layout_weight="1"
                         android:backgroundTint="@color/surface_card"
-                        android:text="💬 WhatsApp"
+                        android:text="WhatsApp"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp"
                         android:textStyle="bold"
@@ -3540,7 +3698,7 @@
                         android:layout_marginStart="4dp"
                         android:layout_weight="1"
                         android:backgroundTint="@color/surface_card"
-                        android:text="🚫 End"
+                        android:text="End"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp"
                         android:textStyle="bold"
@@ -3557,7 +3715,7 @@
                     android:layout_marginTop="10dp"
                     android:layout_marginBottom="@dimen/card_margin_bottom"
                     android:backgroundTint="@color/surface_card"
-                    android:text="📍  Simulate Saved Parking Spot"
+                    android:text="Simulate Saved Parking Spot"
                     android:textColor="@color/wine_red_light"
                     android:textSize="13sp"
                     android:textStyle="bold"
@@ -3639,7 +3797,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:lineSpacingExtra="2dp"
-                            android:text="⚖️ Legal Disclaimer:\nPulsarNav is an independent project and is NOT affiliated with, authorized, sponsored, or endorsed by Bajaj Auto Limited or OTC Engineering. 'Bajaj', 'Pulsar', 'Dominar', and 'Rouser' are registered trademarks of Bajaj Auto Limited. 'Google Maps' is a registered trademark of Google LLC. All trademarks are used solely for descriptive compatibility purposes."
+                            android:text="Legal Disclaimer:\nPulsarNav is an independent project and is NOT affiliated with, authorized, sponsored, or endorsed by Bajaj Auto Limited or OTC Engineering. 'Bajaj', 'Pulsar', 'Dominar', and 'Rouser' are registered trademarks of Bajaj Auto Limited. 'Google Maps' is a registered trademark of Google LLC. All trademarks are used solely for descriptive compatibility purposes."
                             android:textColor="@color/text_tertiary"
                             android:textSize="10sp" />
                     </LinearLayout>
@@ -4235,7 +4393,7 @@
                                     android:id="@+id/tvDaysOfOwnership"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="1132 Days 📅"
+                                    android:text="1132 Days "
                                     android:textColor="@color/text_primary"
                                     android:textSize="14sp"
                                     android:textStyle="bold" />

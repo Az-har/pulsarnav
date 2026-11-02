@@ -360,6 +360,23 @@ object OtcPacketBuilder {
     }
 
     /**
+     * Builds 40-byte Legacy Alert Packet for characteristic 0410676e-...
+     * Compatible with older Bajaj instrument cluster firmware.
+     */
+    fun buildWhatsAppAlertLegacyPacket(senderName: String): ByteArray {
+        val packet = ByteArray(40)
+        packet[0] = AlertType.WHATSAPP.value
+
+        val cleanName = sanitizeAscii(senderName, 32)
+        val nameBytes = cleanName.toByteArray(StandardCharsets.UTF_8)
+        val nameLen = nameBytes.size.coerceAtMost(32)
+        packet[1] = nameLen.toByte()
+        System.arraycopy(nameBytes, 0, packet, 2, nameLen)
+
+        return packet
+    }
+
+    /**
      * Builds 63-byte Missed Call Packet for characteristic 0310676e-...
      */
     fun buildMissedCallPacket(callerName: String, callerNumber: String): ByteArray {

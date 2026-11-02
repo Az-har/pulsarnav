@@ -5,9 +5,20 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
+
+data class BikeIssue(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val isResolved: Boolean = false,
+    val category: String = "Mechanical",
+    val dateLogged: String = ""
+)
 
 class AppSettings(context: Context) {
 
@@ -29,6 +40,7 @@ class AppSettings(context: Context) {
         const val KEY_APP_THEME = "app_theme"
         const val KEY_PETROL_PRICE = "petrol_price_per_liter"
         const val KEY_LAST_BIKE_MAC = "last_connected_bike_mac"
+        const val KEY_BIKE_ISSUES_JSON = "bike_issues_checklist_json"
 
         const val KEY_SELECTED_MODEL_ID = "selected_model_id"
         const val KEY_SELECTED_COUNTRY_CODE = "selected_country_code"
@@ -172,10 +184,20 @@ class AppSettings(context: Context) {
         }
 
     var petrolPricePerLiter: Double
-        get() = prefs.getFloat(KEY_PETROL_PRICE, 104.0f).toDouble()
+        get() {
+            val stored = prefs.getFloat(KEY_PETROL_PRICE, -1f)
+            if (stored > 0f) return stored.toDouble()
+            return VehicleCatalog.getCountryByCode(selectedCountryCode).defaultFuelPrice
+        }
         set(value) {
             prefs.edit().putFloat(KEY_PETROL_PRICE, value.toFloat()).apply()
         }
+
+    val currentCurrencySymbol: String
+        get() = VehicleCatalog.getCountryByCode(selectedCountryCode).currencySymbol
+
+    val currentCurrencyCode: String
+        get() = VehicleCatalog.getCountryByCode(selectedCountryCode).currencyCode
 
     var lastConnectedBikeMac: String
         get() = prefs.getString(KEY_LAST_BIKE_MAC, "") ?: ""
@@ -222,6 +244,7 @@ class AppSettings(context: Context) {
     }
 
     fun applyBikeAndCountrySelection(modelId: String, countryCode: String) {
+        val previousCountry = selectedCountryCode
         selectedModelId = modelId
         selectedCountryCode = countryCode
         isSetupCompleted = true
@@ -231,6 +254,10 @@ class AppSettings(context: Context) {
 
         bikeName = VehicleCatalog.getLocalizedBikeName(model, country)
         bikeModelSpec = model.engineSpec
+
+        if (previousCountry != countryCode) {
+            petrolPricePerLiter = country.defaultFuelPrice
+        }
 
         if (emergencyContactPhone.isBlank() || emergencyContactPhone == "112" || emergencyContactPhone == "911" || emergencyContactPhone == "123") {
             emergencyContactPhone = country.sosNumber
@@ -378,6 +405,68 @@ class AppSettings(context: Context) {
         set(value) {
             prefs.edit().putString(KEY_DOC_PUC_PATH, value).apply()
         }
+
+    fun getBikeIssues(): MutableList<BikeIssue> {
+        val raw = prefs.getString(KEY_BIKE_ISSUES_JSON, null)
+        if (raw.isNullOrBlank()) {
+            return mutableListOf()
+        }
+        val list = mutableListOf<BikeIssue>()
+        try {
+            val array = JSONArray(raw)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    BikeIssue(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        title = obj.optString("title", ""),
+                        isResolved = obj.optBoolean("isResolved", false),
+                        category = obj.optString("category", "Mechanical"),
+                        dateLogged = obj.optString("dateLogged", "")
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    fun saveBikeIssues(issues: List<BikeIssue>) {
+        val array = JSONArray()
+        for (issue in issues) {
+            val obj = JSONObject().apply {
+                put("id", issue.id)
+                put("title", issue.title)
+                put("isResolved", issue.isResolved)
+                put("category", issue.category)
+                put("dateLogged", issue.dateLogged)
+            }
+            array.put(obj)
+        }
+        prefs.edit().putString(KEY_BIKE_ISSUES_JSON, array.toString()).apply()
+    }
+
+    fun addBikeIssue(title: String, category: String = "Mechanical") {
+        val current = getBikeIssues()
+        val dateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date())
+        current.add(0, BikeIssue(title = title, category = category, dateLogged = dateStr))
+        saveBikeIssues(current)
+    }
+
+    fun toggleBikeIssue(id: String) {
+        val current = getBikeIssues()
+        val idx = current.indexOfFirst { it.id == id }
+        if (idx != -1) {
+            val item = current[idx]
+            current[idx] = item.copy(isResolved = !item.isResolved)
+            saveBikeIssues(current)
+        }
+    }
+
+    fun deleteBikeIssue(id: String) {
+        val current = getBikeIssues()
+        current.removeAll { it.id == id }
+        saveBikeIssues(current)
+    }
 
     fun getAllSettingsMap(): Map<String, *> = prefs.all
 

@@ -20,7 +20,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:letterSpacing="-0.01"
-        android:text="🏍️ Vehicle &amp; Regional Setup"
+        android:text="Vehicle &amp; Regional Setup"
         android:textColor="@color/text_primary"
         android:textSize="20sp"
         android:textStyle="bold" />
@@ -99,7 +99,7 @@
             android:layout_marginEnd="6dp"
             android:layout_weight="1"
             android:backgroundTint="@color/wine_red_subtle"
-            android:text="🗺️ Google Maps"
+            android:text="Google Maps"
             android:textColor="@color/wine_red_light"
             android:textSize="12sp"
             android:textStyle="bold"
@@ -115,7 +115,7 @@
             android:layout_marginStart="6dp"
             android:layout_weight="1"
             android:backgroundTint="@color/surface_card"
-            android:text="🚙 Waze"
+            android:text="Waze"
             android:textColor="@color/text_secondary"
             android:textSize="12sp"
             android:textStyle="bold"
@@ -220,7 +220,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="🛞 COLD FRONT TIRE"
+                        android:text="COLD FRONT TIRE"
                         android:textColor="@color/text_tertiary"
                         android:textSize="10sp"
                         android:textStyle="bold" />
@@ -244,7 +244,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="🛞 COLD REAR TIRE"
+                        android:text="COLD REAR TIRE"
                         android:textColor="@color/text_tertiary"
                         android:textSize="10sp"
                         android:textStyle="bold" />
@@ -281,7 +281,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="⛽ TANK CAPACITY"
+                        android:text="TANK CAPACITY"
                         android:textColor="@color/text_tertiary"
                         android:textSize="10sp"
                         android:textStyle="bold" />
@@ -304,7 +304,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="🚨 LOCAL SOS HELPLINE"
+                        android:text="LOCAL SOS HELPLINE"
                         android:textColor="@color/text_tertiary"
                         android:textSize="10sp"
                         android:textStyle="bold" />

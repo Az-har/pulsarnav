@@ -42,14 +42,14 @@ class BluetoothIgnitionReceiver : BroadcastReceiver() {
         when (action) {
             BluetoothDevice.ACTION_ACL_CONNECTED -> {
                 if (isBike) {
-                    Log.i(TAG, "🏍️ Pulsar NS200 Ignition ON! Starting Keep-Alive BLE Service...")
+                    Log.i(TAG, "Pulsar NS200 Ignition ON! Starting Keep-Alive BLE Service...")
                     BikeBleForegroundService.start(context)
                 }
             }
 
             BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
                 if (isBike) {
-                    Log.i(TAG, "🅿️ Pulsar NS200 Ignition OFF! Auto-saving parking location and closing trip...")
+                    Log.i(TAG, "Pulsar NS200 Ignition OFF! Auto-saving parking location and closing trip...")
                     ParkingManager.getInstance(context).onBikeDisconnected()
                     RideTracker.getInstance(context).onBikeDisconnected()
                 }

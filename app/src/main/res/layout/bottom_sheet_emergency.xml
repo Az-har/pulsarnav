@@ -30,8 +30,10 @@
             android:background="@drawable/circle_dot"
             android:backgroundTint="@color/wine_red_subtle"
             android:gravity="center"
-            android:text="🚨"
-            android:textSize="22sp" />
+            android:text="SOS"
+            android:textColor="@color/wine_red_light"
+            android:textSize="14sp"
+            android:textStyle="bold" />
 
         <LinearLayout
             android:layout_width="0dp"
@@ -92,8 +94,10 @@
                 android:background="@drawable/circle_dot"
                 android:backgroundTint="@color/wine_red_subtle"
                 android:gravity="center"
-                android:text="🚑"
-                android:textSize="18sp" />
+                android:text="MED"
+                android:textColor="@color/wine_red_light"
+                android:textSize="11sp"
+                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -163,8 +167,10 @@
                 android:background="@drawable/circle_dot"
                 android:backgroundTint="@color/surface_elevated"
                 android:gravity="center"
-                android:text="🚨"
-                android:textSize="18sp" />
+                android:text="POL"
+                android:textColor="@color/amber_accent"
+                android:textSize="11sp"
+                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -234,8 +240,10 @@
                 android:background="@drawable/circle_dot"
                 android:backgroundTint="@color/surface_elevated"
                 android:gravity="center"
-                android:text="📞"
-                android:textSize="18sp" />
+                android:text="ICE"
+                android:textColor="@color/text_primary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -306,8 +314,10 @@
                 android:background="@drawable/circle_dot"
                 android:backgroundTint="@color/surface_elevated"
                 android:gravity="center"
-                android:text="🏥"
-                android:textSize="18sp" />
+                android:text="HOSP"
+                android:textColor="@color/text_primary"
+                android:textSize="10sp"
+                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -377,7 +387,7 @@
                     android:backgroundTint="@color/wine_red_subtle"
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="4dp"
-                    android:text="🩸 Blood Group --"
+                    android:text="Blood Group --"
                     android:textColor="@color/wine_red_light"
                     android:textSize="11sp"
                     android:textStyle="bold" />
@@ -392,7 +402,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:padding="4dp"
-                    android:text="Edit Medical ID ✏️"
+                    android:text="Edit Medical ID"
                     android:textColor="@color/wine_red_light"
                     android:textSize="12sp"
                     android:textStyle="bold" />

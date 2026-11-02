@@ -26,8 +26,11 @@ data class MaintenanceStatus(
     val chainLubePercent: Int,
     val serviceRemainingKm: Double,
     val servicePercent: Int,
+    val nextServiceTargetOdoKm: Double,
     val isChainLubeDue: Boolean,
-    val isServiceDue: Boolean
+    val isServiceDue: Boolean,
+    val isServiceOverdue: Boolean,
+    val serviceOverdueKm: Double
 )
 
 class MaintenanceManager private constructor(private val context: Context) {
@@ -42,6 +45,7 @@ class MaintenanceManager private constructor(private val context: Context) {
         private const val KEY_ODO = "odo_total_km"
         private const val KEY_LAST_CHAIN_LUBE = "last_chain_lube_km"
         private const val KEY_LAST_SERVICE = "last_service_km"
+        private const val KEY_NEXT_SERVICE_TARGET_ODO = "next_service_target_odo_km"
         private const val KEY_SERVICE_HISTORY_JSON = "service_history_json"
 
         @Volatile
@@ -60,15 +64,24 @@ class MaintenanceManager private constructor(private val context: Context) {
     private fun computeStatus(): MaintenanceStatus {
         val odo = prefs.getString(KEY_ODO, "0.0")?.toDoubleOrNull() ?: 0.0
         val lastLube = prefs.getString(KEY_LAST_CHAIN_LUBE, "0.0")?.toDoubleOrNull() ?: 0.0
-        val lastService = prefs.getString(KEY_LAST_SERVICE, "0.0")?.toDoubleOrNull() ?: 0.0
 
         val lubeElapsed = (odo - lastLube).coerceAtLeast(0.0)
         val lubeRemaining = (CHAIN_LUBE_INTERVAL_KM - lubeElapsed).coerceAtLeast(0.0)
         val lubePercent = ((lubeRemaining / CHAIN_LUBE_INTERVAL_KM) * 100).toInt().coerceIn(0, 100)
 
-        val serviceElapsed = (odo - lastService).coerceAtLeast(0.0)
-        val serviceRemaining = (SERVICE_INTERVAL_KM - serviceElapsed).coerceAtLeast(0.0)
-        val servicePercent = ((serviceRemaining / SERVICE_INTERVAL_KM) * 100).toInt().coerceIn(0, 100)
+        val rawTarget = prefs.getString(KEY_NEXT_SERVICE_TARGET_ODO, null)?.toDoubleOrNull()
+        val targetOdo = rawTarget ?: when {
+            odo < 750.0 -> 500.0 // 1st Service milestone for new motorcycle
+            odo < 5000.0 -> 5000.0 // 2nd Service
+            odo < 10000.0 -> 10000.0 // 3rd Service
+            else -> ((odo / 5000.0).toInt() + 1) * 5000.0
+        }
+
+        val isOverdue = odo > targetOdo
+        val overdueKm = if (isOverdue) (odo - targetOdo) else 0.0
+        val serviceRemaining = if (isOverdue) 0.0 else (targetOdo - odo)
+        val serviceInterval = if (targetOdo <= 750.0) 500.0 else 5000.0
+        val servicePercent = if (isOverdue) 0 else ((serviceRemaining / serviceInterval) * 100).toInt().coerceIn(0, 100)
 
         return MaintenanceStatus(
             totalOdometerKm = odo,
@@ -76,9 +89,22 @@ class MaintenanceManager private constructor(private val context: Context) {
             chainLubePercent = lubePercent,
             serviceRemainingKm = serviceRemaining,
             servicePercent = servicePercent,
+            nextServiceTargetOdoKm = targetOdo,
             isChainLubeDue = lubeRemaining <= 50.0,
-            isServiceDue = serviceRemaining <= 200.0
+            isServiceDue = isOverdue || serviceRemaining <= 200.0,
+            isServiceOverdue = isOverdue,
+            serviceOverdueKm = overdueKm
         )
+    }
+
+    fun setNextServiceTargetOdo(targetKm: Double) {
+        prefs.edit().putString(KEY_NEXT_SERVICE_TARGET_ODO, "%.1f".format(targetKm)).apply()
+        _status.value = computeStatus()
+    }
+
+    fun rescheduleNextService(addKm: Double) {
+        val odo = prefs.getString(KEY_ODO, "0.0")?.toDoubleOrNull() ?: 0.0
+        setNextServiceTargetOdo(odo + addKm)
     }
 
     fun addDistance(km: Double) {
@@ -102,6 +128,15 @@ class MaintenanceManager private constructor(private val context: Context) {
     fun markServiceDone() {
         val currentOdo = prefs.getString(KEY_ODO, "0.0")?.toDoubleOrNull() ?: 0.0
         prefs.edit().putString(KEY_LAST_SERVICE, currentOdo.toString()).apply()
+
+        // Advance to next milestone
+        val currentTarget = prefs.getString(KEY_NEXT_SERVICE_TARGET_ODO, null)?.toDoubleOrNull() ?: 500.0
+        val nextTarget = when {
+            currentTarget <= 750.0 -> 5000.0 // 1st service done -> 2nd is 5,000 km
+            currentTarget <= 5000.0 -> 10000.0 // 2nd service done -> 3rd is 10,000 km
+            else -> currentOdo + 5000.0
+        }
+        prefs.edit().putString(KEY_NEXT_SERVICE_TARGET_ODO, "%.1f".format(nextTarget)).apply()
         _status.value = computeStatus()
     }
 

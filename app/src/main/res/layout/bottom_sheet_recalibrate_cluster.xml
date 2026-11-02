@@ -30,7 +30,7 @@
             android:background="@drawable/circle_dot"
             android:backgroundTint="@color/surface_elevated"
             android:gravity="center"
-            android:text="🔄"
+            android:text=""
             android:textSize="22sp" />
 
         <LinearLayout
@@ -259,7 +259,7 @@
         android:layout_marginTop="20dp"
         android:backgroundTint="@color/wine_red"
         android:letterSpacing="0.02"
-        android:text="🔄  Save &amp; Sync with Cluster"
+        android:text="Save &amp; Sync with Cluster"
         android:textColor="@color/on_primary"
         android:textSize="14sp"
         android:textStyle="bold"

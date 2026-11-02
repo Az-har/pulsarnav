@@ -14,11 +14,11 @@
 
     <!-- App Shortcuts & Samsung Routines -->
     <string name="shortcut_work_short">Work (2W)</string>
-    <string name="shortcut_work_long">🛵 Route to Work (Two-Wheeler)</string>
+    <string name="shortcut_work_long">Route to Work (Two-Wheeler)</string>
     <string name="shortcut_home_short">Home (2W)</string>
-    <string name="shortcut_home_long">🏠 Route to Home (Two-Wheeler)</string>
+    <string name="shortcut_home_long">Route to Home (Two-Wheeler)</string>
     <string name="shortcut_find_short">Find Bike</string>
-    <string name="shortcut_find_long">📍 Walking Directions to Bike</string>
+    <string name="shortcut_find_long">Walking Directions to Bike</string>
     <string name="shortcut_refuel_short">Add Fuel</string>
-    <string name="shortcut_refuel_long">⛽ Quick Refuel Log</string>
+    <string name="shortcut_refuel_long">Quick Refuel Log</string>
 </resources>
