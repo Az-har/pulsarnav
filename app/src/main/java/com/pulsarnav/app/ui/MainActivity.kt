@@ -2450,7 +2450,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateNotificationAccessUi() {
         val granted = isNotificationAccessGranted()
         binding.cardNotificationPermissionBanner.visibility = if (granted) View.GONE else View.VISIBLE
-        binding.tvNotificationAccessStatus.text = if (granted) "Active (Authorized)" else "Action Required (Tap to Enable)"
+        binding.tvNotificationAccessStatus.text = if (granted) "Active (Maps, Waze & Auto)" else "Action Required (Tap to Enable)"
         binding.tvNotificationAccessStatus.setTextColor(
             ContextCompat.getColor(this, if (granted) R.color.mint_accent else R.color.amber_accent)
         )
@@ -2458,8 +2458,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showNotificationAccessDialog(onContinueAnyway: (() -> Unit)? = null) {
         MaterialAlertDialogBuilder(this, R.style.ObsidianAlertDialog)
-            .setTitle("🧭 Google Maps Access Needed")
-            .setMessage("Android requires Notification Access for PulsarNav so it can capture turn-by-turn navigation arrows from Google Maps and stream them onto your Pulsar NS200 cluster.\n\nPlease enable PulsarNav on the next screen.")
+            .setTitle("🧭 Navigation Interceptor Access")
+            .setMessage("Android requires Notification Access for PulsarNav so it can intercept turn-by-turn navigation arrows from Google Maps, Waze, and Android Auto and stream them directly to your Pulsar NS200 cluster.\n\nPlease enable PulsarNav on the next screen.")
             .setPositiveButton("Open Settings") { _, _ ->
                 openNotificationListenerSettings()
             }

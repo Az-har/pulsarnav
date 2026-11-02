@@ -5,12 +5,18 @@
     <!-- Vibration / Haptic Feedback for Glove Mode -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Queries for Google Maps package visibility on Android 11+ -->
+    <!-- Queries for Google Maps, Waze & Android Auto package visibility on Android 11+ -->
     <queries>
         <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.waze" />
+        <package android:name="com.google.android.projection.gearhead" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="google.navigation" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="waze" />
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />

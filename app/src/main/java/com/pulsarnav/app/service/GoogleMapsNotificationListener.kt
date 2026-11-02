@@ -25,11 +25,14 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
     companion object {
         private const val TAG = "PulsarNotificationHub"
         private const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
+        private const val WAZE_PACKAGE = "com.waze"
+        private const val ANDROID_AUTO_PACKAGE = "com.google.android.projection.gearhead"
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
         private const val WHATSAPP_REVERT_DELAY_MS = 6000L
 
         private val ICON_KEYS = arrayOf(
             Notification.EXTRA_LARGE_ICON,
+            Notification.EXTRA_PICTURE,
             "android.ongoingActivityNoti.chipIcon",
             "android.ongoingActivityNoti.nowbarIcon",
             "android.ongoingActivityNoti.secondIcon"
@@ -78,7 +81,9 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         if (sbn == null) return
 
         when (sbn.packageName) {
-            GOOGLE_MAPS_PACKAGE -> handleGoogleMapsNotification(sbn)
+            GOOGLE_MAPS_PACKAGE -> handleNavigationNotification(sbn, "Google Maps")
+            WAZE_PACKAGE -> handleNavigationNotification(sbn, "Waze")
+            ANDROID_AUTO_PACKAGE -> handleNavigationNotification(sbn, "Android Auto")
             WHATSAPP_PACKAGE -> {
                 if (com.pulsarnav.app.data.AppSettings.getInstance(applicationContext).isWhatsAppAlertsEnabled) {
                     handleWhatsAppNotification(sbn)
@@ -87,7 +92,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         }
     }
 
-    private fun handleGoogleMapsNotification(sbn: StatusBarNotification) {
+    private fun handleNavigationNotification(sbn: StatusBarNotification, sourceName: String) {
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
 
@@ -131,10 +136,12 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
 
         _currentNavStep.value = parsedStep
 
-        Log.d(TAG, "Google Maps TBT: ${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m on ${parsedStep.streetName} (ETA: ${parsedStep.etaHour}:${parsedStep.etaMinute})")
+        Log.d(TAG, "[$sourceName] TBT: ${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m on ${parsedStep.streetName} (ETA: ${parsedStep.etaHour}:${parsedStep.etaMinute})")
 
-        // Ensure background persistent service is running while navigating
-        BikeBleForegroundService.start(applicationContext)
+        // Ensure background persistent service is running while navigating without spamming startForegroundService
+        if (!BikeBleForegroundService.isRunning()) {
+            BikeBleForegroundService.start(applicationContext)
+        }
 
         val bleManager = BajajBleManager.getInstance(applicationContext)
         bleManager.updateNavigationStep(parsedStep)
@@ -146,7 +153,12 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         if (ex.containsKey("android.ongoingActivityNoti.primaryInfo")) return true
         if (ex.containsKey("android.ongoingActivityNoti.style")) return true
         if (n.channelId?.contains("navigation", ignoreCase = true) == true ||
-            n.channelId?.contains("foreground", ignoreCase = true) == true) return true
+            n.channelId?.contains("foreground", ignoreCase = true) == true ||
+            n.channelId?.contains("waze", ignoreCase = true) == true ||
+            n.channelId?.contains("gearhead", ignoreCase = true) == true ||
+            n.channelId?.contains("projection", ignoreCase = true) == true) return true
+        if ((n.flags and Notification.FLAG_ONGOING_EVENT) != 0 &&
+            (ex.containsKey(Notification.EXTRA_TITLE) || ex.containsKey(Notification.EXTRA_TEXT))) return true
         return ex.containsKey("android.subText")
     }
 
@@ -186,9 +198,10 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        if (sbn?.packageName == GOOGLE_MAPS_PACKAGE) {
+        val pkg = sbn?.packageName ?: return
+        if (pkg == GOOGLE_MAPS_PACKAGE || pkg == WAZE_PACKAGE || pkg == ANDROID_AUTO_PACKAGE) {
             _currentNavStep.value = null
-            Log.i(TAG, "Google Maps navigation ended -> sending stop frame")
+            Log.i(TAG, "Navigation session ended ($pkg) -> sending stop frame")
             val bleManager = BajajBleManager.getInstance(applicationContext)
             bleManager.stopNavigation()
         }
