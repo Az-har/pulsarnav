@@ -114,6 +114,18 @@ The compiled APK will be at `app/build/outputs/apk/release/app-release.apk`.
 
 ---
 
+## Contributing
+
+Contributions from fellow riders are welcome! Whether you are adding support for another Bajaj/Rouser model, improving navigation heuristics, or fixing a bug:
+
+1. Fork the repository and create your feature branch (`git checkout -b feature/my-feature`).
+2. Verify local builds pass with `./gradlew assembleRelease test`.
+3. Submit a Pull Request.
+
+Direct pushes to `master` are protected. All contributions are reviewed and merged via PRs by [@nikhilmaity00](https://github.com/nikhilmaity00). See [CONTRIBUTING.md](CONTRIBUTING.md) for complete details.
+
+---
+
 ## Legal & Trademark Notice
 
 PulsarNav is an independent, community open-source project and is not affiliated with, endorsed by, or sponsored by Bajaj Auto Limited, OTC Engineering, Google, or Waze. All brand and vehicle names (Bajaj, Pulsar, Dominar, Rouser, Google Maps, Waze) belong to their respective owners and are used strictly for compatibility identification under nominative fair use. Clean-room implemented with zero proprietary code or assets from OEM applications.
