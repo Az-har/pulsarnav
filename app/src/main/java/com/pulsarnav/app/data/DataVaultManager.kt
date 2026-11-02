@@ -23,6 +23,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.UUID
 import java.util.EnumMap
 import java.util.Locale
 
@@ -135,6 +136,9 @@ class DataVaultManager private constructor(private val context: Context) {
 
         val maintObj = JSONObject().apply {
             put("totalOdometerKm", maintenanceManager.status.value.totalOdometerKm)
+            put("lastChainLubeKm", maintenanceManager.getLastChainLubeKm())
+            put("lastServiceKm", maintenanceManager.getLastServiceKm())
+            put("nextServiceTargetOdoKm", maintenanceManager.getNextServiceTargetOdoKm())
         }
         root.put("maintenance", maintObj)
 
@@ -158,7 +162,7 @@ class DataVaultManager private constructor(private val context: Context) {
     fun exportVaultToFile(): File {
         val vaultDir = File(context.cacheDir, "vault").apply { mkdirs() }
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val file = File(vaultDir, "pulsarnav_vault_$timeStamp.pnav")
+        val file = File(vaultDir, "pulsarnav_vault_$timeStamp.pnav.json")
         FileOutputStream(file).use { out ->
             out.write(exportVaultJson().toByteArray(Charsets.UTF_8))
         }
@@ -175,12 +179,12 @@ class DataVaultManager private constructor(private val context: Context) {
             file
         )
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/octet-stream"
+            type = "application/json"
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, "PulsarNav Data Vault Backup")
             putExtra(
                 Intent.EXTRA_TEXT,
-                "PulsarNav Data Vault backup for ${settings.bikeName}. Open this file on your other phone in PulsarNav to restore."
+                "PulsarNav Data Vault backup for ${settings.bikeName}. Open this file on your phone in PulsarNav to restore."
             )
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -198,11 +202,11 @@ class DataVaultManager private constructor(private val context: Context) {
         return try {
             val root = JSONObject(jsonString)
 
-            // Validate header
+            // Validate header / content
             val header = root.optJSONObject("header")
-            val schema = header?.optInt("schemaVersion", 0) ?: 0
-            if (schema < 1) {
-                return Result.failure(IllegalArgumentException("Invalid or unsupported vault file format."))
+            val schema = header?.optInt("schemaVersion", 1) ?: 1
+            if (!root.has("settings") && !root.has("trips") && !root.has("fuel_entries") && !root.has("service_records") && !root.has("maintenance")) {
+                return Result.failure(IllegalArgumentException("Invalid or unrecognized PulsarNav backup file."))
             }
 
             // 1. Restore AppSettings
@@ -226,12 +230,12 @@ class DataVaultManager private constructor(private val context: Context) {
                     val o = fuelArray.getJSONObject(i)
                     importedFuel.add(
                         FuelEntry(
-                            id = o.getString("id"),
-                            timestampMs = o.getLong("timestampMs"),
-                            odometerKm = o.getDouble("odometerKm"),
-                            liters = o.getDouble("liters"),
-                            totalCostInr = o.getDouble("totalCostInr"),
-                            calculatedKmpl = if (o.has("calculatedKmpl")) o.getDouble("calculatedKmpl") else null
+                            id = o.optString("id", UUID.randomUUID().toString()),
+                            timestampMs = o.optLong("timestampMs", System.currentTimeMillis()),
+                            odometerKm = o.optDouble("odometerKm", 0.0),
+                            liters = o.optDouble("liters", 0.0),
+                            totalCostInr = o.optDouble("totalCostInr", 0.0),
+                            calculatedKmpl = if (o.has("calculatedKmpl") && !o.isNull("calculatedKmpl")) o.optDouble("calculatedKmpl") else null
                         )
                     )
                 }
@@ -247,13 +251,13 @@ class DataVaultManager private constructor(private val context: Context) {
                     val o = tripArray.getJSONObject(i)
                     importedTrips.add(
                         Trip(
-                            id = o.getString("id"),
-                            startTimeMs = o.getLong("startTimeMs"),
-                            endTimeMs = o.getLong("endTimeMs"),
-                            distanceKm = o.getDouble("distanceKm"),
-                            durationSec = o.getLong("durationSec"),
-                            topSpeedKmh = o.getDouble("topSpeedKmh"),
-                            avgSpeedKmh = o.getDouble("avgSpeedKmh"),
+                            id = o.optString("id", UUID.randomUUID().toString()),
+                            startTimeMs = o.optLong("startTimeMs", System.currentTimeMillis()),
+                            endTimeMs = o.optLong("endTimeMs", System.currentTimeMillis()),
+                            distanceKm = o.optDouble("distanceKm", 0.0),
+                            durationSec = o.optLong("durationSec", 0L),
+                            topSpeedKmh = o.optDouble("topSpeedKmh", 0.0),
+                            avgSpeedKmh = o.optDouble("avgSpeedKmh", 0.0),
                             routeTitle = o.optString("routeTitle", "Pulsar Ride")
                         )
                     )
@@ -294,25 +298,40 @@ class DataVaultManager private constructor(private val context: Context) {
             }
 
             val maintObj = root.optJSONObject("maintenance")
-            val totalOdo = maintObj?.optDouble("totalOdometerKm", -1.0) ?: -1.0
-            if (totalOdo > 0) {
-                maintenanceManager.setOdometer(totalOdo)
+            if (maintObj != null) {
+                val totalOdo = maintObj.optDouble("totalOdometerKm", -1.0)
+                if (totalOdo >= 0.0) {
+                    maintenanceManager.setOdometer(totalOdo)
+                }
+                val lastLube = maintObj.optDouble("lastChainLubeKm", -1.0)
+                if (lastLube >= 0.0) {
+                    maintenanceManager.setLastChainLubeKm(lastLube)
+                }
+                val lastServ = maintObj.optDouble("lastServiceKm", -1.0)
+                if (lastServ >= 0.0) {
+                    maintenanceManager.setLastServiceKm(lastServ)
+                }
+                val targetOdo = maintObj.optDouble("nextServiceTargetOdoKm", -1.0)
+                if (targetOdo > 0.0) {
+                    maintenanceManager.setNextServiceTargetOdo(targetOdo)
+                }
             }
 
             // 5. Restore Last Parked Location
             val parkObj = root.optJSONObject("parking")
-            if (parkObj != null) {
-                val addr: String? = if (parkObj.has("address")) parkObj.getString("address") else null
+            if (parkObj != null && parkObj.has("lat") && parkObj.has("lng")) {
+                val addr: String? = if (parkObj.has("address") && !parkObj.isNull("address")) parkObj.getString("address") else null
                 parkingManager.saveLocation(
-                    lat = parkObj.getDouble("lat"),
-                    lng = parkObj.getDouble("lng"),
+                    lat = parkObj.optDouble("lat", 0.0),
+                    lng = parkObj.optDouble("lng", 0.0),
                     customAddress = addr
                 )
             }
 
+            val displayRiderName = settings.riderName.ifBlank { settings.bikeName.ifBlank { "Active Rider" } }
             Result.success(
                 VaultImportSummary(
-                    riderName = settings.riderName,
+                    riderName = displayRiderName,
                     bikeName = settings.bikeName,
                     tripsImported = tripCount,
                     fuelEntriesImported = fuelCount,

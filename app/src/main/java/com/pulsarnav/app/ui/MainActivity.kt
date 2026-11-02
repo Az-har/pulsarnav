@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -126,6 +127,12 @@ class MainActivity : AppCompatActivity() {
 
     private val vaultFilePicker = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { importVaultFromUri(it) }
+    }
+
+    private val vaultGetContentPicker = registerForActivityResult(
+        ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { importVaultFromUri(it) }
     }
@@ -292,7 +299,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIntentActions(intent: Intent) {
-        when (intent.action) {
+        val action = intent.action ?: return
+        when (action) {
             "com.pulsarnav.action.NAV_HOME" -> {
                 val addr = appSettings.homeAddress
                 launchNavigationTo(if (addr.isNotBlank() && addr != "Home") addr else "Home")
@@ -313,7 +321,16 @@ class MainActivity : AppCompatActivity() {
             "com.pulsarnav.action.LOG_REFUEL" -> {
                 showAddFuelDialog()
             }
+            Intent.ACTION_VIEW -> {
+                intent.data?.let { uri ->
+                    importVaultFromUri(uri)
+                }
+            }
         }
+        // Consume intent so it does not re-trigger on activity recreation (e.g. rotation, theme changes)
+        intent.action = null
+        intent.data = null
+        setIntent(Intent(this, MainActivity::class.java))
     }
 
     private fun setupBottomNavigation() {
@@ -585,9 +602,6 @@ class MainActivity : AppCompatActivity() {
     private fun setupStatsNavigation() {
         binding.btnViewAllRidingStats.setOnClickListener {
             showRidingStats(showAllRidesTab = false)
-        }
-        binding.btnViewPreviousRides.setOnClickListener {
-            showRidingStats(showAllRidesTab = true)
         }
         binding.btnViewRideDetails.setOnClickListener {
             showRidingStats(showAllRidesTab = true)
@@ -1919,6 +1933,21 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             binding.switchTelemetry.toggle()
         }
+
+        // Headunit Cluster Skip Switch
+        binding.switchSkipHeadunitNav.isChecked = appSettings.isSkipClusterNavWhenHeadunit
+        binding.switchSkipHeadunitNav.setOnCheckedChangeListener { _, isChecked ->
+            provideHapticFeedback()
+            appSettings.isSkipClusterNavWhenHeadunit = isChecked
+            showFeedback(
+                if (isChecked) "Cluster Nav quiet mode: active (Headunit only)"
+                else "Cluster Nav mirror mode: active (Cluster + Headunit)"
+            )
+        }
+        binding.rowSkipHeadunitNav.setOnClickListener {
+            provideHapticFeedback()
+            binding.switchSkipHeadunitNav.toggle()
+        }
     }
 
     private fun getThemeDefinition(themeKey: String, isLightMode: Boolean? = null): CockpitTheme {
@@ -2362,9 +2391,7 @@ class MainActivity : AppCompatActivity() {
         binding.layoutLifetimeStatsHeader.setBackgroundColor(theme.subtleColor)
         binding.tvYouTravelledTitle.setTextColor(theme.accentColor)
         binding.tvLifetimeFuelHome.setTextColor(theme.accentColor)
-        binding.btnViewPreviousRides.strokeColor = theme.cardBorderColor
         binding.btnViewAllRidingStats.strokeColor = theme.cardBorderColor
-        binding.tvViewPreviousRidesArrow.setTextColor(theme.accentColor)
         binding.tvViewAllRidingStatsArrow.setTextColor(theme.accentColor)
 
         // Primary Buttons (Open Google Maps & Scan)
@@ -2490,7 +2517,8 @@ class MainActivity : AppCompatActivity() {
             binding.switchRideTracking,
             binding.switchMediaControl,
             binding.switchWhatsAppAlerts,
-            binding.switchTelemetry
+            binding.switchTelemetry,
+            binding.switchSkipHeadunitNav
         )
         val switchStates = arrayOf(
             intArrayOf(android.R.attr.state_checked),
@@ -2900,9 +2928,13 @@ class MainActivity : AppCompatActivity() {
             dialog.dismiss()
             binding.rootLayout.postDelayed({
                 try {
-                    vaultFilePicker.launch(arrayOf("*/*"))
+                    vaultGetContentPicker.launch("*/*")
                 } catch (e: Exception) {
-                    showFeedback("File picker unavailable: ${e.message}", isAlert = true)
+                    try {
+                        vaultFilePicker.launch(arrayOf("*/*"))
+                    } catch (e2: Exception) {
+                        showFeedback("File picker unavailable: ${e2.message}", isAlert = true)
+                    }
                 }
             }, 250)
         }
@@ -2924,22 +2956,89 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun importVaultFromUri(uri: Uri) {
+    private fun readTextFromUri(uri: Uri): String? {
+        android.util.Log.i("PulsarNav", "Attempting to read text from URI: $uri, scheme: ${uri.scheme}")
+        // Strategy 1: ContentResolver openInputStream
         try {
-            val jsonString = contentResolver.openInputStream(uri)?.use { it.bufferedReader().readText() } ?: ""
-            if (jsonString.isNotBlank()) {
-                val result = DataVaultManager.getInstance(this).importVaultFromJson(jsonString)
-                result.onSuccess { summary ->
-                    showFeedback("Vault Restored: ${summary.tripsImported} trips, ${summary.fuelEntriesImported} fuel logs for ${summary.riderName}")
-                    refreshAllUiAfterVaultImport()
-                }.onFailure { err ->
-                    showFeedback("Import failed: ${err.message}", isAlert = true)
+            contentResolver.openInputStream(uri)?.use { stream ->
+                val content = stream.bufferedReader(Charsets.UTF_8).readText()
+                if (content.isNotBlank()) {
+                    android.util.Log.i("PulsarNav", "Read ${content.length} chars via contentResolver.openInputStream")
+                    return content
                 }
-            } else {
-                showFeedback("Selected vault file is empty", isAlert = true)
             }
         } catch (e: Exception) {
-            showFeedback("Error reading file: ${e.message}", isAlert = true)
+            android.util.Log.w("PulsarNav", "openInputStream failed for $uri: ${e.message}")
+        }
+
+        // Strategy 2: Direct File access if scheme is file or path is extractable
+        val rawPath = when {
+            uri.scheme == ContentResolver.SCHEME_FILE -> uri.path
+            uri.scheme == null -> uri.path
+            else -> {
+                val fullUri = Uri.decode(uri.toString())
+                val idx = fullUri.indexOf("/storage/emulated/0/")
+                if (idx != -1) fullUri.substring(idx) else null
+            }
+        }
+
+        if (!rawPath.isNullOrBlank()) {
+            try {
+                val file = java.io.File(rawPath)
+                if (file.exists() && file.canRead()) {
+                    val content = file.readText(Charsets.UTF_8)
+                    if (content.isNotBlank()) {
+                        android.util.Log.i("PulsarNav", "Read ${content.length} chars via direct File($rawPath)")
+                        return content
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("PulsarNav", "Direct File read failed for $rawPath: ${e.message}")
+            }
+        }
+
+        // Strategy 3: ParcelFileDescriptor
+        try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                java.io.FileInputStream(pfd.fileDescriptor).use { stream ->
+                    val content = stream.bufferedReader(Charsets.UTF_8).readText()
+                    if (content.isNotBlank()) {
+                        android.util.Log.i("PulsarNav", "Read ${content.length} chars via ParcelFileDescriptor")
+                        return content
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("PulsarNav", "openFileDescriptor failed: ${e.message}")
+        }
+
+        return null
+    }
+
+    private fun importVaultFromUri(uri: Uri) {
+        try {
+            android.util.Log.i("PulsarNav", "Importing vault from URI: $uri")
+            val jsonString = readTextFromUri(uri)
+            if (!jsonString.isNullOrBlank()) {
+                val result = DataVaultManager.getInstance(this).importVaultFromJson(jsonString)
+                result.onSuccess { summary ->
+                    val name = summary.riderName.ifBlank { summary.bikeName.ifBlank { "Bike" } }
+                    showFeedback("Vault Restored: ${summary.tripsImported} trips, ${summary.fuelEntriesImported} fuel logs for $name")
+                    try {
+                        refreshAllUiAfterVaultImport()
+                    } catch (e: Exception) {
+                        android.util.Log.e("PulsarNav", "Error refreshing UI after vault import", e)
+                    }
+                }.onFailure { err ->
+                    android.util.Log.e("PulsarNav", "Vault import failed", err)
+                    showFeedback("Import failed: ${err.message ?: "Invalid vault file"}", isAlert = true)
+                }
+            } else {
+                showFeedback("Could not read backup file. Please select the file using 'Import File'.", isAlert = true)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PulsarNav", "Error importing vault", e)
+            showFeedback("Import error: ${e.message}", isAlert = true)
         }
     }
 
@@ -2968,6 +3067,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshAllUiAfterVaultImport() {
+        binding.switchTwoWheeler.isChecked = appSettings.isTwoWheelerMode
+        binding.switchAutoPark.isChecked = appSettings.isAutoParkEnabled
+        binding.switchRideTracking.isChecked = appSettings.isRideTrackingEnabled
+        binding.switchMediaControl.isChecked = appSettings.isMediaControlEnabled
+        binding.switchWhatsAppAlerts.isChecked = appSettings.isWhatsAppAlertsEnabled
+        binding.switchTelemetry.isChecked = appSettings.isTelemetrySyncEnabled
+        binding.switchSkipHeadunitNav.isChecked = appSettings.isSkipClusterNavWhenHeadunit
+        updateFuelPriceUi()
         updateBikeInfoDisplay()
         updateDocumentsSummary()
         updateServiceHistorySummary()
@@ -3492,7 +3599,6 @@ class MainActivity : AppCompatActivity() {
         val spinnerModel = sheetView.findViewById<Spinner>(R.id.spinnerModel)
         val btnNavGmaps = sheetView.findViewById<MaterialButton>(R.id.btnNavGoogleMaps)
         val btnNavWaze = sheetView.findViewById<MaterialButton>(R.id.btnNavWaze)
-        val switchSkipHeadunit = sheetView.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchSkipHeadunitNav)
         val tvPreviewTitle = sheetView.findViewById<TextView>(R.id.tvPreviewTitle)
         val tvPreviewEngine = sheetView.findViewById<TextView>(R.id.tvPreviewEngine)
         val tvPreviewFrontTire = sheetView.findViewById<TextView>(R.id.tvPreviewFrontTire)
@@ -3563,8 +3669,6 @@ class MainActivity : AppCompatActivity() {
             updateNavAppButtons()
         }
 
-        switchSkipHeadunit?.isChecked = appSettings.isSkipClusterNavWhenHeadunit
-
         // Function to refresh the live preview card
         fun refreshPreview() {
             val cIdx = (spinnerCountry?.selectedItemPosition ?: 0).coerceIn(0, VehicleCatalog.COUNTRIES.lastIndex)
@@ -3601,7 +3705,6 @@ class MainActivity : AppCompatActivity() {
 
             appSettings.applyBikeAndCountrySelection(model.id, country.code)
             appSettings.preferredNavApp = selectedNavApp
-            appSettings.isSkipClusterNavWhenHeadunit = switchSkipHeadunit?.isChecked == true
 
             updateHeroRangeDisplay()
             updateBikeInfoDisplay()

@@ -102,6 +102,20 @@ class MaintenanceManager private constructor(private val context: Context) {
         _status.value = computeStatus()
     }
 
+    fun getLastChainLubeKm(): Double = prefs.getString(KEY_LAST_CHAIN_LUBE, "0.0")?.toDoubleOrNull() ?: 0.0
+    fun getLastServiceKm(): Double = prefs.getString(KEY_LAST_SERVICE, "0.0")?.toDoubleOrNull() ?: 0.0
+    fun getNextServiceTargetOdoKm(): Double = prefs.getString(KEY_NEXT_SERVICE_TARGET_ODO, "500.0")?.toDoubleOrNull() ?: 500.0
+
+    fun setLastChainLubeKm(km: Double) {
+        prefs.edit().putString(KEY_LAST_CHAIN_LUBE, "%.1f".format(km)).apply()
+        _status.value = computeStatus()
+    }
+
+    fun setLastServiceKm(km: Double) {
+        prefs.edit().putString(KEY_LAST_SERVICE, "%.1f".format(km)).apply()
+        _status.value = computeStatus()
+    }
+
     fun rescheduleNextService(addKm: Double) {
         val odo = prefs.getString(KEY_ODO, "0.0")?.toDoubleOrNull() ?: 0.0
         setNextServiceTargetOdo(odo + addKm)

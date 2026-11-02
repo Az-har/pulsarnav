@@ -96,25 +96,90 @@ class AppSettings(context: Context) {
         }
     }
 
-    private val _autoParkFlow = MutableStateFlow(prefs.getBoolean(KEY_AUTO_PARK, true))
+    fun getSafeFloat(key: String, defValue: Float): Float {
+        return try {
+            prefs.getFloat(key, defValue)
+        } catch (_: ClassCastException) {
+            try {
+                val raw = prefs.all[key]
+                val parsed = (raw as? Number)?.toFloat() ?: raw?.toString()?.toFloatOrNull() ?: defValue
+                prefs.edit().putFloat(key, parsed).apply()
+                parsed
+            } catch (_: Exception) {
+                defValue
+            }
+        }
+    }
+
+    fun getSafeInt(key: String, defValue: Int): Int {
+        return try {
+            prefs.getInt(key, defValue)
+        } catch (_: ClassCastException) {
+            try {
+                val raw = prefs.all[key]
+                val parsed = (raw as? Number)?.toInt() ?: raw?.toString()?.toIntOrNull() ?: defValue
+                prefs.edit().putInt(key, parsed).apply()
+                parsed
+            } catch (_: Exception) {
+                defValue
+            }
+        }
+    }
+
+    fun getSafeLong(key: String, defValue: Long): Long {
+        return try {
+            prefs.getLong(key, defValue)
+        } catch (_: ClassCastException) {
+            try {
+                val raw = prefs.all[key]
+                val parsed = (raw as? Number)?.toLong() ?: raw?.toString()?.toLongOrNull() ?: defValue
+                prefs.edit().putLong(key, parsed).apply()
+                parsed
+            } catch (_: Exception) {
+                defValue
+            }
+        }
+    }
+
+    fun getSafeBoolean(key: String, defValue: Boolean): Boolean {
+        return try {
+            prefs.getBoolean(key, defValue)
+        } catch (_: ClassCastException) {
+            try {
+                val raw = prefs.all[key]
+                val parsed = when (raw) {
+                    is Boolean -> raw
+                    is Number -> raw.toInt() != 0
+                    is String -> raw.toBoolean()
+                    else -> defValue
+                }
+                prefs.edit().putBoolean(key, parsed).apply()
+                parsed
+            } catch (_: Exception) {
+                defValue
+            }
+        }
+    }
+
+    private val _autoParkFlow = MutableStateFlow(getSafeBoolean(KEY_AUTO_PARK, true))
     val autoParkFlow: StateFlow<Boolean> = _autoParkFlow.asStateFlow()
 
-    private val _rideTrackingFlow = MutableStateFlow(prefs.getBoolean(KEY_RIDE_TRACKING, true))
+    private val _rideTrackingFlow = MutableStateFlow(getSafeBoolean(KEY_RIDE_TRACKING, true))
     val rideTrackingFlow: StateFlow<Boolean> = _rideTrackingFlow.asStateFlow()
 
-    private val _mediaControlFlow = MutableStateFlow(prefs.getBoolean(KEY_MEDIA_CONTROL, true))
+    private val _mediaControlFlow = MutableStateFlow(getSafeBoolean(KEY_MEDIA_CONTROL, true))
     val mediaControlFlow: StateFlow<Boolean> = _mediaControlFlow.asStateFlow()
 
-    private val _whatsappAlertsFlow = MutableStateFlow(prefs.getBoolean(KEY_WHATSAPP_ALERTS, true))
+    private val _whatsappAlertsFlow = MutableStateFlow(getSafeBoolean(KEY_WHATSAPP_ALERTS, true))
     val whatsappAlertsFlow: StateFlow<Boolean> = _whatsappAlertsFlow.asStateFlow()
 
-    private val _maintenanceAlertsFlow = MutableStateFlow(prefs.getBoolean(KEY_MAINTENANCE_ALERTS, true))
+    private val _maintenanceAlertsFlow = MutableStateFlow(getSafeBoolean(KEY_MAINTENANCE_ALERTS, true))
     val maintenanceAlertsFlow: StateFlow<Boolean> = _maintenanceAlertsFlow.asStateFlow()
 
-    private val _telemetrySyncFlow = MutableStateFlow(prefs.getBoolean(KEY_TELEMETRY_SYNC, true))
+    private val _telemetrySyncFlow = MutableStateFlow(getSafeBoolean(KEY_TELEMETRY_SYNC, true))
     val telemetrySyncFlow: StateFlow<Boolean> = _telemetrySyncFlow.asStateFlow()
 
-    private val _twoWheelerModeFlow = MutableStateFlow(prefs.getBoolean(KEY_TWO_WHEELER_MODE, true))
+    private val _twoWheelerModeFlow = MutableStateFlow(getSafeBoolean(KEY_TWO_WHEELER_MODE, true))
     val twoWheelerModeFlow: StateFlow<Boolean> = _twoWheelerModeFlow.asStateFlow()
 
     var isAutoParkEnabled: Boolean
@@ -185,14 +250,14 @@ class AppSettings(context: Context) {
         }
 
     var isDarkMode: Boolean
-        get() = prefs.getBoolean(KEY_DARK_MODE, true)
+        get() = getSafeBoolean(KEY_DARK_MODE, true)
         set(value) {
             prefs.edit().putBoolean(KEY_DARK_MODE, value).apply()
         }
 
     var petrolPricePerLiter: Double
         get() {
-            val stored = prefs.getFloat(KEY_PETROL_PRICE, -1f)
+            val stored = getSafeFloat(KEY_PETROL_PRICE, -1f)
             if (stored > 0f) return stored.toDouble()
             return VehicleCatalog.getCountryByCode(selectedCountryCode).defaultFuelPrice
         }
@@ -225,7 +290,7 @@ class AppSettings(context: Context) {
         }
 
     var isSetupCompleted: Boolean
-        get() = prefs.getBoolean(KEY_IS_SETUP_COMPLETED, false)
+        get() = getSafeBoolean(KEY_IS_SETUP_COMPLETED, false)
         set(value) {
             prefs.edit().putBoolean(KEY_IS_SETUP_COMPLETED, value).apply()
         }
@@ -237,7 +302,7 @@ class AppSettings(context: Context) {
         }
 
     var isSkipClusterNavWhenHeadunit: Boolean
-        get() = prefs.getBoolean(KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT, false)
+        get() = getSafeBoolean(KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT, false)
         set(value) {
             prefs.edit().putBoolean(KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT, value).apply()
         }
@@ -303,31 +368,31 @@ class AppSettings(context: Context) {
         }
 
     var projectedDteKm: Int
-        get() = prefs.getInt(KEY_PROJECTED_DTE, 0)
+        get() = getSafeInt(KEY_PROJECTED_DTE, 0)
         set(value) {
             prefs.edit().putInt(KEY_PROJECTED_DTE, value).apply()
         }
 
     var fuelLevelPercent: Int
-        get() = prefs.getInt(KEY_FUEL_PERCENT, 0)
+        get() = getSafeInt(KEY_FUEL_PERCENT, 0)
         set(value) {
             prefs.edit().putInt(KEY_FUEL_PERCENT, value).apply()
         }
 
     var fuelLevelLiters: Float
-        get() = prefs.getFloat(KEY_FUEL_LITERS, 0.0f)
+        get() = getSafeFloat(KEY_FUEL_LITERS, 0.0f)
         set(value) {
             prefs.edit().putFloat(KEY_FUEL_LITERS, value).apply()
         }
 
     var lastSyncedTimestampMs: Long
-        get() = prefs.getLong(KEY_LAST_SYNC_MS, 0L)
+        get() = getSafeLong(KEY_LAST_SYNC_MS, 0L)
         set(value) {
             prefs.edit().putLong(KEY_LAST_SYNC_MS, value).apply()
         }
 
     var purchaseDateMs: Long
-        get() = prefs.getLong(KEY_PURCHASE_DATE_MS, System.currentTimeMillis())
+        get() = getSafeLong(KEY_PURCHASE_DATE_MS, System.currentTimeMillis())
         set(value) {
             prefs.edit().putLong(KEY_PURCHASE_DATE_MS, value).apply()
         }
@@ -480,13 +545,53 @@ class AppSettings(context: Context) {
     fun restoreSettingsMap(map: Map<String, *>) {
         val editor = prefs.edit()
         for ((k, v) in map) {
-            when (v) {
-                is Boolean -> editor.putBoolean(k, v)
-                is String -> editor.putString(k, v)
-                is Int -> editor.putInt(k, v)
-                is Long -> editor.putLong(k, v)
-                is Float -> editor.putFloat(k, v)
-                is Double -> editor.putFloat(k, v.toFloat())
+            if (v == null || v == org.json.JSONObject.NULL) continue
+            when (k) {
+                KEY_PETROL_PRICE, KEY_FUEL_LITERS -> {
+                    val floatVal = when (v) {
+                        is Number -> v.toFloat()
+                        is String -> v.toFloatOrNull() ?: 0f
+                        else -> 0f
+                    }
+                    editor.putFloat(k, floatVal)
+                }
+                KEY_PROJECTED_DTE, KEY_FUEL_PERCENT, KEY_DAYS_OF_OWNERSHIP -> {
+                    val intVal = when (v) {
+                        is Number -> v.toInt()
+                        is String -> v.toIntOrNull() ?: 0
+                        else -> 0
+                    }
+                    editor.putInt(k, intVal)
+                }
+                KEY_LAST_SYNC_MS, KEY_PURCHASE_DATE_MS -> {
+                    val longVal = when (v) {
+                        is Number -> v.toLong()
+                        is String -> v.toLongOrNull() ?: 0L
+                        else -> 0L
+                    }
+                    editor.putLong(k, longVal)
+                }
+                KEY_AUTO_PARK, KEY_RIDE_TRACKING, KEY_MEDIA_CONTROL, KEY_WHATSAPP_ALERTS,
+                KEY_MAINTENANCE_ALERTS, KEY_TELEMETRY_SYNC, KEY_TWO_WHEELER_MODE,
+                KEY_DARK_MODE, KEY_IS_SETUP_COMPLETED, KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT -> {
+                    val boolVal = when (v) {
+                        is Boolean -> v
+                        is String -> v.toBoolean()
+                        is Number -> v.toInt() != 0
+                        else -> false
+                    }
+                    editor.putBoolean(k, boolVal)
+                }
+                else -> {
+                    when (v) {
+                        is Boolean -> editor.putBoolean(k, v)
+                        is Int -> editor.putInt(k, v)
+                        is Long -> editor.putLong(k, v)
+                        is Float -> editor.putFloat(k, v)
+                        is Double -> editor.putFloat(k, v.toFloat())
+                        else -> editor.putString(k, v.toString())
+                    }
+                }
             }
         }
         editor.apply()

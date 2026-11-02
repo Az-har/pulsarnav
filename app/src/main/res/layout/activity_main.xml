@@ -16,8 +16,8 @@
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingHorizontal="20dp"
-        android:paddingTop="24dp"
-        android:paddingBottom="12dp">
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp">
 
         <LinearLayout
             android:layout_width="0dp"
@@ -1090,47 +1090,7 @@
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
-                <!-- Ather "View Previous Rides" Card -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/btnViewPreviousRides"
-                    android:layout_width="match_parent"
-                    android:layout_height="@dimen/btn_height_primary"
-                    android:layout_marginBottom="@dimen/card_margin_bottom"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    app:cardBackgroundColor="@color/surface_card"
-                    app:cardCornerRadius="@dimen/btn_corner_radius"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/surface_border"
-                    app:strokeWidth="@dimen/card_stroke_width">
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingHorizontal="16dp">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="View previous rides"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/tvViewPreviousRidesArrow"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="→"
-                            android:textColor="@color/wine_red_light"
-                            android:textSize="18sp"
-                            android:textStyle="bold" />
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
 
                 <!-- Ather "Lifetime Stats" Card (With Milestone Progress) -->
                 <com.google.android.material.card.MaterialCardView
@@ -3180,6 +3140,54 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:checked="true" />
+                        </LinearLayout>
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:layout_marginVertical="6dp"
+                            android:background="@color/surface_border_subtle" />
+
+                        <!-- Headunit Cluster Skip Switch -->
+                        <LinearLayout
+                            android:id="@+id/rowSkipHeadunitNav"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:minHeight="58dp"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="4dp"
+                            android:paddingVertical="8dp">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Skip Cluster Nav with Headunit"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="14sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Keeps cluster quiet when Open Headunit / AA active"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <com.google.android.material.materialswitch.MaterialSwitch
+                                android:id="@+id/switchSkipHeadunitNav"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
                         </LinearLayout>
 
                         <View
