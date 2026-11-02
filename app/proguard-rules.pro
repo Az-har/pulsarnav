@@ -8,3 +8,7 @@
 -keep class com.pulsarnav.app.model.** { *; }
 -keep class com.pulsarnav.app.protocol.** { *; }
 -keep class com.pulsarnav.app.parser.** { *; }
+-keep class com.pulsarnav.app.data.** { *; }
+-keep class com.pulsarnav.app.maintenance.** { *; }
+-keep class com.pulsarnav.app.tracking.** { *; }
+-keep class com.pulsarnav.app.telephony.** { *; }

@@ -1,10 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Secure, least-privilege FileProvider paths -->
     <files-path name="documents" path="documents/" />
-    <files-path name="files" path="." />
-    <cache-path name="cache" path="." />
     <cache-path name="vault" path="vault/" />
     <files-path name="vault" path="vault/" />
-    <external-cache-path name="ext_cache" path="." />
-    <external-files-path name="ext_files" path="." />
 </paths>

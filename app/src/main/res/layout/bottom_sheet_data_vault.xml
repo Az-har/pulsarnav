@@ -160,7 +160,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:layout_marginBottom="10dp"
-        android:text="Export an encrypted vault bundle to send via Quick Share, Drive or Files."
+        android:text="Export a complete vault backup bundle to send via Quick Share, Drive or Files."
         android:textColor="@color/text_secondary"
         android:textSize="12sp" />
 

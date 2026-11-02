@@ -323,7 +323,7 @@ class MainActivity : AppCompatActivity() {
             }
             Intent.ACTION_VIEW -> {
                 intent.data?.let { uri ->
-                    importVaultFromUri(uri)
+                    showExternalVaultImportConfirmation(uri)
                 }
             }
         }
@@ -3013,6 +3013,22 @@ class MainActivity : AppCompatActivity() {
         }
 
         return null
+    }
+
+    private fun showExternalVaultImportConfirmation(uri: Uri) {
+        val fileName = try {
+            uri.lastPathSegment?.substringAfterLast('/') ?: "Data Vault Backup"
+        } catch (_: Exception) {
+            "Data Vault Backup"
+        }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Restore Data Vault?")
+            .setMessage("Do you want to restore motorcycle settings, trips, and fuel logs from '$fileName' into PulsarNav?")
+            .setPositiveButton("Restore") { _, _ ->
+                importVaultFromUri(uri)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun importVaultFromUri(uri: Uri) {
