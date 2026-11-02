@@ -54,6 +54,49 @@
                 android:textColor="@color/text_tertiary"
                 android:textSize="9sp"
                 android:textStyle="bold" />
+
+            <!-- Non-blocking Hardware Readiness Clues (Bluetooth & GPS status) -->
+            <LinearLayout
+                android:id="@+id/layoutHardwareWarnings"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/chipBtWarning"
+                    android:layout_width="wrap_content"
+                    android:layout_height="22dp"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/pill_badge"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:paddingHorizontal="7dp"
+                    android:text="BT OFF ⚠️"
+                    android:textColor="@color/amber_accent"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/chipGpsWarning"
+                    android:layout_width="wrap_content"
+                    android:layout_height="22dp"
+                    android:background="@drawable/pill_badge"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:paddingHorizontal="7dp"
+                    android:text="GPS OFF ⚠️"
+                    android:textColor="@color/amber_accent"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
@@ -2130,13 +2173,26 @@
                         </LinearLayout>
 
                         <TextView
+                            android:id="@+id/btnSetupBikeModel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:background="@drawable/pill_badge"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="5dp"
+                            android:text="🏍️ Model"
+                            android:textColor="@color/wine_red_light"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
                             android:id="@+id/btnEditBikeInfo"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:background="@drawable/pill_badge"
                             android:paddingHorizontal="10dp"
                             android:paddingVertical="5dp"
-                            android:text="✏️ Edit"
+                            android:text="✏️ Plate"
                             android:textColor="@color/text_primary"
                             android:textSize="11sp"
                             android:textStyle="bold" />

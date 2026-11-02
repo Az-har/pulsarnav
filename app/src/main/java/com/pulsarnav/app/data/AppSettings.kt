@@ -30,6 +30,15 @@ class AppSettings(context: Context) {
         const val KEY_PETROL_PRICE = "petrol_price_per_liter"
         const val KEY_LAST_BIKE_MAC = "last_connected_bike_mac"
 
+        const val KEY_SELECTED_MODEL_ID = "selected_model_id"
+        const val KEY_SELECTED_COUNTRY_CODE = "selected_country_code"
+        const val KEY_IS_SETUP_COMPLETED = "is_setup_completed"
+        const val KEY_PREFERRED_NAV_APP = "preferred_nav_app"
+        const val KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT = "skip_cluster_nav_when_headunit"
+
+        const val NAV_APP_GOOGLE_MAPS = "google_maps"
+        const val NAV_APP_WAZE = "waze"
+
         const val KEY_BIKE_NAME = "bike_name"
         const val KEY_BIKE_REG = "bike_reg_number"
         const val KEY_BIKE_SPEC = "bike_model_spec"
@@ -173,6 +182,61 @@ class AppSettings(context: Context) {
         set(value) {
             prefs.edit().putString(KEY_LAST_BIKE_MAC, value).apply()
         }
+
+    var selectedModelId: String
+        get() = prefs.getString(KEY_SELECTED_MODEL_ID, "ns200") ?: "ns200"
+        set(value) {
+            prefs.edit().putString(KEY_SELECTED_MODEL_ID, value).apply()
+        }
+
+    var selectedCountryCode: String
+        get() = prefs.getString(KEY_SELECTED_COUNTRY_CODE, "IN") ?: "IN"
+        set(value) {
+            prefs.edit().putString(KEY_SELECTED_COUNTRY_CODE, value).apply()
+        }
+
+    var isSetupCompleted: Boolean
+        get() = prefs.getBoolean(KEY_IS_SETUP_COMPLETED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_IS_SETUP_COMPLETED, value).apply()
+        }
+
+    var preferredNavApp: String
+        get() = prefs.getString(KEY_PREFERRED_NAV_APP, NAV_APP_GOOGLE_MAPS) ?: NAV_APP_GOOGLE_MAPS
+        set(value) {
+            prefs.edit().putString(KEY_PREFERRED_NAV_APP, value).apply()
+        }
+
+    var isSkipClusterNavWhenHeadunit: Boolean
+        get() = prefs.getBoolean(KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT, value).apply()
+        }
+
+    fun getActiveBikeProfile(): BikeModelProfile {
+        return VehicleCatalog.getModelById(selectedModelId)
+    }
+
+    fun getActiveCountryProfile(): CountryProfile {
+        return VehicleCatalog.getCountryByCode(selectedCountryCode)
+    }
+
+    fun applyBikeAndCountrySelection(modelId: String, countryCode: String) {
+        selectedModelId = modelId
+        selectedCountryCode = countryCode
+        isSetupCompleted = true
+
+        val model = VehicleCatalog.getModelById(modelId)
+        val country = VehicleCatalog.getCountryByCode(countryCode)
+
+        bikeName = VehicleCatalog.getLocalizedBikeName(model, country)
+        bikeModelSpec = model.engineSpec
+
+        if (emergencyContactPhone.isBlank() || emergencyContactPhone == "112" || emergencyContactPhone == "911" || emergencyContactPhone == "123") {
+            emergencyContactPhone = country.sosNumber
+            emergencyContactName = "${country.name} SOS (${country.sosNumber})"
+        }
+    }
 
     var bikeName: String
         get() = prefs.getString(KEY_BIKE_NAME, "Pulsar NS200") ?: "Pulsar NS200"

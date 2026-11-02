@@ -99,6 +99,12 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         // Verify it is an ongoing navigation notification
         if (!isNavigationNotification(notification, extras)) return
 
+        val settings = com.pulsarnav.app.data.AppSettings.getInstance(applicationContext)
+        if (settings.isSkipClusterNavWhenHeadunit && sourceName == "Android Auto") {
+            Log.d(TAG, "Skipping BLE cluster update because Headunit navigation mirroring is disabled in settings")
+            return
+        }
+
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
         val subtext = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()

@@ -2,8 +2,12 @@ package com.pulsarnav.app.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -14,6 +18,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import com.pulsarnav.app.data.VehicleCatalog
+import com.pulsarnav.app.data.BikeModelProfile
+import com.pulsarnav.app.data.CountryProfile
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.AdapterView
@@ -189,11 +196,46 @@ class MainActivity : AppCompatActivity() {
 
         // Initial scan if permissions are ready
         checkAndStartScan(silent = true)
+
+        // Show introduction / vehicle setup on first launch if not configured yet
+        binding.root.post {
+            if (!appSettings.isSetupCompleted) {
+                showVehicleSetupBottomSheet()
+            }
+        }
+    }
+
+    private val hardwareStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            updateHardwareReadinessUi()
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(LocationManager.PROVIDERS_CHANGED_ACTION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                addAction(LocationManager.MODE_CHANGED_ACTION)
+            }
+        }
+        registerReceiver(hardwareStateReceiver, filter)
+        updateHardwareReadinessUi()
+    }
+
+    override fun onStop() {
+        try {
+            unregisterReceiver(hardwareStateReceiver)
+        } catch (_: Exception) {}
+        super.onStop()
     }
 
     override fun onResume() {
         super.onResume()
         updateNotificationAccessUi()
+        updateHardwareReadinessUi()
+        updateBikeInfoDisplay()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -345,30 +387,35 @@ class MainActivity : AppCompatActivity() {
         val dteKm = appSettings.projectedDteKm
         val fuelPercent = appSettings.fuelLevelPercent
         val fuelLiters = appSettings.fuelLevelLiters
+        val model = appSettings.getActiveBikeProfile()
+        val tankMax = model.tankCapacityLiters
 
         if (dteKm <= 0 && fuelPercent <= 0) {
             binding.tvProjectedRange.text = "--"
             binding.tvDteSubtext.text = "Tap Recalibrate to sync"
-            binding.tvFuelLevelText.text = "0% Tank Level • 0.0L / 12.0L"
+            binding.tvFuelLevelText.text = "0% Tank Level • 0.0L / ${"%.1f".format(tankMax)}L"
             binding.progressFuelLevel.progress = 0
         } else {
             binding.tvProjectedRange.text = if (dteKm > 0) dteKm.toString() else "--"
             binding.tvDteSubtext.text = "~${"%.1f".format(fuelLiters)}L in tank"
-            binding.tvFuelLevelText.text = "${fuelPercent}% Tank Level • ${"%.1f".format(fuelLiters)}L / 12.0L"
+            binding.tvFuelLevelText.text = "${fuelPercent}% Tank Level • ${"%.1f".format(fuelLiters)}L / ${"%.1f".format(tankMax)}L"
             binding.progressFuelLevel.progress = fuelPercent
         }
 
+        binding.tvTankSpecs.text = "${tankMax.toInt()} L FUEL TANK"
         updateSyncTimeDisplay()
     }
 
     private fun updateBikeInfoDisplay() {
-        binding.tvBikeName.text = appSettings.bikeName.ifBlank { "Pulsar NS200" }
-        binding.tvBikeReg.text = if (appSettings.bikeRegNumber.isNotBlank()) {
-            "${appSettings.bikeRegNumber} • ${appSettings.bikeModelSpec}"
-        } else {
-            "Add Number Plate • ${appSettings.bikeModelSpec}"
-        }
+        val model = appSettings.getActiveBikeProfile()
+        val country = appSettings.getActiveCountryProfile()
+        val localizedName = VehicleCatalog.getLocalizedBikeName(model, country)
+
+        binding.tvBikeName.text = localizedName
+        val reg = if (appSettings.bikeRegNumber.isNotBlank()) appSettings.bikeRegNumber else "Add Number Plate"
+        binding.tvBikeReg.text = "$reg • ${country.flag} ${country.name}"
         binding.tvProfileName.text = appSettings.riderName.ifBlank { "Rider Profile" }
+        binding.tvTankSpecs.text = "${model.tankCapacityLiters.toInt()} L FUEL TANK"
     }
 
     private fun updateDocumentsSummary() {
@@ -750,6 +797,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun proceedWithGoogleMapsLaunch() {
         BikeBleForegroundService.start(this)
+        if (appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("waze://?navigate=yes")).apply {
+                    setPackage("com.waze")
+                }
+                startActivity(intent)
+                return
+            } catch (_: Exception) {
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://waze.com/ul?navigate=yes")))
+                    return
+                } catch (_: Exception) {}
+            }
+        }
         val mode = if (appSettings.isTwoWheelerMode) "l" else "d"
         try {
             val gmmIntentUri = Uri.parse("google.navigation:q=&mode=$mode")
@@ -762,7 +823,7 @@ class MainActivity : AppCompatActivity() {
                 val travelMode = if (appSettings.isTwoWheelerMode) "two_wheeler" else "driving"
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com?travelmode=$travelMode")))
             } catch (e2: Exception) {
-                showFeedback("Could not open Google Maps", isAlert = true)
+                showFeedback("Could not open navigation app", isAlert = true)
             }
         }
     }
@@ -845,6 +906,28 @@ class MainActivity : AppCompatActivity() {
         binding.btnEditBikeInfo.setOnClickListener {
             provideHapticFeedback()
             showEditBikeInfoDialog()
+        }
+        binding.btnSetupBikeModel.setOnClickListener {
+            provideHapticFeedback()
+            showVehicleSetupBottomSheet()
+        }
+
+        // Hardware warning chips in top bar
+        binding.chipBtWarning.setOnClickListener {
+            provideHapticFeedback()
+            try {
+                startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+            } catch (_: Exception) {
+                showFeedback("Open Bluetooth Settings in Android", isAlert = true)
+            }
+        }
+        binding.chipGpsWarning.setOnClickListener {
+            provideHapticFeedback()
+            try {
+                startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            } catch (_: Exception) {
+                showFeedback("Open Location Settings in Android", isAlert = true)
+            }
         }
 
         // Edit Rider Profile
@@ -1586,25 +1669,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showManualDialog() {
+        val model = appSettings.getActiveBikeProfile()
+        val country = appSettings.getActiveCountryProfile()
+        val bikeTitle = VehicleCatalog.getLocalizedBikeName(model, country)
+
         MaterialAlertDialogBuilder(this)
-            .setTitle("📖 Pulsar NS200 BS6 Quick Handbook")
+            .setTitle("📖 $bikeTitle Quick Handbook")
             .setMessage(
                 "⚙️ ENGINE & TRANSMISSION:\n" +
-                "• 199.5 cc Triple Spark 4V Liquid-Cooled\n" +
-                "• 24.5 PS @ 9750 RPM • 18.7 Nm @ 8000 RPM\n\n" +
-                "🛞 TIRE PRESSURES (Cold):\n" +
-                "• Front: 28 PSI (Solo & Pillion)\n" +
-                "• Rear: 32 PSI (Solo) • 36 PSI (Pillion)\n\n" +
+                "• ${model.engineSpec}\n\n" +
+                "🛞 RECOMMENDED COLD TIRE PRESSURES:\n" +
+                "• Front: ${model.coldTireFrontPsiSolo} PSI (Solo) • ${model.coldTireFrontPsiPillion} PSI (Pillion)\n" +
+                "  (Size: ${model.tireFrontSize})\n" +
+                "• Rear: ${model.coldTireRearPsiSolo} PSI (Solo) • ${model.coldTireRearPsiPillion} PSI (Pillion)\n" +
+                "  (Size: ${model.tireRearSize})\n\n" +
                 "🛢️ FLUID SPECIFICATIONS:\n" +
-                "• Engine Oil: 10W-50 Semi-Synthetic / Fully Synthetic (1200 ml)\n" +
-                "• Coolant: Ready-mix Glycol Coolant (1000 ml)\n" +
+                "• Engine Oil: ${model.engineOilSpec}\n" +
+                "• Coolant: ${model.coolantSpec}\n" +
                 "• Brake Fluid: DOT 4\n\n" +
                 "⛓️ DRIVE CHAIN & PLUGS:\n" +
-                "• Free Slack: 25 - 35 mm (Lubricate every 500 km)\n" +
-                "• Spark Plugs: Champion RG4HC (Center) + RG6HCC (Left & Right)\n" +
-                "• Fuel Tank: 12.0 L (Reserve begins at 2.4 L)"
+                "• Free Slack: ${model.chainSlackMm}\n" +
+                "• Spark Plugs: ${model.sparkPlugSpec}\n" +
+                "• Fuel Tank: ${model.tankCapacityLiters} L (Reserve: ${model.reserveCapacityLiters} L)\n\n" +
+                "🚨 LOCAL EMERGENCY HELPLINES (${country.name} ${country.flag}):\n" +
+                "• Primary SOS: ${country.sosNumber}\n" +
+                "• Ambulance: ${country.ambulanceNumber} • Police: ${country.policeNumber}\n" +
+                "• Roadside Assistance: ${country.roadsideAssistance}"
             )
             .setPositiveButton("Got It", null)
+            .setNeutralButton("Change Model") { _, _ ->
+                provideHapticFeedback()
+                showVehicleSetupBottomSheet()
+            }
             .show()
     }
 
@@ -2001,6 +2097,8 @@ class MainActivity : AppCompatActivity() {
         binding.ivProfileAvatar.imageTintList = ColorStateList.valueOf(theme.accentColor)
         binding.btnEditBikeInfo.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnEditBikeInfo.setTextColor(theme.accentColor)
+        binding.btnSetupBikeModel.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+        binding.btnSetupBikeModel.setTextColor(theme.accentColor)
         binding.tvDocumentsBadge.setTextColor(theme.accentColor)
 
         binding.btnConfigHome.setTextColor(theme.accentColor)
@@ -2229,14 +2327,26 @@ class MainActivity : AppCompatActivity() {
         val med = appSettings.medicalNotes
         tvSheetMedicalNotes?.text = if (med.isNotBlank() && med != "No known allergies") med else "No allergies or medical notes recorded. Tap Edit to update."
 
+        val country = appSettings.getActiveCountryProfile()
+        val tvAmbTitle = sheetView.findViewById<TextView>(R.id.tvSosAmbulanceTitle)
+        val tvAmbSub = sheetView.findViewById<TextView>(R.id.tvSosAmbulanceSubtitle)
+        val tvNatTitle = sheetView.findViewById<TextView>(R.id.tvSosNationalTitle)
+        val tvNatSub = sheetView.findViewById<TextView>(R.id.tvSosNationalSubtitle)
+
+        tvAmbTitle?.text = "${country.ambulanceNumber} — Ambulance / Medical"
+        tvAmbSub?.text = "First Responders (${country.name} ${country.flag})"
+
+        tvNatTitle?.text = "${country.sosNumber} — National Emergency SOS"
+        tvNatSub?.text = "Police & Emergency Response (${country.name})"
+
         cardSos108?.setOnClickListener {
             provideHapticFeedback()
-            dialEmergencyNumber("108")
+            dialEmergencyNumber(country.ambulanceNumber)
         }
 
         cardSos112?.setOnClickListener {
             provideHapticFeedback()
-            dialEmergencyNumber("112")
+            dialEmergencyNumber(country.sosNumber)
         }
 
         cardSosIce?.setOnClickListener {
@@ -2415,6 +2525,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun proceedWithNavigationLaunch(destination: String) {
         BikeBleForegroundService.start(this)
+        if (appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE) {
+            try {
+                val uri = Uri.parse("waze://?q=${Uri.encode(destination)}&navigate=yes")
+                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    setPackage("com.waze")
+                }
+                startActivity(intent)
+                return
+            } catch (_: Exception) {
+                try {
+                    val webWaze = Uri.parse("https://waze.com/ul?q=${Uri.encode(destination)}&navigate=yes")
+                    startActivity(Intent(Intent.ACTION_VIEW, webWaze))
+                    return
+                } catch (_: Exception) {}
+            }
+        }
+
         val mode = if (appSettings.isTwoWheelerMode) "l" else "d"
         try {
             val uri = Uri.parse("google.navigation:q=${Uri.encode(destination)}&mode=$mode")
@@ -2428,7 +2555,7 @@ class MainActivity : AppCompatActivity() {
                 val webUri = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=${Uri.encode(destination)}&travelmode=$travelMode")
                 startActivity(Intent(Intent.ACTION_VIEW, webUri))
             } catch (e2: Exception) {
-                showFeedback("Could not open Google Maps navigation", isAlert = true)
+                showFeedback("Could not open navigation app", isAlert = true)
             }
         }
     }
@@ -2785,7 +2912,74 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun updateHardwareReadinessUi() {
+        val btAdapter = (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        val isBtOn = btAdapter?.isEnabled == true
+        val locManager = getSystemService(LOCATION_SERVICE) as? LocationManager
+        val isGpsOn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            locManager?.isLocationEnabled == true
+        } else {
+            locManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
+        }
+
+        binding.chipBtWarning.visibility = if (!isBtOn) View.VISIBLE else View.GONE
+        binding.chipGpsWarning.visibility = if (!isGpsOn) View.VISIBLE else View.GONE
+
+        val isConnected = bleManager.connectionState.value is BleConnectionState.Connected
+        if (!isConnected) {
+            when {
+                !isBtOn && !isGpsOn -> {
+                    binding.tvSubStatus.text = "⚠️ Turn ON Bluetooth & GPS in Quick Settings"
+                    binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
+                }
+                !isBtOn -> {
+                    binding.tvSubStatus.text = "⚠️ Turn ON Bluetooth in Quick Settings"
+                    binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
+                }
+                !isGpsOn -> {
+                    binding.tvSubStatus.text = "⚠️ Turn ON Location (GPS) in Quick Settings"
+                    binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
+                }
+                else -> {
+                    binding.tvSubStatus.text = "Auto-reconnects when ignition turns ON"
+                    binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.text_tertiary))
+                }
+            }
+        }
+    }
+
     private fun checkAndStartScan(silent: Boolean = false) {
+        val btAdapter = (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        val isBtOn = btAdapter?.isEnabled == true
+        val locManager = getSystemService(LOCATION_SERVICE) as? LocationManager
+        val isGpsOn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            locManager?.isLocationEnabled == true
+        } else {
+            locManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
+        }
+
+        updateHardwareReadinessUi()
+
+        if (!isBtOn) {
+            if (!silent) {
+                showFeedback("Bluetooth is OFF. Turn ON Bluetooth to scan for your bike console.", isAlert = true)
+                try {
+                    startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                } catch (_: Exception) {}
+            }
+            return
+        }
+
+        if (!isGpsOn) {
+            if (!silent) {
+                showFeedback("Location (GPS) is OFF. Android requires Location to scan for Bluetooth devices.", isAlert = true)
+                try {
+                    startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                } catch (_: Exception) {}
+            }
+            return
+        }
+
         val required = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             required.add(Manifest.permission.BLUETOOTH_SCAN)
@@ -2810,6 +3004,136 @@ class MainActivity : AppCompatActivity() {
         } else if (!silent) {
             permissionLauncher.launch(missing.toTypedArray())
         }
+    }
+
+    private fun showVehicleSetupBottomSheet() {
+        val sheet = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
+        val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_vehicle_setup, null)
+        sheet.setContentView(sheetView)
+
+        val spinnerCountry = sheetView.findViewById<Spinner>(R.id.spinnerCountry)
+        val spinnerModel = sheetView.findViewById<Spinner>(R.id.spinnerModel)
+        val btnNavGmaps = sheetView.findViewById<MaterialButton>(R.id.btnNavGoogleMaps)
+        val btnNavWaze = sheetView.findViewById<MaterialButton>(R.id.btnNavWaze)
+        val switchSkipHeadunit = sheetView.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchSkipHeadunitNav)
+        val tvPreviewTitle = sheetView.findViewById<TextView>(R.id.tvPreviewTitle)
+        val tvPreviewEngine = sheetView.findViewById<TextView>(R.id.tvPreviewEngine)
+        val tvPreviewFrontTire = sheetView.findViewById<TextView>(R.id.tvPreviewFrontTire)
+        val tvPreviewRearTire = sheetView.findViewById<TextView>(R.id.tvPreviewRearTire)
+        val tvPreviewTank = sheetView.findViewById<TextView>(R.id.tvPreviewTank)
+        val tvPreviewSos = sheetView.findViewById<TextView>(R.id.tvPreviewSos)
+        val btnSave = sheetView.findViewById<MaterialButton>(R.id.btnSaveVehicleSetup)
+
+        btnSave?.backgroundTintList = ColorStateList.valueOf(currentTheme.primaryColor)
+        btnSave?.setTextColor(currentTheme.onPrimaryColor)
+
+        // Setup Country Spinner
+        val countryNames = VehicleCatalog.COUNTRIES.map {
+            "${it.flag}  ${it.name} (SOS: ${it.sosNumber})"
+        }
+        val countryAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, countryNames)
+        spinnerCountry?.adapter = countryAdapter
+
+        val activeCountryIndex = VehicleCatalog.COUNTRIES.indexOfFirst {
+            it.code.equals(appSettings.selectedCountryCode, ignoreCase = true)
+        }.coerceAtLeast(0)
+        spinnerCountry?.setSelection(activeCountryIndex)
+
+        // Setup Model Spinner
+        val modelNames = VehicleCatalog.MODELS.map {
+            "[${it.series}] ${it.name}"
+        }
+        val modelAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, modelNames)
+        spinnerModel?.adapter = modelAdapter
+
+        val activeModelIndex = VehicleCatalog.MODELS.indexOfFirst {
+            it.id.equals(appSettings.selectedModelId, ignoreCase = true)
+        }.coerceAtLeast(0)
+        spinnerModel?.setSelection(activeModelIndex)
+
+        // Setup Nav App Selection
+        var selectedNavApp = appSettings.preferredNavApp
+        fun updateNavAppButtons() {
+            if (selectedNavApp == AppSettings.NAV_APP_WAZE) {
+                btnNavWaze?.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
+                btnNavWaze?.setTextColor(currentTheme.accentColor)
+                btnNavWaze?.strokeColor = ColorStateList.valueOf(currentTheme.accentColor)
+
+                btnNavGmaps?.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_card))
+                btnNavGmaps?.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+                btnNavGmaps?.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_border))
+            } else {
+                btnNavGmaps?.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
+                btnNavGmaps?.setTextColor(currentTheme.accentColor)
+                btnNavGmaps?.strokeColor = ColorStateList.valueOf(currentTheme.accentColor)
+
+                btnNavWaze?.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_card))
+                btnNavWaze?.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+                btnNavWaze?.strokeColor = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.surface_border))
+            }
+        }
+        updateNavAppButtons()
+
+        btnNavGmaps?.setOnClickListener {
+            provideHapticFeedback()
+            selectedNavApp = AppSettings.NAV_APP_GOOGLE_MAPS
+            updateNavAppButtons()
+        }
+
+        btnNavWaze?.setOnClickListener {
+            provideHapticFeedback()
+            selectedNavApp = AppSettings.NAV_APP_WAZE
+            updateNavAppButtons()
+        }
+
+        switchSkipHeadunit?.isChecked = appSettings.isSkipClusterNavWhenHeadunit
+
+        // Function to refresh the live preview card
+        fun refreshPreview() {
+            val cIdx = (spinnerCountry?.selectedItemPosition ?: 0).coerceIn(0, VehicleCatalog.COUNTRIES.lastIndex)
+            val mIdx = (spinnerModel?.selectedItemPosition ?: 0).coerceIn(0, VehicleCatalog.MODELS.lastIndex)
+            val country = VehicleCatalog.COUNTRIES[cIdx]
+            val model = VehicleCatalog.MODELS[mIdx]
+            val bikeDisplayName = VehicleCatalog.getLocalizedBikeName(model, country)
+
+            tvPreviewTitle?.text = "$bikeDisplayName Specs Preview"
+            tvPreviewEngine?.text = model.engineSpec
+            tvPreviewFrontTire?.text = "${model.coldTireFrontPsiSolo} PSI (Solo) • ${model.coldTireFrontPsiPillion} PSI (Pillion)\n${model.tireFrontSize}"
+            tvPreviewRearTire?.text = "${model.coldTireRearPsiSolo} PSI (Solo) • ${model.coldTireRearPsiPillion} PSI (Pillion)\n${model.tireRearSize}"
+            tvPreviewTank?.text = "${model.tankCapacityLiters} L (Reserve: ${model.reserveCapacityLiters} L)"
+            tvPreviewSos?.text = "${country.sosNumber} (${country.name} SOS)"
+        }
+
+        val listener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p0: AdapterView<*>?, p1: View?, p2: Int, p3: Long) {
+                refreshPreview()
+            }
+            override fun onNothingSelected(p0: AdapterView<*>?) {}
+        }
+        spinnerCountry?.onItemSelectedListener = listener
+        spinnerModel?.onItemSelectedListener = listener
+        refreshPreview()
+
+        btnSave?.setOnClickListener {
+            provideHapticFeedback()
+            val cIdx = (spinnerCountry?.selectedItemPosition ?: 0).coerceIn(0, VehicleCatalog.COUNTRIES.lastIndex)
+            val mIdx = (spinnerModel?.selectedItemPosition ?: 0).coerceIn(0, VehicleCatalog.MODELS.lastIndex)
+            val country = VehicleCatalog.COUNTRIES[cIdx]
+            val model = VehicleCatalog.MODELS[mIdx]
+
+            appSettings.applyBikeAndCountrySelection(model.id, country.code)
+            appSettings.preferredNavApp = selectedNavApp
+            appSettings.isSkipClusterNavWhenHeadunit = switchSkipHeadunit?.isChecked == true
+
+            updateHeroRangeDisplay()
+            updateBikeInfoDisplay()
+            updateQuickNavButtons()
+            val bikeDisplayName = VehicleCatalog.getLocalizedBikeName(model, country)
+            showFeedback("Configured for $bikeDisplayName (${country.name})")
+            sheet.dismiss()
+        }
+
+        sheet.show()
     }
 
     private fun observeBleState() {
