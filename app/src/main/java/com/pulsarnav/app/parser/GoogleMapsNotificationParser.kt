@@ -27,30 +27,42 @@ object GoogleMapsNotificationParser {
         title: String?,
         text: String?,
         subtext: String?,
+        primaryInfo: String? = null,
+        secondaryInfo: String? = null,
+        progressMax: Int = -1,
         iconObj: Any? = null
     ): ParsedNavigationStep? {
         val sTitle = title?.trim().orEmpty()
         val sText = text?.trim().orEmpty()
         val sSubtext = subtext?.trim().orEmpty()
+        val sPrimaryInfo = primaryInfo?.trim().orEmpty()
+        val sSecondaryInfo = secondaryInfo?.trim().orEmpty()
 
-        if (sTitle.isBlank() && sText.isBlank() && sSubtext.isBlank()) return null
+        if (sTitle.isBlank() && sText.isBlank() && sSubtext.isBlank() && sPrimaryInfo.isBlank() && sSecondaryInfo.isBlank()) {
+            return null
+        }
         if (sTitle.isEmpty() && sSubtext.isEmpty() && sText.contains("rerout", ignoreCase = true)) {
             return null // Rerouting
         }
 
-        // 1. Distances
-        var stepDist = parseDistanceMeters(sTitle)
+        // 1. Step Distance (check ongoing activity primaryInfo first, then title, then text)
+        var stepDist = parseDistanceMeters(sPrimaryInfo)
+        if (stepDist < 0) {
+            stepDist = parseDistanceMeters(sTitle)
+        }
         if (stepDist < 0) {
             stepDist = parseDistanceMeters(sText)
         }
-        var totalDist = parseDistanceMeters(sSubtext)
+        stepDist = stepDist.coerceAtLeast(0)
+
+        // 2. Total Trip Distance (check Android progressMax direct meters first, then subtext)
+        var totalDist = if (progressMax > 0) progressMax else parseDistanceMeters(sSubtext)
         if (totalDist < 0) {
             totalDist = stepDist.coerceAtLeast(0)
         }
-        stepDist = stepDist.coerceAtLeast(0)
 
-        // 2. Maneuver Classification
-        val fullContent = "$sTitle $sText $sSubtext".lowercase()
+        // 3. Maneuver Classification
+        val fullContent = "$sTitle $sText $sSubtext $sSecondaryInfo".lowercase()
         var classifiedManeuver = classifyFromText(fullContent)
 
         if (classifiedManeuver == null && iconObj != null) {
@@ -61,10 +73,14 @@ object GoogleMapsNotificationParser {
         }
         val finalManeuver = classifiedManeuver ?: Maneuver.STRAIGHT
 
-        // 3. Street / Instruction
-        val cleanStreet = cleanStreetName(sText, sTitle)
+        // 4. Street / Road Name
+        val cleanStreet = if (sSecondaryInfo.isNotBlank()) {
+            cleanStreetName(sSecondaryInfo, "")
+        } else {
+            cleanStreetName(sText, sTitle)
+        }
 
-        // 4. ETA Time / Clock
+        // 5. ETA Time / Clock
         val clock = parseEtaClock(sSubtext)
         val etaHour: Int
         val etaMinute: Int
@@ -87,12 +103,19 @@ object GoogleMapsNotificationParser {
             etaMinute = cal.get(Calendar.MINUTE)
         }
 
+        val rawDist = when {
+            sPrimaryInfo.isNotBlank() -> sPrimaryInfo
+            DIST_REGEX.matcher(sTitle).find() -> sTitle
+            DIST_REGEX.matcher(sText).find() -> sText
+            else -> "${stepDist} m"
+        }
+
         return ParsedNavigationStep(
             maneuver = finalManeuver,
             distanceMeters = stepDist,
             totalDistanceMeters = totalDist,
             streetName = cleanStreet,
-            rawDistanceText = sTitle,
+            rawDistanceText = rawDist,
             etaHour = etaHour,
             etaMinute = etaMinute,
             etaIsAm = etaIsAm
@@ -113,7 +136,11 @@ object GoogleMapsNotificationParser {
                 s.contains("roundabout") || s.contains("rotary") ||
                 s.contains("fork") || s.contains("merge") ||
                 s.contains("u-turn") || s.contains("uturn") ||
-                s.contains("ramp")
+                s.contains("ramp") || s.contains("head north") ||
+                s.contains("head south") || s.contains("head east") ||
+                s.contains("head west") || s.contains("head toward") ||
+                s.contains("continue straight") || s.contains("continue onto") ||
+                s.contains("stay on")
 
         if (!hasDirection) return null
 
@@ -136,6 +163,10 @@ object GoogleMapsNotificationParser {
             s.contains("ramp") && s.contains("right") -> Maneuver.RAMP_RIGHT
             s.contains("turn left") || s.contains("left onto") || s.contains("take a left") -> Maneuver.TURN_LEFT
             s.contains("turn right") || s.contains("right onto") || s.contains("take a right") -> Maneuver.TURN_RIGHT
+            s.contains("head north") || s.contains("head south") || s.contains("head east") ||
+                    s.contains("head west") || s.contains("head toward") ||
+                    s.contains("continue straight") || s.contains("continue onto") ||
+                    s.contains("stay on") -> Maneuver.STRAIGHT
             s.contains("merge") -> Maneuver.MERGE
             else -> null
         }
@@ -210,10 +241,21 @@ object GoogleMapsNotificationParser {
 
     private fun cleanStreetName(text: String, title: String): String {
         var s = text.trim()
+        if (s.isBlank()) {
+            s = title.trim()
+            // Strip direction prefixes like "Head north on", "Turn left onto", "Keep right at"
+            s = s.replace(
+                Regex("(?i)^(?:head (?:north|south|east|west|toward)|turn (?:left|right|sharp left|sharp right|slight left|slight right)|take a (?:left|right)|keep (?:left|right)|continue (?:onto|on|straight)?)\\s+(?:on|onto|toward|at)?\\s*"),
+                ""
+            )
+        }
         if (s.startsWith("toward ", ignoreCase = true)) s = s.substring(7)
         if (s.startsWith("onto ", ignoreCase = true)) s = s.substring(5)
         if (s.startsWith("on ", ignoreCase = true)) s = s.substring(3)
-        if (s.isBlank()) s = title.trim()
-        return s.replace(Regex("[^0-9a-zA-Z.]"), " ").trim()
+        if (s.startsWith("in ", ignoreCase = true)) s = s.substring(3)
+
+        // Clean to alphanumerics and clamp to 18 characters for bike cluster
+        val sanitized = s.replace(Regex("[^0-9a-zA-Z. ]"), " ").replace(Regex("\\s+"), " ").trim()
+        return if (sanitized.length > 18) sanitized.take(18).trim() else sanitized
     }
 }

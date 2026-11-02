@@ -451,6 +451,11 @@ class BajajBleManager private constructor(private val context: Context) {
         isLinkReady = true
         Log.i(TAG, "🚀 Pulsar Cluster Link READY ($reason)")
 
+        // Keep foreground service active to protect BLE link and background streaming
+        try {
+            com.pulsarnav.app.service.BikeBleForegroundService.start(context)
+        } catch (_: Exception) {}
+
         // Send initial general status packet immediately
         dispatchGeneralPacket()
 

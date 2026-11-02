@@ -13,6 +13,7 @@ import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.AdapterView
@@ -188,6 +189,11 @@ class MainActivity : AppCompatActivity() {
 
         // Initial scan if permissions are ready
         checkAndStartScan(silent = true)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateNotificationAccessUi()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -554,6 +560,16 @@ class MainActivity : AppCompatActivity() {
             launchGoogleMapsRide()
         }
 
+        // Notification Access Prompts
+        binding.btnEnableNotificationAccess.setOnClickListener {
+            provideHapticFeedback()
+            openNotificationListenerSettings()
+        }
+        binding.rowNotificationAccess.setOnClickListener {
+            provideHapticFeedback()
+            openNotificationListenerSettings()
+        }
+
         // Search Bar click
         binding.layoutSearchBar.setOnClickListener {
             provideHapticFeedback()
@@ -725,6 +741,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchGoogleMapsRide() {
+        if (!isNotificationAccessGranted()) {
+            showNotificationAccessDialog { proceedWithGoogleMapsLaunch() }
+            return
+        }
+        proceedWithGoogleMapsLaunch()
+    }
+
+    private fun proceedWithGoogleMapsLaunch() {
         BikeBleForegroundService.start(this)
         val mode = if (appSettings.isTwoWheelerMode) "l" else "d"
         try {
@@ -1910,6 +1934,9 @@ class MainActivity : AppCompatActivity() {
         // Primary Buttons (Open Google Maps & Scan)
         binding.btnOpenMaps.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
         binding.btnOpenMaps.setTextColor(theme.onPrimaryColor)
+        binding.btnEnableNotificationAccess.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
+        binding.btnEnableNotificationAccess.setTextColor(theme.onPrimaryColor)
+        binding.cardNotificationPermissionBanner.strokeColor = theme.cardBorderColor
         binding.viewConnectionDivider.setBackgroundColor(theme.cardBorderColor)
 
         binding.btnFindPumps.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
@@ -2379,6 +2406,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchNavigationTo(destination: String) {
+        if (!isNotificationAccessGranted()) {
+            showNotificationAccessDialog { proceedWithNavigationLaunch(destination) }
+            return
+        }
+        proceedWithNavigationLaunch(destination)
+    }
+
+    private fun proceedWithNavigationLaunch(destination: String) {
         BikeBleForegroundService.start(this)
         val mode = if (appSettings.isTwoWheelerMode) "l" else "d"
         try {
@@ -2396,6 +2431,42 @@ class MainActivity : AppCompatActivity() {
                 showFeedback("Could not open Google Maps navigation", isAlert = true)
             }
         }
+    }
+
+    private fun isNotificationAccessGranted(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        return flat != null && flat.contains(packageName)
+    }
+
+    private fun openNotificationListenerSettings() {
+        provideHapticFeedback()
+        try {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        } catch (e: Exception) {
+            showFeedback("Unable to open Notification Settings: ${e.message}", isAlert = true)
+        }
+    }
+
+    private fun updateNotificationAccessUi() {
+        val granted = isNotificationAccessGranted()
+        binding.cardNotificationPermissionBanner.visibility = if (granted) View.GONE else View.VISIBLE
+        binding.tvNotificationAccessStatus.text = if (granted) "Active (Authorized)" else "Action Required (Tap to Enable)"
+        binding.tvNotificationAccessStatus.setTextColor(
+            ContextCompat.getColor(this, if (granted) R.color.mint_accent else R.color.amber_accent)
+        )
+    }
+
+    private fun showNotificationAccessDialog(onContinueAnyway: (() -> Unit)? = null) {
+        MaterialAlertDialogBuilder(this, R.style.ObsidianAlertDialog)
+            .setTitle("🧭 Google Maps Access Needed")
+            .setMessage("Android requires Notification Access for PulsarNav so it can capture turn-by-turn navigation arrows from Google Maps and stream them onto your Pulsar NS200 cluster.\n\nPlease enable PulsarNav on the next screen.")
+            .setPositiveButton("Open Settings") { _, _ ->
+                openNotificationListenerSettings()
+            }
+            .setNegativeButton("Continue Anyway") { _, _ ->
+                onContinueAnyway?.invoke()
+            }
+            .show()
     }
 
     private fun showSetAddressDialog(label: String, isHome: Boolean) {

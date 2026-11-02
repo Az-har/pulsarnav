@@ -94,16 +94,47 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         // Verify it is an ongoing navigation notification
         if (!isNavigationNotification(notification, extras)) return
 
-        val title = extras.getString(Notification.EXTRA_TITLE)
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
         val subtext = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
 
+        val primaryInfo = extras.getCharSequence("android.ongoingActivityNoti.primaryInfo")?.toString()
+            ?: extras.getCharSequence("android.ongoingActivityNoti.nowbarPrimaryInfo")?.toString()
+            ?: extras.getCharSequence("android.ongoingActivityNoti.chipExpandedText")?.toString()
+
+        val secondaryInfo = extras.getCharSequence("android.ongoingActivityNoti.secondaryInfo")?.toString()
+            ?: extras.getCharSequence("android.ongoingActivityNoti.nowbarSecondaryInfo")?.toString()
+
+        val progressMax = try {
+            if (extras.containsKey(Notification.EXTRA_PROGRESS_MAX)) {
+                extras.getInt(Notification.EXTRA_PROGRESS_MAX, -1)
+            } else if (extras.containsKey("android.progressMax")) {
+                extras.getInt("android.progressMax", -1)
+            } else {
+                -1
+            }
+        } catch (_: Exception) {
+            -1
+        }
+
         val iconObj = extractIconObject(extras)
 
-        val parsedStep = GoogleMapsNotificationParser.parse(title, text, subtext, iconObj) ?: return
+        val parsedStep = GoogleMapsNotificationParser.parse(
+            title = title,
+            text = text,
+            subtext = subtext,
+            primaryInfo = primaryInfo,
+            secondaryInfo = secondaryInfo,
+            progressMax = progressMax,
+            iconObj = iconObj
+        ) ?: return
+
         _currentNavStep.value = parsedStep
 
-        Log.d(TAG, "Google Maps TBT: ${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m on ${parsedStep.streetName}")
+        Log.d(TAG, "Google Maps TBT: ${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m on ${parsedStep.streetName} (ETA: ${parsedStep.etaHour}:${parsedStep.etaMinute})")
+
+        // Ensure background persistent service is running while navigating
+        BikeBleForegroundService.start(applicationContext)
 
         val bleManager = BajajBleManager.getInstance(applicationContext)
         bleManager.updateNavigationStep(parsedStep)
@@ -112,6 +143,10 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
     private fun isNavigationNotification(n: Notification, ex: Bundle): Boolean {
         if (Notification.CATEGORY_NAVIGATION == n.category) return true
         if (n.category?.contains("nav", ignoreCase = true) == true) return true
+        if (ex.containsKey("android.ongoingActivityNoti.primaryInfo")) return true
+        if (ex.containsKey("android.ongoingActivityNoti.style")) return true
+        if (n.channelId?.contains("navigation", ignoreCase = true) == true ||
+            n.channelId?.contains("foreground", ignoreCase = true) == true) return true
         return ex.containsKey("android.subText")
     }
 
