@@ -209,7 +209,7 @@ class CallManager private constructor(private val context: Context) {
         }
     }
 
-    fun simulateIncomingCall(name: String = "Dad", number: String = "+91 98765 43210") {
+    fun simulateIncomingCall(name: String = "Dad (Mobile)", number: String = "+91 98765 43210") {
         wasRinging = true
         lastIncomingName = name
         lastIncomingNumber = number

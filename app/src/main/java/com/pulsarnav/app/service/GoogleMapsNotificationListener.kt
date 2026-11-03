@@ -28,6 +28,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         private const val WAZE_PACKAGE = "com.waze"
         private const val ANDROID_AUTO_PACKAGE = "com.google.android.projection.gearhead"
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
+        private const val WHATSAPP_BUSINESS_PACKAGE = "com.whatsapp.w4b"
         private const val WHATSAPP_REVERT_DELAY_MS = 6000L
 
         private val ICON_KEYS = arrayOf(
@@ -84,7 +85,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
             GOOGLE_MAPS_PACKAGE -> handleNavigationNotification(sbn, "Google Maps")
             WAZE_PACKAGE -> handleNavigationNotification(sbn, "Waze")
             ANDROID_AUTO_PACKAGE -> handleNavigationNotification(sbn, "Android Auto")
-            WHATSAPP_PACKAGE -> {
+            WHATSAPP_PACKAGE, WHATSAPP_BUSINESS_PACKAGE -> {
                 if (com.pulsarnav.app.data.AppSettings.getInstance(applicationContext).isWhatsAppAlertsEnabled) {
                     handleWhatsAppNotification(sbn)
                 }
@@ -185,13 +186,26 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
 
         val extras = notification.extras ?: return
-        val senderTitle = extras.getString(Notification.EXTRA_TITLE) ?: return
 
-        if (senderTitle.contains("WhatsApp", ignoreCase = true) ||
-            senderTitle.contains("Checking for new messages", ignoreCase = true) ||
-            senderTitle.contains("messages from", ignoreCase = true)) {
+        // Robust extraction: WhatsApp passes SpannableString (CharSequence), so extras.getString(...) returns null!
+        val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+            ?: extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()
+            ?: extras.getCharSequence("android.title")?.toString()
+            ?: return
+
+        // Filter system / background sync / call / generic notices
+        if (rawTitle.isBlank() ||
+            rawTitle.equals("WhatsApp", ignoreCase = true) ||
+            rawTitle.contains("Checking for new messages", ignoreCase = true) ||
+            rawTitle.contains("messages from", ignoreCase = true) ||
+            rawTitle.contains("WhatsApp Web", ignoreCase = true) ||
+            rawTitle.contains("Calling", ignoreCase = true) ||
+            rawTitle.contains("Ongoing call", ignoreCase = true)
+        ) {
             return
         }
+
+        val senderTitle = rawTitle.trim()
 
         Log.i(TAG, "WhatsApp message alert intercepted from: $senderTitle")
         _lastWhatsAppAlert.value = WhatsAppAlertInfo(senderTitle)

@@ -137,28 +137,34 @@ class BajajBleManager private constructor(private val context: Context) {
     // Active Navigation / Simulation stream
     private var activeNavStep: ParsedNavigationStep? = null
     private var isNavigationActive = false
+    private var alertDisplayHoldUntilMs = 0L
 
     // Runnables
     private val tbtStreamRunnable = object : Runnable {
         override fun run() {
             if (_isSimulationRunning.value || (isLinkReady && isNavigationActive)) {
-                val step = activeNavStep
-                if (step != null) {
-                    val frame = OtcPacketBuilder.buildTbtFrame(
-                        type = 1,
-                        maneuverIcon = step.maneuver.opcode.toInt(),
-                        isAm = step.etaIsAm,
-                        stepMeters = step.distanceMeters,
-                        totalMeters = step.totalDistanceMeters,
-                        etaHour = step.etaHour,
-                        etaMinute = step.etaMinute,
-                        roundaboutExit = 0,
-                        streetText = step.streetName
-                    )
-                    _lastSentPacket.value = frame
-                    _lastSentPacketHex.value = OtcPacketBuilder.toHex(frame)
-                    if (isLinkReady) {
-                        tbtCharacteristic?.let { enqueueWrite(it, frame) }
+                val isRinging = (currentCallState == CallState.INCOMING_CALL)
+                val isAlertHeld = (System.currentTimeMillis() < alertDisplayHoldUntilMs)
+
+                if (!isRinging && !isAlertHeld) {
+                    val step = activeNavStep
+                    if (step != null) {
+                        val frame = OtcPacketBuilder.buildTbtFrame(
+                            type = 1,
+                            maneuverIcon = step.maneuver.opcode.toInt(),
+                            isAm = step.etaIsAm,
+                            stepMeters = step.distanceMeters,
+                            totalMeters = step.totalDistanceMeters,
+                            etaHour = step.etaHour,
+                            etaMinute = step.etaMinute,
+                            roundaboutExit = 0,
+                            streetText = step.streetName
+                        )
+                        _lastSentPacket.value = frame
+                        _lastSentPacketHex.value = OtcPacketBuilder.toHex(frame)
+                        if (isLinkReady) {
+                            tbtCharacteristic?.let { enqueueWrite(it, frame) }
+                        }
                     }
                 }
                 mainHandler.postDelayed(this, TBT_STREAM_CADENCE_MS)
@@ -668,13 +674,13 @@ class BajajBleManager private constructor(private val context: Context) {
 
     fun sendWhatsAppAlert(senderName: String) {
         val pkt = OtcPacketBuilder.buildWhatsAppAlertPacket(senderName)
-        val legacyPkt = OtcPacketBuilder.buildWhatsAppAlertLegacyPacket(senderName)
         _lastSentPacket.value = pkt
         _lastSentPacketHex.value = OtcPacketBuilder.toHex(pkt)
         alertsCharacteristic?.let { target ->
             if (isLinkReady) {
+                // Pause turn-by-turn stream for 6 seconds so the cluster doesn't immediately overwrite the alert
+                alertDisplayHoldUntilMs = System.currentTimeMillis() + 6000L
                 enqueueWrite(target, pkt)
-                enqueueWrite(target, legacyPkt)
             }
         }
     }

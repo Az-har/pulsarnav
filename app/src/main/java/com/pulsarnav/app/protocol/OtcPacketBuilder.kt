@@ -246,7 +246,12 @@ object OtcPacketBuilder {
         val hasCaller = (callState == CallState.INCOMING_CALL || callState == CallState.ACTIVE_CALL)
         if (hasCaller && !callerName.isNullOrBlank()) {
             b[18] = 1
-            val clean = sanitizeAscii(callerName, MAX_NAME_LEN)
+            var clean = sanitizeAscii(callerName, MAX_NAME_LEN)
+            // If caller name is short (e.g. "Dad"), pad with trailing spaces so the cluster LCD
+            // scrolls "Dad   Dad   " instead of looping seamlessly into "DADADADAD"
+            if (clean.isNotEmpty() && clean.length <= 6) {
+                clean = "$clean   "
+            }
             val bytes = clean.toByteArray(StandardCharsets.UTF_8)
             val len = bytes.size.coerceAtMost(MAX_NAME_LEN)
             System.arraycopy(bytes, 0, b, 20, len)
@@ -320,7 +325,10 @@ object OtcPacketBuilder {
         val hasCaller = (callState == CallState.INCOMING_CALL || callState == CallState.ACTIVE_CALL)
         if (hasCaller && !callerName.isNullOrBlank()) {
             b[18] = 1
-            val clean = sanitizeAscii(callerName, 30)
+            var clean = sanitizeAscii(callerName, 30)
+            if (clean.isNotEmpty() && clean.length <= 6) {
+                clean = "$clean   "
+            }
             val bytes = clean.toByteArray(StandardCharsets.UTF_8)
             val len = bytes.size.coerceAtMost(30)
             System.arraycopy(bytes, 0, b, 21, len)

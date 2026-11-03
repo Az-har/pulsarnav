@@ -748,7 +748,7 @@ class MainActivity : AppCompatActivity() {
         // Call & WhatsApp simulation
         binding.btnSimulateCall.setOnClickListener {
             provideHapticFeedback()
-            callManager.simulateIncomingCall("Dad", "+91 98765 43210")
+            callManager.simulateIncomingCall("Dad (Mobile)", "+91 98765 43210")
             showFeedback("Simulating Incoming Call to Cluster")
         }
 
