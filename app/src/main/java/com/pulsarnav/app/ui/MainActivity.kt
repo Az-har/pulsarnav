@@ -211,6 +211,11 @@ class MainActivity : AppCompatActivity() {
         // Apply saved theme
         applyTheme(appSettings.appTheme)
 
+        // Restore active tab (handles theme recreation / configuration changes)
+        val savedTab = savedInstanceState?.getInt("active_tab_id")
+            ?: if (appSettings.lastActiveTab != 0) appSettings.lastActiveTab else binding.bottomNav.selectedItemId
+        restoreActiveTab(savedTab)
+
         // Observers
         observeBleState()
         observeNavigation()
@@ -333,15 +338,63 @@ class MainActivity : AppCompatActivity() {
         setIntent(Intent(this, MainActivity::class.java))
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        val activeTabId = when {
+            binding.scrollTrips.visibility == View.VISIBLE -> R.id.scrollTrips
+            binding.scrollFuel.visibility == View.VISIBLE -> R.id.nav_fuel
+            binding.scrollSupport.visibility == View.VISIBLE -> R.id.nav_support
+            binding.scrollSettings.visibility == View.VISIBLE -> R.id.nav_account
+            else -> R.id.nav_home
+        }
+        outState.putInt("active_tab_id", activeTabId)
+        if (::appSettings.isInitialized) {
+            appSettings.lastActiveTab = activeTabId
+        }
+    }
+
+    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+        super.onRestoreInstanceState(savedInstanceState)
+        val savedTab = savedInstanceState.getInt("active_tab_id", 0)
+        if (savedTab != 0) {
+            restoreActiveTab(savedTab)
+        }
+    }
+
     private fun setupBottomNavigation() {
         binding.bottomNav.setOnItemSelectedListener { item ->
             provideHapticFeedback()
+            if (::appSettings.isInitialized) {
+                appSettings.lastActiveTab = item.itemId
+            }
             when (item.itemId) {
                 R.id.nav_home -> switchTab(binding.scrollCockpit)
                 R.id.nav_fuel -> switchTab(binding.scrollFuel)
                 R.id.nav_support -> switchTab(binding.scrollSupport)
                 R.id.nav_account -> switchTab(binding.scrollSettings)
                 else -> false
+            }
+        }
+    }
+
+    private fun restoreActiveTab(tabId: Int) {
+        when (tabId) {
+            R.id.scrollTrips -> showRidingStats()
+            R.id.nav_fuel -> {
+                binding.bottomNav.selectedItemId = R.id.nav_fuel
+                switchTab(binding.scrollFuel)
+            }
+            R.id.nav_support -> {
+                binding.bottomNav.selectedItemId = R.id.nav_support
+                switchTab(binding.scrollSupport)
+            }
+            R.id.nav_account -> {
+                binding.bottomNav.selectedItemId = R.id.nav_account
+                switchTab(binding.scrollSettings)
+            }
+            else -> {
+                binding.bottomNav.selectedItemId = R.id.nav_home
+                switchTab(binding.scrollCockpit)
             }
         }
     }
@@ -2226,6 +2279,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             if (!appSettings.isDarkMode) {
                 appSettings.isDarkMode = true
+                appSettings.lastActiveTab = R.id.nav_account
                 androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES)
             } else {
                 applyTheme(appSettings.appTheme)
@@ -2236,6 +2290,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             if (appSettings.isDarkMode) {
                 appSettings.isDarkMode = false
+                appSettings.lastActiveTab = R.id.nav_account
                 androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO)
             } else {
                 applyTheme(appSettings.appTheme)

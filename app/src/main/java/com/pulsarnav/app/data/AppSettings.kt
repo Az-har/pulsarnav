@@ -90,6 +90,7 @@ class AppSettings(context: Context) {
         const val KEY_CUSTOM_ACCENT_RED = "custom_accent_red"
         const val KEY_CUSTOM_ACCENT_GREEN = "custom_accent_green"
         const val KEY_CUSTOM_ACCENT_BLUE = "custom_accent_blue"
+        const val KEY_LAST_ACTIVE_TAB = "last_active_tab"
 
         @Volatile
         private var instance: AppSettings? = null
@@ -278,6 +279,12 @@ class AppSettings(context: Context) {
         get() = getSafeBoolean(KEY_DARK_MODE, true)
         set(value) {
             prefs.edit().putBoolean(KEY_DARK_MODE, value).apply()
+        }
+
+    var lastActiveTab: Int
+        get() = getSafeInt(KEY_LAST_ACTIVE_TAB, 0)
+        set(value) {
+            prefs.edit().putInt(KEY_LAST_ACTIVE_TAB, value).apply()
         }
 
     var petrolPricePerLiter: Double
