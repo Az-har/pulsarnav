@@ -42,7 +42,8 @@ private data class QueuedWrite(
     val characteristic: BluetoothGattCharacteristic,
     val data: ByteArray,
     val writeType: Int,
-    var attempts: Int = 0
+    var attempts: Int = 0,
+    val priority: Boolean = false   // TBT nav frames jump ahead of heartbeats in the queue
 )
 
 @SuppressLint("MissingPermission")
@@ -163,7 +164,7 @@ class BajajBleManager private constructor(private val context: Context) {
                         _lastSentPacket.value = frame
                         _lastSentPacketHex.value = OtcPacketBuilder.toHex(frame)
                         if (isLinkReady) {
-                            tbtCharacteristic?.let { enqueueWrite(it, frame) }
+                            tbtCharacteristic?.let { enqueueWrite(it, frame, priority = true) }
                         }
                     }
                 }
@@ -689,7 +690,7 @@ class BajajBleManager private constructor(private val context: Context) {
     // Serialized GATT Write Queue
     // =========================================================================
 
-    private fun enqueueWrite(char: BluetoothGattCharacteristic, packet: ByteArray) {
+    private fun enqueueWrite(char: BluetoothGattCharacteristic, packet: ByteArray, priority: Boolean = false) {
         if (!isLinkReady && char.uuid == TBT_NAV_CHAR_UUID) {
             Log.w(TAG, "Write skipped: link not ready")
             return
@@ -704,11 +705,20 @@ class BajajBleManager private constructor(private val context: Context) {
             BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         }
 
-        // Cap queue to 12 items to prevent stale navigation latency
-        if (writeQueue.size > 12) {
+        // TBT frames are time-sensitive: drop stale TBT writes from the queue before inserting
+        // so the cluster always gets the freshest direction, not one queued 2 seconds ago.
+        if (priority && char.uuid == TBT_NAV_CHAR_UUID) {
+            val iter = writeQueue.iterator()
+            while (iter.hasNext()) {
+                if (iter.next().characteristic.uuid == TBT_NAV_CHAR_UUID) iter.remove()
+            }
+        }
+
+        // Cap queue at 3 items for non-priority; drop oldest to prevent stale latency
+        if (!priority && writeQueue.size > 3) {
             writeQueue.poll()
         }
-        writeQueue.add(QueuedWrite(char, packet, writeType))
+        writeQueue.add(QueuedWrite(char, packet, writeType, priority = priority))
         processNextWrite()
     }
 

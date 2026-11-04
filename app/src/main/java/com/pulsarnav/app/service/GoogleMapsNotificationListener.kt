@@ -31,7 +31,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         private const val WHATSAPP_BUSINESS_PACKAGE = "com.whatsapp.w4b"
         private const val WHATSAPP_REVERT_DELAY_MS = 6000L
 
-        private val ICON_KEYS = arrayOf(
+    private val ICON_KEYS = arrayOf(
             Notification.EXTRA_LARGE_ICON,
             Notification.EXTRA_PICTURE,
             "android.ongoingActivityNoti.chipIcon",
@@ -129,7 +129,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
             -1
         }
 
-        val iconObj = extractIconObject(extras)
+        val iconObj = extractIconObject(notification, extras)
 
         val parsedStep = GoogleMapsNotificationParser.parse(
             title = title,
@@ -159,17 +159,23 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         if (n.category?.contains("nav", ignoreCase = true) == true) return true
         if (ex.containsKey("android.ongoingActivityNoti.primaryInfo")) return true
         if (ex.containsKey("android.ongoingActivityNoti.style")) return true
-        if (n.channelId?.contains("navigation", ignoreCase = true) == true ||
-            n.channelId?.contains("foreground", ignoreCase = true) == true ||
-            n.channelId?.contains("waze", ignoreCase = true) == true ||
-            n.channelId?.contains("gearhead", ignoreCase = true) == true ||
-            n.channelId?.contains("projection", ignoreCase = true) == true) return true
+
+        val channelId = n.channelId?.lowercase()
+        if (channelId != null && (
+                    channelId.contains("navigation") ||
+                    channelId.contains("foreground") ||
+                    channelId.contains("waze") ||
+                    channelId.contains("drive") ||          // Waze: "WAZE_DRIVE"
+                    channelId.contains("gearhead") ||
+                    channelId.contains("projection")
+                )) return true
+
         if ((n.flags and Notification.FLAG_ONGOING_EVENT) != 0 &&
             (ex.containsKey(Notification.EXTRA_TITLE) || ex.containsKey(Notification.EXTRA_TEXT))) return true
         return ex.containsKey("android.subText")
     }
 
-    private fun extractIconObject(ex: Bundle): Any? {
+    private fun extractIconObject(notification: Notification, ex: Bundle): Any? {
         for (key in ICON_KEYS) {
             val obj = try {
                 ex.get(key)
@@ -178,7 +184,13 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
             }
             if (obj != null) return obj
         }
-        return null
+        // Waze stores the maneuver turn arrow in notification.smallIcon (not in extras).
+        // Fall back to it so the ManeuverMatcher icon-based classifier gets a chance to run.
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) notification.smallIcon else null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun handleWhatsAppNotification(sbn: StatusBarNotification) {

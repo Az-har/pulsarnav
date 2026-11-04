@@ -140,12 +140,16 @@ object GoogleMapsNotificationParser {
                 s.contains("head south") || s.contains("head east") ||
                 s.contains("head west") || s.contains("head toward") ||
                 s.contains("continue straight") || s.contains("continue onto") ||
-                s.contains("stay on")
+                s.contains("stay on") ||
+                // Waze patterns: "turn left in", "turn right in", "exit left", "exit right"
+                s.contains("exit left") || s.contains("exit right") ||
+                s.contains("at the roundabout") || s.contains("take the") ||
+                s.contains("in left") || s.contains("in right")  // e.g. "turn in left"
 
         if (!hasDirection) return null
 
         return when {
-            s.contains("roundabout") || s.contains("rotary") -> {
+            s.contains("roundabout") || s.contains("rotary") || s.contains("at the roundabout") -> {
                 if (s.contains("right")) Maneuver.ROUNDABOUT_RIGHT else Maneuver.ROUNDABOUT_LEFT
             }
             s.contains("u-turn") || s.contains("uturn") -> {
@@ -159,10 +163,12 @@ object GoogleMapsNotificationParser {
             s.contains("keep right") -> Maneuver.KEEP_RIGHT
             s.contains("fork") && s.contains("left") -> Maneuver.FORK_LEFT
             s.contains("fork") && s.contains("right") -> Maneuver.FORK_RIGHT
-            s.contains("ramp") && s.contains("left") -> Maneuver.RAMP_LEFT
-            s.contains("ramp") && s.contains("right") -> Maneuver.RAMP_RIGHT
-            s.contains("turn left") || s.contains("left onto") || s.contains("take a left") -> Maneuver.TURN_LEFT
-            s.contains("turn right") || s.contains("right onto") || s.contains("take a right") -> Maneuver.TURN_RIGHT
+            s.contains("exit left") || (s.contains("ramp") && s.contains("left")) -> Maneuver.RAMP_LEFT
+            s.contains("exit right") || (s.contains("ramp") && s.contains("right")) -> Maneuver.RAMP_RIGHT
+            s.contains("turn left") || s.contains("left onto") || s.contains("take a left") ||
+                    s.contains("in left") -> Maneuver.TURN_LEFT
+            s.contains("turn right") || s.contains("right onto") || s.contains("take a right") ||
+                    s.contains("in right") -> Maneuver.TURN_RIGHT
             s.contains("head north") || s.contains("head south") || s.contains("head east") ||
                     s.contains("head west") || s.contains("head toward") ||
                     s.contains("continue straight") || s.contains("continue onto") ||
