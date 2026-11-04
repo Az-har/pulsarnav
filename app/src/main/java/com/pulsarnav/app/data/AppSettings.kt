@@ -85,6 +85,11 @@ class AppSettings(context: Context) {
         const val THEME_AMBER = "amber"
         const val THEME_MINT = "mint"
         const val THEME_BLUE = "blue"
+        const val THEME_CUSTOM = "custom"
+
+        const val KEY_CUSTOM_ACCENT_RED = "custom_accent_red"
+        const val KEY_CUSTOM_ACCENT_GREEN = "custom_accent_green"
+        const val KEY_CUSTOM_ACCENT_BLUE = "custom_accent_blue"
 
         @Volatile
         private var instance: AppSettings? = null
@@ -248,6 +253,26 @@ class AppSettings(context: Context) {
         set(value) {
             prefs.edit().putString(KEY_APP_THEME, value).apply()
         }
+
+    var customAccentRed: Int
+        get() = getSafeInt(KEY_CUSTOM_ACCENT_RED, 158)
+        set(value) {
+            prefs.edit().putInt(KEY_CUSTOM_ACCENT_RED, value.coerceIn(0, 255)).apply()
+        }
+
+    var customAccentGreen: Int
+        get() = getSafeInt(KEY_CUSTOM_ACCENT_GREEN, 27)
+        set(value) {
+            prefs.edit().putInt(KEY_CUSTOM_ACCENT_GREEN, value.coerceIn(0, 255)).apply()
+        }
+
+    var customAccentBlue: Int
+        get() = getSafeInt(KEY_CUSTOM_ACCENT_BLUE, 50)
+        set(value) {
+            prefs.edit().putInt(KEY_CUSTOM_ACCENT_BLUE, value.coerceIn(0, 255)).apply()
+        }
+
+    fun getCustomAccentColor(): Int = android.graphics.Color.rgb(customAccentRed, customAccentGreen, customAccentBlue)
 
     var isDarkMode: Boolean
         get() = getSafeBoolean(KEY_DARK_MODE, true)

@@ -2813,8 +2813,365 @@
                             </LinearLayout>
                         </com.google.android.material.card.MaterialCardView>
 
+                        <!-- Theme 7: Custom RGB -->
+                        <com.google.android.material.card.MaterialCardView
+                            android:id="@+id/cardThemeCustom"
+                            android:layout_width="124dp"
+                            android:layout_height="84dp"
+                            android:layout_marginEnd="8dp"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            app:cardBackgroundColor="@color/surface_card"
+                            app:cardCornerRadius="@dimen/card_corner_radius_small"
+                            app:cardElevation="0dp"
+                            app:strokeColor="@color/surface_border"
+                            app:strokeWidth="@dimen/card_stroke_width">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:gravity="center"
+                                android:orientation="vertical"
+                                android:padding="8dp">
+
+                                <View
+                                    android:id="@+id/viewCustomThemeDot"
+                                    android:layout_width="22dp"
+                                    android:layout_height="22dp"
+                                    android:background="@drawable/circle_dot"
+                                    android:backgroundTint="@color/wine_red" />
+
+                                <TextView
+                                    android:id="@+id/tvCustomThemeTitle"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="6dp"
+                                    android:text="Custom RGB"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </com.google.android.material.card.MaterialCardView>
+
                     </LinearLayout>
                 </HorizontalScrollView>
+
+                <!-- Custom RGB Theme Picker Card -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardCustomRgb"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp"
+                    app:cardBackgroundColor="@color/surface_card"
+                    app:cardCornerRadius="@dimen/card_corner_radius"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="@dimen/card_stroke_width">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:letterSpacing="0.06"
+                                    android:text="CUSTOM ACCENT (RGB / HEX)"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold" />
+
+                                <LinearLayout
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="36dp"
+                                    android:layout_marginTop="6dp"
+                                    android:gravity="center_vertical"
+                                    android:orientation="horizontal">
+
+                                    <EditText
+                                        android:id="@+id/etCustomHex"
+                                        android:layout_width="104dp"
+                                        android:layout_height="36dp"
+                                        android:background="@drawable/bg_obsidian_input"
+                                        android:gravity="center"
+                                        android:hint="#9E1B32"
+                                        android:imeOptions="actionDone"
+                                        android:inputType="textCapCharacters|textNoSuggestions"
+                                        android:maxLength="9"
+                                        android:selectAllOnFocus="true"
+                                        android:paddingHorizontal="8dp"
+                                        android:paddingVertical="0dp"
+                                        android:singleLine="true"
+                                        android:text="#9E1B32"
+                                        android:textColor="@color/text_primary"
+                                        android:textColorHint="@color/text_tertiary"
+                                        android:textSize="13sp"
+                                        android:textStyle="bold"
+                                        android:typeface="monospace" />
+
+                                    <TextView
+                                        android:id="@+id/btnApplyHex"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="36dp"
+                                        android:layout_marginStart="8dp"
+                                        android:background="@drawable/pill_badge"
+                                        android:backgroundTint="@color/surface_border"
+                                        android:clickable="true"
+                                        android:focusable="true"
+                                        android:foreground="?attr/selectableItemBackground"
+                                        android:gravity="center"
+                                        android:paddingHorizontal="12dp"
+                                        android:text="APPLY"
+                                        android:textColor="@color/text_primary"
+                                        android:textSize="11sp"
+                                        android:textStyle="bold" />
+                                </LinearLayout>
+                            </LinearLayout>
+
+                            <View
+                                android:id="@+id/viewRgbLivePreview"
+                                android:layout_width="32dp"
+                                android:layout_height="32dp"
+                                android:background="@drawable/circle_dot"
+                                android:backgroundTint="@color/wine_red" />
+                        </LinearLayout>
+
+                        <!-- RED SLIDER -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="18dp"
+                                android:layout_height="wrap_content"
+                                android:text="R"
+                                android:textColor="#EF4444"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <androidx.appcompat.widget.AppCompatSeekBar
+                                android:id="@+id/seekRed"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:max="255"
+                                android:progress="158"
+                                android:progressTint="#EF4444"
+                                android:thumbTint="#EF4444" />
+
+                            <TextView
+                                android:id="@+id/tvRedValue"
+                                android:layout_width="32dp"
+                                android:layout_height="wrap_content"
+                                android:gravity="end"
+                                android:text="158"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <!-- GREEN SLIDER -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="18dp"
+                                android:layout_height="wrap_content"
+                                android:text="G"
+                                android:textColor="#10B981"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <androidx.appcompat.widget.AppCompatSeekBar
+                                android:id="@+id/seekGreen"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:max="255"
+                                android:progress="27"
+                                android:progressTint="#10B981"
+                                android:thumbTint="#10B981" />
+
+                            <TextView
+                                android:id="@+id/tvGreenValue"
+                                android:layout_width="32dp"
+                                android:layout_height="wrap_content"
+                                android:gravity="end"
+                                android:text="27"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <!-- BLUE SLIDER -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="18dp"
+                                android:layout_height="wrap_content"
+                                android:text="B"
+                                android:textColor="#3B82F6"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <androidx.appcompat.widget.AppCompatSeekBar
+                                android:id="@+id/seekBlue"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:max="255"
+                                android:progress="50"
+                                android:progressTint="#3B82F6"
+                                android:thumbTint="#3B82F6" />
+
+                            <TextView
+                                android:id="@+id/tvBlueValue"
+                                android:layout_width="32dp"
+                                android:layout_height="wrap_content"
+                                android:gravity="end"
+                                android:text="50"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <!-- Quick Presets Inside Custom Picker -->
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:letterSpacing="0.06"
+                            android:text="QUICK PALETTES"
+                            android:textColor="@color/text_tertiary"
+                            android:textSize="10sp"
+                            android:textStyle="bold" />
+
+                        <HorizontalScrollView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:scrollbars="none">
+
+                            <LinearLayout
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:id="@+id/chipPresetPurple"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="28dp"
+                                    android:layout_marginEnd="6dp"
+                                    android:background="@drawable/pill_badge"
+                                    android:backgroundTint="#242138"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:foreground="?attr/selectableItemBackground"
+                                    android:gravity="center"
+                                    android:paddingHorizontal="10dp"
+                                    android:text="Linear Purple"
+                                    android:textColor="#828FFF"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/chipPresetStrava"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="28dp"
+                                    android:layout_marginEnd="6dp"
+                                    android:background="@drawable/pill_badge"
+                                    android:backgroundTint="#331A12"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:foreground="?attr/selectableItemBackground"
+                                    android:gravity="center"
+                                    android:paddingHorizontal="10dp"
+                                    android:text="Strava Orange"
+                                    android:textColor="#FC4C02"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/chipPresetCyan"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="28dp"
+                                    android:layout_marginEnd="6dp"
+                                    android:background="@drawable/pill_badge"
+                                    android:backgroundTint="#122A36"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:foreground="?attr/selectableItemBackground"
+                                    android:gravity="center"
+                                    android:paddingHorizontal="10dp"
+                                    android:text="Cyber Cyan"
+                                    android:textColor="#06B6D4"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/chipPresetPink"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="28dp"
+                                    android:layout_marginEnd="6dp"
+                                    android:background="@drawable/pill_badge"
+                                    android:backgroundTint="#361525"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:foreground="?attr/selectableItemBackground"
+                                    android:gravity="center"
+                                    android:paddingHorizontal="10dp"
+                                    android:text="Neon Pink"
+                                    android:textColor="#EC4899"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/chipPresetLime"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="28dp"
+                                    android:layout_marginEnd="6dp"
+                                    android:background="@drawable/pill_badge"
+                                    android:backgroundTint="#243312"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:foreground="?attr/selectableItemBackground"
+                                    android:gravity="center"
+                                    android:paddingHorizontal="10dp"
+                                    android:text="Kawasaki Lime"
+                                    android:textColor="#84CC16"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </HorizontalScrollView>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
 
                 <!-- Default Navigation Provider Selection -->
                 <TextView

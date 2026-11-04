@@ -2034,6 +2034,40 @@ class MainActivity : AppCompatActivity() {
                     subtleColor = Color.parseColor("#F0F9FF"),
                     borderColor = Color.parseColor("#BAE6FD")
                 )
+                AppSettings.THEME_CUSTOM -> {
+                    val r = if (::appSettings.isInitialized) appSettings.customAccentRed else 158
+                    val g = if (::appSettings.isInitialized) appSettings.customAccentGreen else 27
+                    val b = if (::appSettings.isInitialized) appSettings.customAccentBlue else 50
+                    val customColor = Color.rgb(r, g, b)
+                    val lum = 0.299 * r + 0.587 * g + 0.114 * b
+                    val onPrimary = if (lum > 150) Color.BLACK else Color.WHITE
+                    val subtle = Color.rgb(
+                        (255 * 0.90 + r * 0.10).toInt().coerceIn(0, 255),
+                        (255 * 0.90 + g * 0.10).toInt().coerceIn(0, 255),
+                        (255 * 0.90 + b * 0.10).toInt().coerceIn(0, 255)
+                    )
+                    val border = Color.rgb(
+                        (255 * 0.75 + r * 0.25).toInt().coerceIn(0, 255),
+                        (255 * 0.75 + g * 0.25).toInt().coerceIn(0, 255),
+                        (255 * 0.75 + b * 0.25).toInt().coerceIn(0, 255)
+                    )
+                    CockpitTheme(
+                        AppSettings.THEME_CUSTOM, "Custom RGB", "Custom RGB",
+                        isLight = true,
+                        backgroundColor = Color.parseColor("#F4F5F8"),
+                        surfaceColor = Color.parseColor("#FFFFFF"),
+                        cardColor = Color.parseColor("#FFFFFF"),
+                        cardBorderColor = Color.parseColor("#E2E8F0"),
+                        textPrimaryColor = Color.parseColor("#0F172A"),
+                        textSecondaryColor = Color.parseColor("#475569"),
+                        textTertiaryColor = Color.parseColor("#64748B"),
+                        primaryColor = customColor,
+                        onPrimaryColor = onPrimary,
+                        accentColor = customColor,
+                        subtleColor = subtle,
+                        borderColor = border
+                    )
+                }
                 else -> CockpitTheme(
                     AppSettings.THEME_WINE_RED, "Wine Red", "Wine Red",
                     isLight = true,
@@ -2133,6 +2167,40 @@ class MainActivity : AppCompatActivity() {
                     subtleColor = Color.parseColor("#0C253B"),
                     borderColor = Color.parseColor("#144566")
                 )
+                AppSettings.THEME_CUSTOM -> {
+                    val r = if (::appSettings.isInitialized) appSettings.customAccentRed else 158
+                    val g = if (::appSettings.isInitialized) appSettings.customAccentGreen else 27
+                    val b = if (::appSettings.isInitialized) appSettings.customAccentBlue else 50
+                    val customColor = Color.rgb(r, g, b)
+                    val lum = 0.299 * r + 0.587 * g + 0.114 * b
+                    val onPrimary = if (lum > 150) Color.BLACK else Color.WHITE
+                    val subtle = Color.rgb(
+                        (19 * 0.80 + r * 0.20).toInt().coerceIn(0, 255),
+                        (18 * 0.80 + g * 0.20).toInt().coerceIn(0, 255),
+                        (21 * 0.80 + b * 0.20).toInt().coerceIn(0, 255)
+                    )
+                    val border = Color.rgb(
+                        (19 * 0.60 + r * 0.40).toInt().coerceIn(0, 255),
+                        (18 * 0.60 + g * 0.40).toInt().coerceIn(0, 255),
+                        (21 * 0.60 + b * 0.40).toInt().coerceIn(0, 255)
+                    )
+                    CockpitTheme(
+                        AppSettings.THEME_CUSTOM, "Custom RGB", "Custom RGB",
+                        isLight = false,
+                        backgroundColor = Color.parseColor("#131215"),
+                        surfaceColor = Color.parseColor("#1C1B20"),
+                        cardColor = Color.parseColor("#222128"),
+                        cardBorderColor = Color.parseColor("#32303B"),
+                        textPrimaryColor = Color.parseColor("#F7F7F8"),
+                        textSecondaryColor = Color.parseColor("#A5A4AF"),
+                        textTertiaryColor = Color.parseColor("#72707D"),
+                        primaryColor = customColor,
+                        onPrimaryColor = onPrimary,
+                        accentColor = customColor,
+                        subtleColor = subtle,
+                        borderColor = border
+                    )
+                }
                 else -> CockpitTheme(
                     AppSettings.THEME_WINE_RED, "Wine Red", "Wine Red",
                     isLight = false,
@@ -2204,6 +2272,163 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             applyTheme(AppSettings.THEME_BLUE)
             showFeedback("Liquid Blue theme active")
+        }
+        binding.cardThemeCustom.setOnClickListener {
+            provideHapticFeedback()
+            applyTheme(AppSettings.THEME_CUSTOM)
+            showFeedback("Custom RGB theme active")
+        }
+
+        // Initialize SeekBars and Custom RGB values
+        binding.seekRed.progress = appSettings.customAccentRed
+        binding.seekGreen.progress = appSettings.customAccentGreen
+        binding.seekBlue.progress = appSettings.customAccentBlue
+        binding.tvRedValue.text = appSettings.customAccentRed.toString()
+        binding.tvGreenValue.text = appSettings.customAccentGreen.toString()
+        binding.tvBlueValue.text = appSettings.customAccentBlue.toString()
+        val initialHex = String.format("#%02X%02X%02X", appSettings.customAccentRed, appSettings.customAccentGreen, appSettings.customAccentBlue)
+        binding.etCustomHex.setText(initialHex)
+        val initialCustomColor = appSettings.getCustomAccentColor()
+        binding.viewRgbLivePreview.backgroundTintList = ColorStateList.valueOf(initialCustomColor)
+        binding.viewCustomThemeDot.backgroundTintList = ColorStateList.valueOf(initialCustomColor)
+
+        val onSeekChanged = { fromUser: Boolean ->
+            val r = binding.seekRed.progress
+            val g = binding.seekGreen.progress
+            val b = binding.seekBlue.progress
+            binding.tvRedValue.text = r.toString()
+            binding.tvGreenValue.text = g.toString()
+            binding.tvBlueValue.text = b.toString()
+            val hex = String.format("#%02X%02X%02X", r, g, b)
+            if (!binding.etCustomHex.isFocused && binding.etCustomHex.text.toString() != hex) {
+                binding.etCustomHex.setText(hex)
+            }
+            val color = Color.rgb(r, g, b)
+            binding.viewRgbLivePreview.backgroundTintList = ColorStateList.valueOf(color)
+            binding.viewCustomThemeDot.backgroundTintList = ColorStateList.valueOf(color)
+
+            appSettings.customAccentRed = r
+            appSettings.customAccentGreen = g
+            appSettings.customAccentBlue = b
+
+            if (fromUser || appSettings.appTheme == AppSettings.THEME_CUSTOM) {
+                applyTheme(AppSettings.THEME_CUSTOM)
+            }
+        }
+
+        val seekListener = object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    onSeekChanged(true)
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
+                provideHapticFeedback()
+            }
+        }
+
+        binding.seekRed.setOnSeekBarChangeListener(seekListener)
+        binding.seekGreen.setOnSeekBarChangeListener(seekListener)
+        binding.seekBlue.setOnSeekBarChangeListener(seekListener)
+
+        // Palette presets
+        val setPreset = { r: Int, g: Int, b: Int, name: String ->
+            provideHapticFeedback()
+            binding.seekRed.progress = r
+            binding.seekGreen.progress = g
+            binding.seekBlue.progress = b
+            val hex = String.format("#%02X%02X%02X", r, g, b)
+            binding.etCustomHex.setText(hex)
+            onSeekChanged(true)
+            showFeedback("$name applied")
+        }
+
+        binding.chipPresetPurple.setOnClickListener { setPreset(130, 143, 255, "Linear Purple") }
+        binding.chipPresetStrava.setOnClickListener { setPreset(252, 76, 2, "Strava Orange") }
+        binding.chipPresetCyan.setOnClickListener { setPreset(6, 182, 212, "Cyber Cyan") }
+        binding.chipPresetPink.setOnClickListener { setPreset(236, 72, 153, "Neon Pink") }
+        binding.chipPresetLime.setOnClickListener { setPreset(132, 204, 22, "Kawasaki Lime") }
+
+        // Manual Hex Input Handling
+        val parseAndApplyHex = { showFeedbackMessage: Boolean ->
+            val raw = binding.etCustomHex.text.toString().trim()
+            var clean = raw.removePrefix("#").trim()
+            if (clean.length == 3) {
+                clean = "${clean[0]}${clean[0]}${clean[1]}${clean[1]}${clean[2]}${clean[2]}"
+            }
+            if (clean.length == 6) {
+                try {
+                    val color = Color.parseColor("#$clean")
+                    val r = Color.red(color)
+                    val g = Color.green(color)
+                    val b = Color.blue(color)
+                    binding.seekRed.progress = r
+                    binding.seekGreen.progress = g
+                    binding.seekBlue.progress = b
+                    binding.tvRedValue.text = r.toString()
+                    binding.tvGreenValue.text = g.toString()
+                    binding.tvBlueValue.text = b.toString()
+                    val canonicalHex = String.format("#%02X%02X%02X", r, g, b)
+                    if (binding.etCustomHex.text.toString() != canonicalHex) {
+                        binding.etCustomHex.setText(canonicalHex)
+                        binding.etCustomHex.setSelection(canonicalHex.length)
+                    }
+                    binding.viewRgbLivePreview.backgroundTintList = ColorStateList.valueOf(color)
+                    binding.viewCustomThemeDot.backgroundTintList = ColorStateList.valueOf(color)
+
+                    appSettings.customAccentRed = r
+                    appSettings.customAccentGreen = g
+                    appSettings.customAccentBlue = b
+
+                    applyTheme(AppSettings.THEME_CUSTOM)
+                    if (showFeedbackMessage) {
+                        showFeedback("Hex accent $canonicalHex active")
+                    }
+                    true
+                } catch (_: Exception) {
+                    if (showFeedbackMessage) showFeedback("Invalid hex color")
+                    false
+                }
+            } else {
+                if (showFeedbackMessage) showFeedback("Enter a 6-digit hex code (#RRGGBB)")
+                false
+            }
+        }
+
+        binding.etCustomHex.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (binding.etCustomHex.isFocused) {
+                    val str = s?.toString()?.trim() ?: ""
+                    val clean = str.removePrefix("#").trim()
+                    if (clean.length == 6) {
+                        parseAndApplyHex(false)
+                    }
+                }
+            }
+        })
+
+        binding.etCustomHex.setOnEditorActionListener { v, _, _ ->
+            provideHapticFeedback()
+            val ok = parseAndApplyHex(true)
+            if (ok) {
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+                imm?.hideSoftInputFromWindow(v.windowToken, 0)
+                v.clearFocus()
+            }
+            ok
+        }
+
+        binding.btnApplyHex.setOnClickListener {
+            provideHapticFeedback()
+            val ok = parseAndApplyHex(true)
+            if (ok) {
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+                imm?.hideSoftInputFromWindow(binding.etCustomHex.windowToken, 0)
+                binding.etCustomHex.clearFocus()
+            }
         }
     }
 
@@ -2313,7 +2538,8 @@ class MainActivity : AppCompatActivity() {
             binding.cardLifetimeStats,
             binding.cardMetricFuel,
             binding.cardMetricMileage,
-            binding.cardMetricSpirited
+            binding.cardMetricSpirited,
+            binding.cardCustomRgb
         )
         for (card in contentCards) {
             card.setCardBackgroundColor(theme.cardColor)
@@ -2327,12 +2553,34 @@ class MainActivity : AppCompatActivity() {
             binding.cardThemeStealth to (themeKey == AppSettings.THEME_STEALTH),
             binding.cardThemeAmber to (themeKey == AppSettings.THEME_AMBER),
             binding.cardThemeMint to (themeKey == AppSettings.THEME_MINT),
-            binding.cardThemeBlue to (themeKey == AppSettings.THEME_BLUE)
+            binding.cardThemeBlue to (themeKey == AppSettings.THEME_BLUE),
+            binding.cardThemeCustom to (themeKey == AppSettings.THEME_CUSTOM)
         )
         for ((card, isSelected) in themeCards) {
             card.setCardBackgroundColor(theme.cardColor)
             card.strokeColor = if (isSelected) theme.accentColor else theme.cardBorderColor
             card.strokeWidth = if (isSelected) dpToPx(2) else dpToPx(1)
+        }
+
+        // Custom RGB Swatches & Highlight
+        val customColor = appSettings.getCustomAccentColor()
+        binding.viewCustomThemeDot.backgroundTintList = ColorStateList.valueOf(customColor)
+        binding.viewRgbLivePreview.backgroundTintList = ColorStateList.valueOf(customColor)
+        if (!binding.etCustomHex.isFocused) {
+            val hex = String.format("#%02X%02X%02X", appSettings.customAccentRed, appSettings.customAccentGreen, appSettings.customAccentBlue)
+            if (binding.etCustomHex.text.toString() != hex) {
+                binding.etCustomHex.setText(hex)
+            }
+        }
+        binding.btnApplyHex.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
+        binding.btnApplyHex.setTextColor(theme.onPrimaryColor)
+
+        if (themeKey == AppSettings.THEME_CUSTOM) {
+            binding.cardCustomRgb.strokeColor = theme.accentColor
+            binding.cardCustomRgb.strokeWidth = dpToPx(2)
+        } else {
+            binding.cardCustomRgb.strokeColor = theme.cardBorderColor
+            binding.cardCustomRgb.strokeWidth = dpToPx(1)
         }
 
         // 5. Cockpit Elements
