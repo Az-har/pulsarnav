@@ -2638,6 +2638,39 @@ class MainActivity : AppCompatActivity() {
             binding.cardCustomRgb.strokeWidth = dpToPx(1)
         }
 
+        // Quick Palette Chips in Custom Theme Card (adaptive for dark & light modes)
+        if (theme.isLight) {
+            binding.chipPresetPurple.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#EEF2FF"))
+            binding.chipPresetPurple.setTextColor(Color.parseColor("#4F46E5"))
+
+            binding.chipPresetStrava.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#FFF7ED"))
+            binding.chipPresetStrava.setTextColor(Color.parseColor("#EA580C"))
+
+            binding.chipPresetCyan.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#ECFEFF"))
+            binding.chipPresetCyan.setTextColor(Color.parseColor("#0891B2"))
+
+            binding.chipPresetPink.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#FDF2F8"))
+            binding.chipPresetPink.setTextColor(Color.parseColor("#DB2777"))
+
+            binding.chipPresetLime.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#F7FEE7"))
+            binding.chipPresetLime.setTextColor(Color.parseColor("#4D7C0F"))
+        } else {
+            binding.chipPresetPurple.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#242138"))
+            binding.chipPresetPurple.setTextColor(Color.parseColor("#828FFF"))
+
+            binding.chipPresetStrava.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#331A12"))
+            binding.chipPresetStrava.setTextColor(Color.parseColor("#FC4C02"))
+
+            binding.chipPresetCyan.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#122A36"))
+            binding.chipPresetCyan.setTextColor(Color.parseColor("#06B6D4"))
+
+            binding.chipPresetPink.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#361525"))
+            binding.chipPresetPink.setTextColor(Color.parseColor("#EC4899"))
+
+            binding.chipPresetLime.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#243312"))
+            binding.chipPresetLime.setTextColor(Color.parseColor("#84CC16"))
+        }
+
         // 5. Cockpit Elements
         binding.btnTopSos.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnTopSos.strokeColor = ColorStateList.valueOf(theme.borderColor)
