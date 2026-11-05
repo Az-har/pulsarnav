@@ -237,6 +237,7 @@ class MainActivity : AppCompatActivity() {
         updateFuelPriceUi()
         updateBikeIssuesSummary()
         updateNavAppSelectionUi()
+        binding.tvAppVersionTitle.text = "PulsarNav Companion v${com.pulsarnav.app.BuildConfig.VERSION_NAME}"
 
         binding.root.post {
             if (!appSettings.isSetupCompleted) {

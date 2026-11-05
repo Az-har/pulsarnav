@@ -71,7 +71,7 @@ class DataVaultManager private constructor(private val context: Context) {
         // Vault Header
         val header = JSONObject().apply {
             put("schemaVersion", VAULT_SCHEMA_VERSION)
-            put("appVersion", "1.0.0")
+            put("appVersion", com.pulsarnav.app.BuildConfig.VERSION_NAME)
             put("exportTimestampMs", System.currentTimeMillis())
             put("deviceModel", Build.MODEL ?: "Android")
         }

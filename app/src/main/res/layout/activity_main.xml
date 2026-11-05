@@ -4187,10 +4187,11 @@
                             android:orientation="horizontal">
 
                             <TextView
+                                android:id="@+id/tvAppVersionTitle"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="PulsarNav Companion v1.0.0"
+                                android:text="PulsarNav Companion"
                                 android:textColor="@color/text_primary"
                                 android:textSize="14sp"
                                 android:textStyle="bold" />
