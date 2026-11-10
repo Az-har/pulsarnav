@@ -591,6 +591,8 @@ class BajajBleManager private constructor(private val context: Context) {
             }
         }
 
+        @Deprecated("Deprecated in Android BluetoothGattCallback")
+        @Suppress("DEPRECATION")
         override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             ctlReadPending = false
             if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == BUTTON_CONTROL_CHAR_UUID) {
@@ -599,6 +601,8 @@ class BajajBleManager private constructor(private val context: Context) {
             }
         }
 
+        @Deprecated("Deprecated in Android BluetoothGattCallback")
+        @Suppress("DEPRECATION")
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             mainHandler.removeCallbacks(writeTimeoutWatchdog)
             isWriting = false
@@ -767,7 +771,7 @@ class BajajBleManager private constructor(private val context: Context) {
 
     fun updateTelemetry(
         batteryPercent: Int,
-        isCharging: Boolean = false,
+        @Suppress("UNUSED_PARAMETER") isCharging: Boolean = false,
         signalBars: Int = currentSignal,
         volume: Int = currentVolume
     ) {
@@ -780,7 +784,7 @@ class BajajBleManager private constructor(private val context: Context) {
     fun updateCallState(
         callState: CallState,
         callerName: String?,
-        callerNumber: String? = null,
+        @Suppress("UNUSED_PARAMETER") callerNumber: String? = null,
         missedCallCount: Int = currentMissedCount
     ) {
         currentCallState = callState
@@ -800,7 +804,11 @@ class BajajBleManager private constructor(private val context: Context) {
         dispatchGeneralPacket()
     }
 
-    fun acknowledgeCallAction(accept: Boolean = false, reject: Boolean = false, rejectSms: Boolean = false) {
+    fun acknowledgeCallAction(
+        accept: Boolean = false,
+        reject: Boolean = false,
+        @Suppress("UNUSED_PARAMETER") rejectSms: Boolean = false
+    ) {
         if (accept) callAcceptCount = (callAcceptCount + 1) and 0xFF
         if (reject) callRejectCount = (callRejectCount + 1) and 0xFF
         dispatchGeneralPacket()

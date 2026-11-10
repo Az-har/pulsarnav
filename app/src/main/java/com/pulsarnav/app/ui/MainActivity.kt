@@ -1920,7 +1920,7 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(tvNumLabel)
 
-        val etNum = createThemedEditText(initialText = numberOrPolicy(docType))
+        val etNum = createThemedEditText(initialText = currentNum.ifBlank { numberOrPolicy(docType) })
         layout.addView(etNum)
 
         val etExpiry = if (expiryRequired(docType)) {
@@ -2039,7 +2039,7 @@ class MainActivity : AppCompatActivity() {
                 setDataAndType(fileUri, mimeType)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            startActivity(intent)
+            startActivity(Intent.createChooser(intent, "View $title"))
         } catch (e: Exception) {
             showFeedback("Could not open document viewer: ${e.message}", isAlert = true)
         }

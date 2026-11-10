@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Build
+import android.util.Log
 import androidx.core.content.FileProvider
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
@@ -39,6 +40,7 @@ data class VaultImportSummary(
 class DataVaultManager private constructor(private val context: Context) {
 
     companion object {
+        private const val TAG = "DataVaultManager"
         const val VAULT_SCHEMA_VERSION = 1
         const val QR_MAGIC_HEADER = "PNAV_SETUP"
 
@@ -213,6 +215,9 @@ class DataVaultManager private constructor(private val context: Context) {
             // Validate header / content
             val header = root.optJSONObject("header")
             val schema = header?.optInt("schemaVersion", 1) ?: 1
+            if (schema > 10) {
+                Log.w(TAG, "Importing vault with higher schema version: $schema")
+            }
             if (!root.has("settings") && !root.has("trips") && !root.has("fuel_entries") && !root.has("service_records") && !root.has("maintenance")) {
                 return Result.failure(IllegalArgumentException("Invalid or unrecognized PulsarNav backup file."))
             }
