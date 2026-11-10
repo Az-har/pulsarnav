@@ -495,7 +495,7 @@ class MainActivity : AppCompatActivity() {
             binding.tvHomeMileage.text = "-- km/l"
         }
 
-        binding.tvTankSpecs.text = "${tankMax.toInt()} L FUEL TANK"
+        binding.tvTankSpecs.text = "%.0fL Tank Capacity • 2.4L Res".format(tankMax)
         updateSyncTimeDisplay()
     }
 
@@ -508,7 +508,7 @@ class MainActivity : AppCompatActivity() {
         val reg = if (appSettings.bikeRegNumber.isNotBlank()) appSettings.bikeRegNumber else "Add Number Plate"
         binding.tvBikeReg.text = "$reg • ${country.labelTag} ${country.name}"
         binding.tvProfileName.text = appSettings.riderName.ifBlank { "Rider Profile" }
-        binding.tvTankSpecs.text = "${model.tankCapacityLiters.toInt()} L FUEL TANK"
+        binding.tvTankSpecs.text = "%.0fL Tank Capacity • 2.4L Res".format(model.tankCapacityLiters)
     }
 
     private fun updateDocumentsSummary() {
@@ -533,24 +533,51 @@ class MainActivity : AppCompatActivity() {
         val fuelSpent = fuelLogManager.stats.value.totalSpentInr
         val serviceSpent = maintenanceManager.getTotalServiceCost()
         val totalSpent = fuelSpent + serviceSpent
+        val entries = fuelLogManager.entries.value
 
         binding.tvTotalInvestment.text = "%s%.0f".format(currency, totalSpent)
         binding.tvInvestmentSubtext.text = "%s%.0f Fuel • %s%.0f Service".format(currency, fuelSpent, currency, serviceSpent)
+        binding.tvFuelEntriesCount.text = "${entries.size} refill(s) logged"
+
+        val fuelRatio = if (totalSpent > 0.0) ((fuelSpent / totalSpent) * 100).toInt().coerceIn(0, 100) else 0
+        binding.progressFuelInvestment.progress = fuelRatio
+        binding.tvFuelRatioCaption.text = if (totalSpent > 0.0) {
+            "Fuel refills account for $fuelRatio% of total bike expenses"
+        } else {
+            "Expense distribution across fuel refills and maintenance"
+        }
     }
 
     private fun updateServiceHistorySummary() {
         val records = maintenanceManager.getServiceHistory()
         val totalServiceSpent = maintenanceManager.getTotalServiceCost()
         val currency = appSettings.currentCurrencySymbol
-        binding.tvServiceHistorySummary.text = if (records.isNotEmpty()) {
-            "%d service(s) • %s%.0f invested • Tap to view".format(records.size, currency, totalServiceSpent)
-        } else {
-            "0 services recorded • Tap to log service"
-        }
+
         binding.tvSupportTotalInvested.text = "%s%.0f".format(currency, totalServiceSpent)
+        binding.tvSupportServiceRecordsCount.text = "%d service(s) logged".format(records.size)
+
         val maint = maintenanceManager.status.value
-        binding.tvSupportChainRemaining.text = "%.0f km".format(maint.chainLubeRemainingKm.coerceAtLeast(0.0))
-        binding.tvSupportServiceRemaining.text = if (maint.isServiceOverdue) "OVERDUE" else "%.0f km".format(maint.serviceRemainingKm.coerceAtLeast(0.0))
+        if (maint.isServiceOverdue) {
+            binding.tvSupportServiceRemaining.text = "OVERDUE"
+            binding.tvSupportServiceRemainingUnit.visibility = View.GONE
+            binding.tvSupportServiceRemaining.setTextColor(ContextCompat.getColor(this, R.color.status_disconnected))
+            binding.tvServiceHistorySummary.text = "Service Overdue • Immediate maintenance required"
+            binding.progressSupportService.progress = 100
+            binding.tvSupportHealthNote.text = "Schedule periodic service to maintain engine longevity"
+        } else {
+            binding.tvSupportServiceRemaining.text = "%.0f".format(maint.serviceRemainingKm.coerceAtLeast(0.0))
+            binding.tvSupportServiceRemainingUnit.visibility = View.VISIBLE
+            binding.tvSupportServiceRemaining.setTextColor(currentTheme.accentColor)
+
+            val serviceInterval = 5000.0
+            val serviceElapsed = (serviceInterval - maint.serviceRemainingKm.coerceIn(0.0, serviceInterval))
+            val serviceProgress = ((serviceElapsed / serviceInterval) * 100).toInt().coerceIn(0, 100)
+            binding.progressSupportService.progress = serviceProgress
+            binding.tvServiceHistorySummary.text = "Periodic Service • $serviceProgress% of cycle elapsed"
+            binding.tvSupportHealthNote.text = "Next routine service due in %.0f km".format(maint.serviceRemainingKm.coerceAtLeast(0.0))
+        }
+        binding.tvSupportChainRemaining.text = "Chain Lube: %.0f km left".format(maint.chainLubeRemainingKm.coerceAtLeast(0.0))
+        binding.tvSupportServiceStatusPill.text = "5,000 km Cycle"
 
         updateBikeInvestmentDisplay()
     }
@@ -820,6 +847,18 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             showAddFuelDialog()
         }
+        binding.btnFuelAction.setOnClickListener {
+            provideHapticFeedback()
+            showAddFuelDialog()
+        }
+        binding.layoutFuelInvestment.setOnClickListener {
+            provideHapticFeedback()
+            showServiceHistoryDialog()
+        }
+        binding.layoutFuelMileage.setOnClickListener {
+            provideHapticFeedback()
+            showClusterRecalibrateBottomSheet()
+        }
 
 
         // Emergency & Medical Assistance
@@ -911,6 +950,18 @@ class MainActivity : AppCompatActivity() {
     private fun setupSupportAndAccountDialogs() {
         // Service History Dialog (Editable)
         binding.cardServiceHistory.setOnClickListener {
+            provideHapticFeedback()
+            showServiceHistoryDialog()
+        }
+        binding.tvServiceHistoryAction.setOnClickListener {
+            provideHapticFeedback()
+            showServiceHistoryDialog()
+        }
+        binding.layoutSupportSpent.setOnClickListener {
+            provideHapticFeedback()
+            showServiceHistoryDialog()
+        }
+        binding.layoutSupportNextService.setOnClickListener {
             provideHapticFeedback()
             showServiceHistoryDialog()
         }
@@ -2663,7 +2714,6 @@ class MainActivity : AppCompatActivity() {
             binding.ivIconHome,
             binding.ivIconWork,
             binding.ivFuelHeaderIcon,
-            binding.ivServiceHistoryIcon,
             binding.ivRsaIcon,
             binding.ivManualIcon,
             binding.ivIssuesIcon,
@@ -2838,8 +2888,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnFindPumps.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
         binding.btnFindPumps.setTextColor(theme.onPrimaryColor)
         binding.tvNearbyPumpsSubtext.setTextColor(theme.accentColor)
-        binding.tvTankSpecs.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
-        binding.tvTankSpecs.setTextColor(theme.accentColor)
+        binding.tvTankSpecs.setTextColor(theme.textPrimaryColor)
 
         if (bleManager.connectionState.value !is BleConnectionState.Connected) {
             binding.btnScan.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
@@ -2862,9 +2911,13 @@ class MainActivity : AppCompatActivity() {
         binding.btnEditOdo.strokeColor = ColorStateList.valueOf(theme.borderColor)
 
         // Support Tab
+        binding.tvServiceHistoryAction.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+        binding.tvServiceHistoryAction.strokeColor = ColorStateList.valueOf(theme.borderColor)
         binding.tvServiceHistoryAction.setTextColor(theme.accentColor)
         binding.tvSupportTotalInvested.setTextColor(theme.accentColor)
-        binding.tvSupportChainRemaining.setTextColor(theme.accentColor)
+        binding.tvSupportServiceRemaining.setTextColor(theme.accentColor)
+        binding.progressSupportService.setIndicatorColor(theme.primaryColor)
+        binding.progressSupportService.trackColor = theme.cardBorderColor
         binding.tvIssuesAction.setTextColor(theme.accentColor)
         binding.tvServiceRemaining.setTextColor(theme.accentColor)
         binding.progressService.setIndicatorColor(theme.primaryColor)
@@ -2886,10 +2939,15 @@ class MainActivity : AppCompatActivity() {
         binding.btnMarkChainLubed.setTextColor(theme.accentColor)
 
         // Fuel Tab
+        binding.btnFuelAction.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+        binding.btnFuelAction.strokeColor = ColorStateList.valueOf(theme.borderColor)
+        binding.btnFuelAction.setTextColor(theme.accentColor)
         binding.btnAddFuel.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnAddFuel.strokeColor = ColorStateList.valueOf(theme.borderColor)
         binding.btnAddFuel.setTextColor(theme.accentColor)
         binding.tvTotalInvestment.setTextColor(theme.accentColor)
+        binding.progressFuelInvestment.setIndicatorColor(theme.primaryColor)
+        binding.progressFuelInvestment.trackColor = theme.cardBorderColor
 
         val fuelPriceBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -4679,14 +4737,28 @@ class MainActivity : AppCompatActivity() {
                 updateHeroRangeDisplay()
                 binding.tvChainRemaining.text = "%.0f km left".format(s.chainLubeRemainingKm)
                 binding.progressChain.progress = s.chainLubePercent
-                binding.tvSupportChainRemaining.text = "%.0f km".format(s.chainLubeRemainingKm.coerceAtLeast(0.0))
-                binding.tvSupportServiceRemaining.text = if (s.isServiceOverdue) "OVERDUE" else "%.0f km".format(s.serviceRemainingKm.coerceAtLeast(0.0))
+                binding.tvSupportChainRemaining.text = "Chain Lube: %.0f km left".format(s.chainLubeRemainingKm.coerceAtLeast(0.0))
 
                 if (s.isServiceOverdue) {
+                    binding.tvSupportServiceRemaining.text = "OVERDUE"
+                    binding.tvSupportServiceRemainingUnit.visibility = View.GONE
+                    binding.tvSupportServiceRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_disconnected))
+                    binding.tvServiceHistorySummary.text = "Service Overdue • Immediate maintenance required"
+                    binding.progressSupportService.progress = 100
+                    binding.tvSupportHealthNote.text = "Schedule periodic service to maintain engine longevity"
                     binding.tvServiceRemaining.text = "OVERDUE by %.0f km".format(s.serviceOverdueKm)
                     binding.tvServiceRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.wine_red_light))
                     binding.progressService.progress = 100
                 } else {
+                    binding.tvSupportServiceRemaining.text = "%.0f".format(s.serviceRemainingKm.coerceAtLeast(0.0))
+                    binding.tvSupportServiceRemainingUnit.visibility = View.VISIBLE
+                    binding.tvSupportServiceRemaining.setTextColor(currentTheme.accentColor)
+                    val serviceInterval = 5000.0
+                    val serviceElapsed = (serviceInterval - s.serviceRemainingKm.coerceIn(0.0, serviceInterval))
+                    val serviceProgress = ((serviceElapsed / serviceInterval) * 100).toInt().coerceIn(0, 100)
+                    binding.progressSupportService.progress = serviceProgress
+                    binding.tvServiceHistorySummary.text = "Periodic Service • $serviceProgress% of cycle elapsed"
+                    binding.tvSupportHealthNote.text = "Next routine service due in %.0f km".format(s.serviceRemainingKm.coerceAtLeast(0.0))
                     binding.tvServiceRemaining.text = "%.0f km left (Target: %.0f km)".format(s.serviceRemainingKm, s.nextServiceTargetOdoKm)
                     binding.tvServiceRemaining.setTextColor(if (s.isServiceDue) ContextCompat.getColor(this@MainActivity, R.color.amber_accent) else currentTheme.accentColor)
                     binding.progressService.progress = s.servicePercent
@@ -4708,14 +4780,16 @@ class MainActivity : AppCompatActivity() {
                 updateHeroRangeDisplay()
                 updateBikeInvestmentDisplay()
                 if (stats.averageKmpl > 0.0) {
-                    binding.tvAvgMileage.text = "%.1f km/l".format(stats.averageKmpl)
+                    binding.tvAvgMileage.text = "%.1f".format(stats.averageKmpl)
+                    binding.tvAvgMileageUnit.visibility = View.VISIBLE
                 } else {
-                    binding.tvAvgMileage.text = "-- km/l"
+                    binding.tvAvgMileage.text = "--"
+                    binding.tvAvgMileageUnit.visibility = View.VISIBLE
                 }
                 if (stats.costPerKm > 0.0) {
-                    binding.tvCostPerKm.text = "%s%.2f / km".format(appSettings.currentCurrencySymbol, stats.costPerKm)
+                    binding.tvCostPerKm.text = "Cost: %s%.2f / km".format(appSettings.currentCurrencySymbol, stats.costPerKm)
                 } else {
-                    binding.tvCostPerKm.text = "-- / km"
+                    binding.tvCostPerKm.text = "Cost: -- / km"
                 }
             }
         }

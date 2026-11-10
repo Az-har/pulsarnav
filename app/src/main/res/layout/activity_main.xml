@@ -916,93 +916,166 @@
                         android:orientation="vertical"
                         android:padding="@dimen/card_padding">
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:letterSpacing="0.06"
-                            android:text="TANK &amp; RUNNING ECONOMY"
-                            android:textColor="@color/text_tertiary"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
-
+                        <!-- Fuel Header Row -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="12dp"
+                            android:gravity="center_vertical"
                             android:orientation="horizontal">
 
-                            <LinearLayout
+                            <TextView
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:orientation="vertical">
+                                android:letterSpacing="0.08"
+                                android:text="FUEL ECONOMY &amp; EXPENSES"
+                                android:textColor="@color/text_tertiary"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnFuelAction"
+                                style="@style/Widget.Material3.Button.TonalButton"
+                                android:layout_width="wrap_content"
+                                android:layout_height="32dp"
+                                android:backgroundTint="@color/surface_elevated"
+                                android:letterSpacing="0.02"
+                                android:paddingHorizontal="12dp"
+                                android:paddingVertical="0dp"
+                                android:text="+ Refuel"
+                                android:textColor="@color/wine_red_light"
+                                android:textSize="11sp"
+                                android:textStyle="bold"
+                                app:cornerRadius="16dp"
+                                app:strokeColor="@color/surface_border"
+                                app:strokeWidth="1dp" />
+                        </LinearLayout>
+
+                        <!-- Two-Column Streamlined Metrics Row: Avg Mileage on Left, Total Investment on Right -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal">
+
+                            <!-- Left: Avg Mileage -->
+                            <LinearLayout
+                                android:id="@+id/layoutFuelMileage"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:foreground="?attr/selectableItemBackground"
+                                android:orientation="vertical"
+                                android:padding="2dp">
 
                                 <TextView
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
+                                    android:letterSpacing="0.06"
                                     android:text="AVG MILEAGE"
                                     android:textColor="@color/text_tertiary"
                                     android:textSize="10sp"
                                     android:textStyle="bold" />
 
-                                <TextView
-                                    android:id="@+id/tvAvgMileage"
+                                <LinearLayout
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="-- km/l"
-                                    android:textColor="@color/status_connected"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
+                                    android:gravity="bottom"
+                                    android:orientation="horizontal">
 
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
+                                    <TextView
+                                        android:id="@+id/tvAvgMileage"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:letterSpacing="-0.03"
+                                        android:text="--"
+                                        android:textColor="@color/status_connected"
+                                        android:textSize="32sp"
+                                        android:textStyle="bold" />
 
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="RUNNING COST"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="10sp"
-                                    android:textStyle="bold" />
+                                    <TextView
+                                        android:id="@+id/tvAvgMileageUnit"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginStart="4dp"
+                                        android:layout_marginBottom="3dp"
+                                        android:text="km/l"
+                                        android:textColor="@color/text_secondary"
+                                        android:textSize="15sp"
+                                        android:textStyle="bold" />
+                                </LinearLayout>
 
                                 <TextView
                                     android:id="@+id/tvCostPerKm"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="2dp"
-                                    android:text="-- / km"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="18sp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="Cost: -- / km"
+                                    android:textColor="@color/text_secondary"
+                                    android:textSize="11sp"
                                     android:textStyle="bold" />
                             </LinearLayout>
 
+                            <!-- Vertical Dividing Seam -->
+                            <View
+                                android:layout_width="1dp"
+                                android:layout_height="match_parent"
+                                android:layout_marginHorizontal="12dp"
+                                android:background="@color/surface_border_subtle" />
+
+                            <!-- Right: Total Bike Investment -->
                             <LinearLayout
+                                android:id="@+id/layoutFuelInvestment"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:orientation="vertical">
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:foreground="?attr/selectableItemBackground"
+                                android:orientation="vertical"
+                                android:padding="2dp">
 
                                 <TextView
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="TANK SPECS"
+                                    android:letterSpacing="0.06"
+                                    android:text="TOTAL INVESTMENT"
                                     android:textColor="@color/text_tertiary"
                                     android:textSize="10sp"
                                     android:textStyle="bold" />
 
+                                <LinearLayout
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="bottom"
+                                    android:orientation="horizontal">
+
+                                    <TextView
+                                        android:id="@+id/tvTotalInvestment"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:letterSpacing="-0.03"
+                                        android:text="₹0"
+                                        android:textColor="@color/text_primary"
+                                        android:textSize="32sp"
+                                        android:textStyle="bold" />
+                                </LinearLayout>
+
                                 <TextView
-                                    android:id="@+id/tvTankSpecs"
+                                    android:id="@+id/tvInvestmentSubtext"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="2dp"
-                                    android:text="12L (2.4L Res)"
-                                    android:textColor="@color/wine_red_light"
-                                    android:textSize="16sp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="₹0 Fuel • ₹0 Service"
+                                    android:textColor="@color/text_secondary"
+                                    android:textSize="11sp"
                                     android:textStyle="bold" />
                             </LinearLayout>
                         </LinearLayout>
@@ -1010,49 +1083,53 @@
                         <View
                             android:layout_width="match_parent"
                             android:layout_height="1dp"
-                            android:layout_marginVertical="12dp"
+                            android:layout_marginVertical="14dp"
                             android:background="@color/surface_border_subtle" />
 
+                        <!-- Tank Capacity & Refuel Summary Row -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:gravity="center_vertical"
                             android:orientation="horizontal">
 
-                            <LinearLayout
+                            <TextView
+                                android:id="@+id/tvTankSpecs"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:letterSpacing="0.06"
-                                    android:text="TOTAL BIKE INVESTMENT"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="10sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:id="@+id/tvTotalInvestment"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="₹0"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
+                                android:text="12.0L Tank Capacity • 2.4L Res"
+                                android:textColor="@color/text_primary"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
 
                             <TextView
-                                android:id="@+id/tvInvestmentSubtext"
+                                android:id="@+id/tvFuelEntriesCount"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="₹0 Fuel • ₹0 Service"
-                                android:textColor="@color/text_secondary"
-                                android:textSize="12sp" />
+                                android:text="0 refills logged"
+                                android:textColor="@color/text_tertiary"
+                                android:textSize="11sp" />
                         </LinearLayout>
+
+                        <com.google.android.material.progressindicator.LinearProgressIndicator
+                            android:id="@+id/progressFuelInvestment"
+                            android:layout_width="match_parent"
+                            android:layout_height="8dp"
+                            android:layout_marginTop="8dp"
+                            android:progress="0"
+                            app:indicatorColor="@color/wine_red"
+                            app:trackColor="@color/surface_border"
+                            app:trackCornerRadius="4dp" />
+
+                        <TextView
+                            android:id="@+id/tvFuelRatioCaption"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="Expense distribution across fuel refills and maintenance"
+                            android:textColor="@color/text_tertiary"
+                            android:textSize="11sp" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -1305,118 +1382,166 @@
                         android:orientation="vertical"
                         android:padding="@dimen/card_padding">
 
+                        <!-- Header Row -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:gravity="center_vertical"
                             android:orientation="horizontal">
 
-                            <ImageView
-                                android:id="@+id/ivServiceHistoryIcon"
-                                android:layout_width="20dp"
-                                android:layout_height="20dp"
-                                android:layout_marginEnd="8dp"
-                                android:src="@drawable/ic_trips"
-                                app:tint="@color/wine_red_light" />
-
                             <TextView
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:letterSpacing="0.06"
-                                android:text="MAINTENANCE &amp; HEALTH SUMMARY"
+                                android:letterSpacing="0.08"
+                                android:text="MAINTENANCE &amp; HEALTH METRICS"
                                 android:textColor="@color/text_tertiary"
                                 android:textSize="11sp"
                                 android:textStyle="bold" />
 
-                            <TextView
+                            <com.google.android.material.button.MaterialButton
                                 android:id="@+id/tvServiceHistoryAction"
+                                style="@style/Widget.Material3.Button.TonalButton"
                                 android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
+                                android:layout_height="32dp"
+                                android:backgroundTint="@color/surface_elevated"
+                                android:letterSpacing="0.02"
+                                android:paddingHorizontal="12dp"
+                                android:paddingVertical="0dp"
                                 android:text="Records →"
                                 android:textColor="@color/wine_red_light"
-                                android:textSize="12sp"
-                                android:textStyle="bold" />
+                                android:textSize="11sp"
+                                android:textStyle="bold"
+                                app:cornerRadius="16dp"
+                                app:strokeColor="@color/surface_border"
+                                app:strokeWidth="1dp" />
                         </LinearLayout>
 
+                        <!-- Two-Column Streamlined Metrics Row: Service Spent on Left, Next Service Due on Right -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="12dp"
+                            android:layout_marginTop="6dp"
+                            android:baselineAligned="false"
                             android:orientation="horizontal">
 
+                            <!-- Left: Service Spent -->
                             <LinearLayout
+                                android:id="@+id/layoutSupportSpent"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:orientation="vertical">
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:foreground="?attr/selectableItemBackground"
+                                android:orientation="vertical"
+                                android:padding="2dp">
 
                                 <TextView
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="SERVICE SPENT"
+                                    android:letterSpacing="0.06"
+                                    android:text="SERVICE INVESTMENT"
                                     android:textColor="@color/text_tertiary"
                                     android:textSize="10sp"
                                     android:textStyle="bold" />
 
+                                <LinearLayout
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="bottom"
+                                    android:orientation="horizontal">
+
+                                    <TextView
+                                        android:id="@+id/tvSupportTotalInvested"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:letterSpacing="-0.03"
+                                        android:text="₹0"
+                                        android:textColor="@color/text_primary"
+                                        android:textSize="32sp"
+                                        android:textStyle="bold" />
+                                </LinearLayout>
+
                                 <TextView
-                                    android:id="@+id/tvSupportTotalInvested"
+                                    android:id="@+id/tvSupportServiceRecordsCount"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="2dp"
-                                    android:text="₹0"
-                                    android:textColor="@color/status_connected"
-                                    android:textSize="18sp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="0 services logged"
+                                    android:textColor="@color/text_secondary"
+                                    android:textSize="11sp"
                                     android:textStyle="bold" />
                             </LinearLayout>
 
+                            <!-- Vertical Dividing Seam -->
+                            <View
+                                android:layout_width="1dp"
+                                android:layout_height="match_parent"
+                                android:layout_marginHorizontal="12dp"
+                                android:background="@color/surface_border_subtle" />
+
+                            <!-- Right: Next Service Due -->
                             <LinearLayout
+                                android:id="@+id/layoutSupportNextService"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:orientation="vertical">
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:foreground="?attr/selectableItemBackground"
+                                android:orientation="vertical"
+                                android:padding="2dp">
 
                                 <TextView
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="CHAIN DUE"
+                                    android:letterSpacing="0.06"
+                                    android:text="NEXT SERVICE DUE"
                                     android:textColor="@color/text_tertiary"
                                     android:textSize="10sp"
                                     android:textStyle="bold" />
+
+                                <LinearLayout
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="bottom"
+                                    android:orientation="horizontal">
+
+                                    <TextView
+                                        android:id="@+id/tvSupportServiceRemaining"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:letterSpacing="-0.03"
+                                        android:text="500"
+                                        android:textColor="@color/status_connected"
+                                        android:textSize="32sp"
+                                        android:textStyle="bold" />
+
+                                    <TextView
+                                        android:id="@+id/tvSupportServiceRemainingUnit"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginStart="4dp"
+                                        android:layout_marginBottom="3dp"
+                                        android:text="km"
+                                        android:textColor="@color/text_secondary"
+                                        android:textSize="15sp"
+                                        android:textStyle="bold" />
+                                </LinearLayout>
 
                                 <TextView
                                     android:id="@+id/tvSupportChainRemaining"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="2dp"
-                                    android:text="500 km"
-                                    android:textColor="@color/wine_red_light"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="NEXT SERVICE"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="10sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:id="@+id/tvSupportServiceRemaining"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="500 km"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="18sp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="Chain Lube: 500 km left"
+                                    android:textColor="@color/text_secondary"
+                                    android:textSize="11sp"
                                     android:textStyle="bold" />
                             </LinearLayout>
                         </LinearLayout>
@@ -1424,16 +1549,53 @@
                         <View
                             android:layout_width="match_parent"
                             android:layout_height="1dp"
-                            android:layout_marginVertical="10dp"
+                            android:layout_marginVertical="14dp"
                             android:background="@color/surface_border_subtle" />
 
+                        <!-- Health Summary Progress Row -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:id="@+id/tvServiceHistorySummary"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Periodic Service • On Schedule"
+                                android:textColor="@color/text_primary"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvSupportServiceStatusPill"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="5,000 km Cycle"
+                                android:textColor="@color/text_tertiary"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+
+                        <com.google.android.material.progressindicator.LinearProgressIndicator
+                            android:id="@+id/progressSupportService"
+                            android:layout_width="match_parent"
+                            android:layout_height="8dp"
+                            android:layout_marginTop="8dp"
+                            android:progress="0"
+                            app:indicatorColor="@color/wine_red"
+                            app:trackColor="@color/surface_border"
+                            app:trackCornerRadius="4dp" />
+
                         <TextView
-                            android:id="@+id/tvServiceHistorySummary"
+                            android:id="@+id/tvSupportHealthNote"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="0 services recorded • Tap to log service"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
+                            android:layout_marginTop="6dp"
+                            android:text="NS200 recommended maintenance cycle: 5,000 km or 120 days"
+                            android:textColor="@color/text_tertiary"
+                            android:textSize="11sp" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
