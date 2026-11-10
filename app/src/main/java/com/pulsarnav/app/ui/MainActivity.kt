@@ -157,7 +157,7 @@ class MainActivity : AppCompatActivity() {
 
         updateHardwareReadinessUi()
         if (btGranted) {
-            bleManager.startScan()
+            bleManager.startAutoConnect(force = true)
         } else {
             showFeedback("Bluetooth permissions are required to connect to your bike", isAlert = true)
         }
@@ -242,7 +242,23 @@ class MainActivity : AppCompatActivity() {
 
     private val hardwareStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            updateHardwareReadinessUi()
+            val action = intent?.action
+            if (action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                when (state) {
+                    BluetoothAdapter.STATE_ON -> {
+                        updateHardwareReadinessUi()
+                        bleManager.onBluetoothEnabled()
+                    }
+                    BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
+                        updateHardwareReadinessUi()
+                        bleManager.onBluetoothDisabled()
+                    }
+                    else -> updateHardwareReadinessUi()
+                }
+            } else {
+                updateHardwareReadinessUi()
+            }
         }
     }
 
@@ -276,6 +292,11 @@ class MainActivity : AppCompatActivity() {
         updateFuelPriceUi()
         updateBikeIssuesSummary()
         updateNavAppSelectionUi()
+
+        // Auto-connect when returning to the app if Bluetooth is active and not connected
+        if (bleManager.connectionState.value is BleConnectionState.Disconnected) {
+            checkAndStartScan(silent = true)
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -2100,6 +2121,19 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun setupFeatureToggles() {
+        // Auto-Connect Switch
+        binding.switchAutoConnect.isChecked = bleManager.isAutoConnectEnabled
+        binding.switchAutoConnect.setOnCheckedChangeListener { _, isChecked ->
+            bleManager.isAutoConnectEnabled = isChecked
+            if (isChecked) {
+                checkAndStartScan(silent = true)
+            }
+        }
+        binding.rowAutoConnect.setOnClickListener {
+            provideHapticFeedback()
+            binding.switchAutoConnect.toggle()
+        }
+
         // Two-Wheeler Mode Switch
         binding.switchTwoWheeler.isChecked = appSettings.isTwoWheelerMode
         binding.switchTwoWheeler.setOnCheckedChangeListener { _, isChecked ->
@@ -2987,6 +3021,7 @@ class MainActivity : AppCompatActivity() {
 
         // Switches
         val switches = listOf(
+            binding.switchAutoConnect,
             binding.switchTwoWheeler,
             binding.switchAutoPark,
             binding.switchRideTracking,
@@ -3557,6 +3592,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshAllUiAfterVaultImport() {
+        binding.switchAutoConnect.isChecked = appSettings.isAutoConnectEnabled
         binding.switchTwoWheeler.isChecked = appSettings.isTwoWheelerMode
         binding.switchAutoPark.isChecked = appSettings.isAutoParkEnabled
         binding.switchRideTracking.isChecked = appSettings.isRideTrackingEnabled
@@ -4075,7 +4111,11 @@ class MainActivity : AppCompatActivity() {
                     binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
                 }
                 else -> {
-                    binding.tvSubStatus.text = "Auto-reconnects when ignition turns ON"
+                    binding.tvSubStatus.text = if (bleManager.isAutoConnectEnabled) {
+                        "Auto-connect active • waiting for bike"
+                    } else {
+                        "Auto-connect paused • tap Scan to connect"
+                    }
                     binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.text_tertiary))
                 }
             }
@@ -4123,7 +4163,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        bleManager.startScan()
+        bleManager.startAutoConnect(force = !silent)
     }
 
     private fun showVehicleSetupBottomSheet() {
@@ -4263,7 +4303,11 @@ class MainActivity : AppCompatActivity() {
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
                         binding.tvConnectionStatus.text = "Disconnected"
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
-                        binding.tvSubStatus.text = "Auto-reconnects when ignition turns ON"
+                        binding.tvSubStatus.text = if (bleManager.isAutoConnectEnabled) {
+                            "Auto-connect active • waiting for bike"
+                        } else {
+                            "Auto-connect paused • tap Scan to connect"
+                        }
                         binding.tvSubStatus.setTextColor(currentTheme.textSecondaryColor)
                         binding.btnScan.text = "Scan"
                         binding.btnScan.backgroundTintList = ColorStateList.valueOf(currentTheme.primaryColor)
@@ -4276,9 +4320,9 @@ class MainActivity : AppCompatActivity() {
                     }
                     is BleConnectionState.Scanning -> {
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_scanning)
-                        binding.tvConnectionStatus.text = "Searching for bikes..."
+                        binding.tvConnectionStatus.text = "Searching for bike..."
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
-                        binding.tvSubStatus.text = "Looking for Pulsar NS200 cluster"
+                        binding.tvSubStatus.text = "Auto-scanning • ensure bike ignition is ON"
                         binding.tvSubStatus.setTextColor(currentTheme.textSecondaryColor)
                         binding.btnScan.text = "Stop"
                         binding.btnScan.backgroundTintList = ColorStateList.valueOf(currentTheme.primaryColor)

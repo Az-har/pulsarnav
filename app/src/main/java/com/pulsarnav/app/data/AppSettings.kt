@@ -33,6 +33,7 @@ class AppSettings(context: Context) {
         const val KEY_MAINTENANCE_ALERTS = "feature_maintenance_alerts"
         const val KEY_TELEMETRY_SYNC = "feature_telemetry_sync"
         const val KEY_TWO_WHEELER_MODE = "feature_two_wheeler_mode"
+        const val KEY_AUTO_CONNECT = "feature_auto_connect"
 
         const val KEY_HOME_ADDRESS = "quicknav_home_address"
         const val KEY_WORK_ADDRESS = "quicknav_work_address"
@@ -170,6 +171,9 @@ class AppSettings(context: Context) {
     private val _autoParkFlow = MutableStateFlow(getSafeBoolean(KEY_AUTO_PARK, true))
     val autoParkFlow: StateFlow<Boolean> = _autoParkFlow.asStateFlow()
 
+    private val _autoConnectFlow = MutableStateFlow(getSafeBoolean(KEY_AUTO_CONNECT, true))
+    val autoConnectFlow: StateFlow<Boolean> = _autoConnectFlow.asStateFlow()
+
     private val _rideTrackingFlow = MutableStateFlow(getSafeBoolean(KEY_RIDE_TRACKING, true))
     val rideTrackingFlow: StateFlow<Boolean> = _rideTrackingFlow.asStateFlow()
 
@@ -235,6 +239,13 @@ class AppSettings(context: Context) {
         set(value) {
             prefs.edit().putBoolean(KEY_TWO_WHEELER_MODE, value).apply()
             _twoWheelerModeFlow.value = value
+        }
+
+    var isAutoConnectEnabled: Boolean
+        get() = _autoConnectFlow.value
+        set(value) {
+            prefs.edit().putBoolean(KEY_AUTO_CONNECT, value).apply()
+            _autoConnectFlow.value = value
         }
 
     var homeAddress: String

@@ -67,6 +67,11 @@ class BajajBleManager private constructor(private val context: Context) {
         private const val GEN_HEARTBEAT_PERIOD_MS = 5000L
         private const val CTL_POLL_MS = 700L
 
+        // Timeout-based auto-connect constants
+        private const val AUTO_CONNECT_SCAN_DURATION_MS = 10000L  // 10s active scanning
+        private const val AUTO_CONNECT_RETRY_INTERVAL_MS = 15000L // 15s pause between scans
+        private const val DISCONNECT_RECONNECT_DELAY_MS = 4000L   // 4s backoff before scanning on bike disconnect
+
         private val BIKE_NAME_PATTERNS = listOf("pulsar", "rouser", "dominar", "ns200", "ns160", "n250", "f250", "otc", "bajaj")
 
         @Volatile
@@ -87,6 +92,38 @@ class BajajBleManager private constructor(private val context: Context) {
     private var bluetoothGatt: BluetoothGatt? = null
     private var isWriting = false
     private var userRequestedDisconnect = false
+
+    private var isAutoConnectLoopRunning = false
+    private var isScanningInternal = false
+
+    var isAutoConnectEnabled: Boolean
+        get() = com.pulsarnav.app.data.AppSettings.getInstance(context).isAutoConnectEnabled
+        set(value) {
+            com.pulsarnav.app.data.AppSettings.getInstance(context).isAutoConnectEnabled = value
+            if (!value) {
+                stopAutoConnect()
+            } else if (bluetoothAdapter?.isEnabled == true && _connectionState.value is BleConnectionState.Disconnected) {
+                startAutoConnect(force = true)
+            }
+        }
+
+    private val scanTimeoutRunnable = Runnable {
+        stopScanInternal()
+        if (_connectionState.value is BleConnectionState.Scanning) {
+            _connectionState.value = BleConnectionState.Disconnected
+        }
+        if (isAutoConnectLoopRunning && !userRequestedDisconnect && bluetoothAdapter?.isEnabled == true) {
+            scheduleNextAutoConnect(AUTO_CONNECT_RETRY_INTERVAL_MS)
+        }
+    }
+
+    private val nextAutoConnectRunnable = Runnable {
+        if (isAutoConnectLoopRunning && !userRequestedDisconnect && bluetoothAdapter?.isEnabled == true) {
+            if (_connectionState.value is BleConnectionState.Disconnected) {
+                executeScanAttempt()
+            }
+        }
+    }
 
     @Volatile
     var isLinkReady: Boolean = false
@@ -223,7 +260,13 @@ class BajajBleManager private constructor(private val context: Context) {
 
         override fun onScanFailed(errorCode: Int) {
             Log.e(TAG, "BLE Scan failed: code $errorCode")
-            _connectionState.value = BleConnectionState.Error("Scan failed: error code $errorCode")
+            isScanningInternal = false
+            if (_connectionState.value is BleConnectionState.Scanning) {
+                _connectionState.value = BleConnectionState.Disconnected
+            }
+            if (isAutoConnectLoopRunning && !userRequestedDisconnect && bluetoothAdapter?.isEnabled == true) {
+                scheduleNextAutoConnect(AUTO_CONNECT_RETRY_INTERVAL_MS)
+            }
         }
     }
 
@@ -232,7 +275,12 @@ class BajajBleManager private constructor(private val context: Context) {
         val name = device.name ?: result.scanRecord?.deviceName ?: "Unknown Bike"
         val lowerName = name.lowercase()
 
-        val isBajajBike = BIKE_NAME_PATTERNS.any { lowerName.contains(it) } ||
+        val savedAddress = prefs.getString(PREF_LAST_BIKE_ADDR, null)
+            ?: com.pulsarnav.app.data.AppSettings.getInstance(context).lastConnectedBikeMac.takeIf { it.isNotBlank() }
+
+        val isSavedBike = !savedAddress.isNullOrBlank() && savedAddress.equals(device.address, ignoreCase = true)
+        val isBajajBike = isSavedBike ||
+                BIKE_NAME_PATTERNS.any { lowerName.contains(it) } ||
                 result.scanRecord?.serviceUuids?.any { it.uuid == OTC_SERVICE_UUID } == true
 
         if (isBajajBike) {
@@ -246,58 +294,165 @@ class BajajBleManager private constructor(private val context: Context) {
             }
             _discoveredBikes.value = current
 
-            val savedAddress = prefs.getString(PREF_LAST_BIKE_ADDR, null)
-            if (savedAddress != null && savedAddress.equals(device.address, ignoreCase = true) &&
-                _connectionState.value is BleConnectionState.Scanning) {
+            if (isSavedBike && (_connectionState.value is BleConnectionState.Scanning || _connectionState.value is BleConnectionState.Disconnected)) {
                 Log.i(TAG, "Recognized saved motorcycle: $name ($savedAddress) -> Auto-connecting")
                 connect(device)
             }
         }
     }
 
-    fun startScan() {
+    fun startAutoConnect(force: Boolean = false) {
+        if (force) {
+            userRequestedDisconnect = false
+        }
+        if (userRequestedDisconnect || !isAutoConnectEnabled) {
+            return
+        }
         val adapter = bluetoothAdapter ?: return
         if (!adapter.isEnabled) {
-            _connectionState.value = BleConnectionState.Error("Bluetooth is turned off")
+            return
+        }
+        if (_connectionState.value is BleConnectionState.Connected || _connectionState.value is BleConnectionState.Connecting) {
+            return
+        }
+
+        isAutoConnectLoopRunning = true
+        mainHandler.removeCallbacks(nextAutoConnectRunnable)
+        executeScanAttempt()
+    }
+
+    fun stopAutoConnect() {
+        isAutoConnectLoopRunning = false
+        mainHandler.removeCallbacks(nextAutoConnectRunnable)
+        mainHandler.removeCallbacks(scanTimeoutRunnable)
+        stopScanInternal()
+        if (_connectionState.value is BleConnectionState.Scanning) {
+            _connectionState.value = BleConnectionState.Disconnected
+        }
+    }
+
+    fun onBluetoothEnabled() {
+        userRequestedDisconnect = false
+        if (isAutoConnectEnabled && _connectionState.value is BleConnectionState.Disconnected) {
+            Log.i(TAG, "Bluetooth active -> Initiating auto-connect scan cycle")
+            startAutoConnect(force = true)
+        }
+    }
+
+    fun onBluetoothDisabled() {
+        Log.i(TAG, "Bluetooth disabled -> Suspending auto-connect scan cycle")
+        stopScanInternal()
+        mainHandler.removeCallbacks(nextAutoConnectRunnable)
+        mainHandler.removeCallbacks(scanTimeoutRunnable)
+        closeGatt()
+        _connectionState.value = BleConnectionState.Disconnected
+    }
+
+    private fun executeScanAttempt() {
+        val adapter = bluetoothAdapter ?: return
+        if (!adapter.isEnabled) {
+            _connectionState.value = BleConnectionState.Disconnected
+            return
+        }
+        if (_connectionState.value is BleConnectionState.Connected || _connectionState.value is BleConnectionState.Connecting) {
+            return
+        }
+
+        val scanner = adapter.bluetoothLeScanner
+        if (scanner == null) {
+            if (isAutoConnectLoopRunning && !userRequestedDisconnect) {
+                scheduleNextAutoConnect(AUTO_CONNECT_RETRY_INTERVAL_MS)
+            }
+            return
+        }
+
+        if (isScanningInternal) {
             return
         }
 
         _discoveredBikes.value = emptyList()
         _connectionState.value = BleConnectionState.Scanning
 
-        val scanner = adapter.bluetoothLeScanner ?: return
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        val filters = listOf(
-            ScanFilter.Builder().setServiceUuid(ParcelUuid(OTC_SERVICE_UUID)).build()
-        )
+        val savedAddress = prefs.getString(PREF_LAST_BIKE_ADDR, null)
+            ?: com.pulsarnav.app.data.AppSettings.getInstance(context).lastConnectedBikeMac.takeIf { it.isNotBlank() }
+
+        val filters = mutableListOf<ScanFilter>()
+        if (!savedAddress.isNullOrBlank()) {
+            try {
+                filters.add(ScanFilter.Builder().setDeviceAddress(savedAddress).build())
+            } catch (_: Exception) {}
+        }
+        try {
+            filters.add(ScanFilter.Builder().setServiceUuid(ParcelUuid(OTC_SERVICE_UUID)).build())
+        } catch (_: Exception) {}
 
         try {
-            scanner.startScan(filters, settings, scanCallback)
-            mainHandler.postDelayed({ stopScan() }, 15000)
+            if (filters.isNotEmpty()) {
+                scanner.startScan(filters, settings, scanCallback)
+            } else {
+                scanner.startScan(scanCallback)
+            }
+            isScanningInternal = true
         } catch (_: Exception) {
             try {
                 scanner.startScan(scanCallback)
-                mainHandler.postDelayed({ stopScan() }, 15000)
+                isScanningInternal = true
             } catch (ex: Exception) {
-                _connectionState.value = BleConnectionState.Error("Failed to start scan")
+                Log.e(TAG, "Failed to start BLE scan: ${ex.message}")
+                isScanningInternal = false
+                _connectionState.value = BleConnectionState.Disconnected
+                if (isAutoConnectLoopRunning && !userRequestedDisconnect) {
+                    scheduleNextAutoConnect(AUTO_CONNECT_RETRY_INTERVAL_MS)
+                }
+                return
             }
+        }
+
+        mainHandler.removeCallbacks(scanTimeoutRunnable)
+        mainHandler.postDelayed(scanTimeoutRunnable, AUTO_CONNECT_SCAN_DURATION_MS)
+    }
+
+    private fun stopScanInternal() {
+        mainHandler.removeCallbacks(scanTimeoutRunnable)
+        if (isScanningInternal) {
+            try {
+                bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+            } catch (_: Exception) {}
+            isScanningInternal = false
         }
     }
 
+    private fun scheduleNextAutoConnect(delayMs: Long) {
+        mainHandler.removeCallbacks(nextAutoConnectRunnable)
+        mainHandler.postDelayed(nextAutoConnectRunnable, delayMs)
+    }
+
+    fun startScan() {
+        userRequestedDisconnect = false
+        isAutoConnectLoopRunning = true
+        mainHandler.removeCallbacks(nextAutoConnectRunnable)
+        stopScanInternal()
+        executeScanAttempt()
+    }
+
     fun stopScan() {
-        try {
-            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-            if (_connectionState.value is BleConnectionState.Scanning) {
-                _connectionState.value = BleConnectionState.Disconnected
-            }
-        } catch (_: Exception) {}
+        isAutoConnectLoopRunning = false
+        mainHandler.removeCallbacks(nextAutoConnectRunnable)
+        mainHandler.removeCallbacks(scanTimeoutRunnable)
+        stopScanInternal()
+        if (_connectionState.value is BleConnectionState.Scanning) {
+            _connectionState.value = BleConnectionState.Disconnected
+        }
     }
 
     fun connect(device: BluetoothDevice) {
-        stopScan()
+        mainHandler.removeCallbacks(scanTimeoutRunnable)
+        mainHandler.removeCallbacks(nextAutoConnectRunnable)
+        stopScanInternal()
         userRequestedDisconnect = false
         val deviceName = device.name ?: "Bajaj Pulsar NS200"
 
@@ -305,6 +460,7 @@ class BajajBleManager private constructor(private val context: Context) {
             .putString(PREF_LAST_BIKE_ADDR, device.address)
             .putString(PREF_LAST_BIKE_NAME, deviceName)
             .apply()
+        com.pulsarnav.app.data.AppSettings.getInstance(context).lastConnectedBikeMac = device.address
 
         _connectionState.value = BleConnectionState.Connecting(deviceName)
 
@@ -316,6 +472,10 @@ class BajajBleManager private constructor(private val context: Context) {
 
     fun disconnect() {
         userRequestedDisconnect = true
+        isAutoConnectLoopRunning = false
+        mainHandler.removeCallbacks(nextAutoConnectRunnable)
+        mainHandler.removeCallbacks(scanTimeoutRunnable)
+        stopScanInternal()
         stopNavigation()
         stopSimulation()
         mainHandler.removeCallbacks(heartbeatRunnable)
@@ -357,6 +517,8 @@ class BajajBleManager private constructor(private val context: Context) {
 
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "Connected to $name ($device.address), requesting priority & discovering services...")
+                mainHandler.removeCallbacks(nextAutoConnectRunnable)
+                mainHandler.removeCallbacks(scanTimeoutRunnable)
                 _connectionState.value = BleConnectionState.Connected(name, device.address)
                 com.pulsarnav.app.data.AppSettings.getInstance(context).lastConnectedBikeMac = device.address
 
@@ -368,7 +530,6 @@ class BajajBleManager private constructor(private val context: Context) {
                 com.pulsarnav.app.tracking.RideTracker.getInstance(context).onBikeConnected()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.w(TAG, "Disconnected from $name (status=$status)")
-                val wasConnected = isLinkReady || _connectionState.value is BleConnectionState.Connected
                 closeGatt()
                 _connectionState.value = BleConnectionState.Disconnected
 
@@ -379,15 +540,10 @@ class BajajBleManager private constructor(private val context: Context) {
                 com.pulsarnav.app.location.ParkingManager.getInstance(context).onBikeDisconnected()
 
                 // Auto-reconnect if not manual disconnect
-                val savedAddress = prefs.getString(PREF_LAST_BIKE_ADDR, null)
-                if (!userRequestedDisconnect && savedAddress != null && wasConnected) {
-                    mainHandler.postDelayed({
-                        if (!userRequestedDisconnect && _connectionState.value is BleConnectionState.Disconnected) {
-                            try {
-                                bluetoothAdapter?.getRemoteDevice(savedAddress)?.let { connect(it) }
-                            } catch (_: Exception) {}
-                        }
-                    }, 4000)
+                if (!userRequestedDisconnect && isAutoConnectEnabled) {
+                    Log.i(TAG, "Bike disconnected; initiating timeout-based auto-reconnect cycle in ${DISCONNECT_RECONNECT_DELAY_MS}ms")
+                    isAutoConnectLoopRunning = true
+                    scheduleNextAutoConnect(DISCONNECT_RECONNECT_DELAY_MS)
                 }
             }
         }
