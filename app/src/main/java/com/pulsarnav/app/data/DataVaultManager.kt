@@ -295,7 +295,7 @@ class DataVaultManager private constructor(private val context: Context) {
                     }
                     importedServices.add(
                         ServiceRecord(
-                            id = o.getString("id"),
+                            id = o.optString("id", UUID.randomUUID().toString()),
                             date = o.optString("date", "Today"),
                             odoKm = o.optDouble("odoKm", 0.0),
                             title = o.optString("title", "Periodic Service"),
