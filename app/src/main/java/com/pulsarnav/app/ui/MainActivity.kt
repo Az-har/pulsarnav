@@ -482,9 +482,8 @@ class MainActivity : AppCompatActivity() {
 
         // Unified Odometer & Mileage metrics across Home and Account tabs
         val totalOdo = maintenanceManager.status.value.totalOdometerKm
-        val odoFormatted = "%.1f km".format(totalOdo)
-        binding.tvHomeOdometer.text = odoFormatted
-        binding.tvAccountOdometer.text = odoFormatted
+        binding.tvHomeOdometer.text = "%.1f".format(totalOdo)
+        binding.tvAccountOdometer.text = "%.1f km".format(totalOdo)
 
         val fuelStats = fuelLogManager.stats.value
         if (fuelStats.averageKmpl > 0.0) {
@@ -526,13 +525,26 @@ class MainActivity : AppCompatActivity() {
         binding.tvDocumentsBadge.text = if (uploadedCount > 0) "$uploadedCount Uploaded" else "0 Uploaded"
     }
 
+    private fun updateBikeInvestmentDisplay() {
+        val currency = appSettings.currentCurrencySymbol
+        val fuelSpent = fuelLogManager.stats.value.totalSpentInr
+        val serviceSpent = maintenanceManager.getTotalServiceCost()
+        val totalSpent = fuelSpent + serviceSpent
+
+        binding.tvTotalInvestment.text = "%s%.0f".format(currency, totalSpent)
+        binding.tvInvestmentSubtext.text = "%s%.0f Fuel • %s%.0f Service".format(currency, fuelSpent, currency, serviceSpent)
+    }
+
     private fun updateServiceHistorySummary() {
-        val count = maintenanceManager.getServiceHistory().size
-        binding.tvServiceHistorySummary.text = if (count > 0) {
-            "$count services recorded • Tap to view & edit"
+        val records = maintenanceManager.getServiceHistory()
+        val totalServiceSpent = maintenanceManager.getTotalServiceCost()
+        val currency = appSettings.currentCurrencySymbol
+        binding.tvServiceHistorySummary.text = if (records.isNotEmpty()) {
+            "%d service(s) • %s%.0f invested".format(records.size, currency, totalServiceSpent)
         } else {
             "0 services recorded • Tap to log service"
         }
+        updateBikeInvestmentDisplay()
     }
 
     private fun showClusterRecalibrateBottomSheet() {
@@ -1126,6 +1138,8 @@ class MainActivity : AppCompatActivity() {
     private fun showServiceHistoryDialog() {
         val records = maintenanceManager.getServiceHistory()
         val odo = maintenanceManager.status.value.totalOdometerKm
+        val currency = appSettings.currentCurrencySymbol
+        val totalServiceSpent = maintenanceManager.getTotalServiceCost()
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1133,7 +1147,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         val tvSummary = TextView(this).apply {
-            text = "Total Services: ${records.size} • Next Due at %.0f km\nTap any record below to edit or delete:".format(
+            text = "Total Maintenance Investment: %s%.0f (%d services)\nNext Due at %.0f km • Tap to edit or delete:".format(
+                currency,
+                totalServiceSpent,
+                records.size,
                 odo + maintenanceManager.status.value.serviceRemainingKm
             )
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
@@ -1144,7 +1161,7 @@ class MainActivity : AppCompatActivity() {
 
         if (records.isEmpty()) {
             val tvEmpty = TextView(this).apply {
-                text = "No service records logged yet.\nTap 'Log New Service' below to record vehicle maintenance."
+                text = "No service records logged yet.\nTap 'Add Service Record' below to track maintenance."
                 setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
                 textSize = 13f
                 setPadding(10, 20, 10, 30)
@@ -1198,15 +1215,45 @@ class MainActivity : AppCompatActivity() {
                 text = "${rec.date} • %.1f km".format(rec.odoKm)
                 setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
                 textSize = 11f
-                setPadding(0, 6, 0, 6)
+                setPadding(0, 4, 0, 4)
             }
             cardContent.addView(tvMeta)
+
+            if (rec.items.isNotEmpty()) {
+                val layoutItems = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, 6, 0, 4)
+                }
+                for (item in rec.items) {
+                    val rowItem = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, 2, 0, 2)
+                    }
+                    val tvItemName = TextView(this).apply {
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        text = "• ${item.name}"
+                        setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+                        textSize = 12f
+                    }
+                    val tvItemCost = TextView(this).apply {
+                        text = if (item.cost > 0.0) "%s%.0f".format(currency, item.cost) else "--"
+                        setTextColor(currentTheme.accentColor)
+                        textSize = 12f
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    }
+                    rowItem.addView(tvItemName)
+                    rowItem.addView(tvItemCost)
+                    layoutItems.addView(rowItem)
+                }
+                cardContent.addView(layoutItems)
+            }
 
             if (rec.notes.isNotBlank()) {
                 val tvNotes = TextView(this).apply {
                     text = rec.notes
-                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
-                    textSize = 12f
+                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                    textSize = 11f
+                    setPadding(0, 4, 0, 0)
                 }
                 cardContent.addView(tvNotes)
             }
@@ -1239,6 +1286,7 @@ class MainActivity : AppCompatActivity() {
                     maintenanceManager.deleteServiceRecord(rec.id)
                     recordSyncTime()
                     updateServiceHistorySummary()
+                    updateBikeInvestmentDisplay()
                     showFeedback("Record deleted")
                     showServiceHistoryDialog() // refresh dialog
                 }
@@ -1319,7 +1367,7 @@ class MainActivity : AppCompatActivity() {
         )
         layout.addView(etOdo)
 
-        // Cost
+        // Total Bill Cost (Editable, auto-sums items)
         val tvCostLabel = TextView(this).apply {
             text = "\nTotal Bill Cost (%s):".format(appSettings.currentCurrencySymbol)
             setTextColor(currentTheme.textPrimaryColor)
@@ -1334,73 +1382,147 @@ class MainActivity : AppCompatActivity() {
         )
         layout.addView(etCost)
 
-        // Repaired & Replaced Parts Itemized Checklist
+        // Repaired & Replaced Parts Itemized List (Custom Editable Rows)
+        val rowHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, dpToPx(16), 0, dpToPx(6))
+        }
+
         val tvPartsLabel = TextView(this).apply {
-            text = "\nRepaired / Replaced Parts Checklist:"
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            text = "PARTS & LABOUR (ITEMIZED):"
             setTextColor(currentTheme.textPrimaryColor)
-            textSize = 13f
+            textSize = 12f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
-        layout.addView(tvPartsLabel)
+        rowHeader.addView(tvPartsLabel)
 
-        val partsOptions = listOf(
-            "Engine Oil Flush & Refill",
-            "Oil Filter",
-            "Air Filter",
-            "Spark Plug",
-            "Front Brake Pads",
-            "Rear Brake Pads",
-            "Brake Fluid Bleed",
-            "Chain Cleaning & Lubrication",
-            "Chain & Sprocket Kit",
-            "Coolant Top-up / Flush",
-            "Battery & Electricals",
-            "Front Fork Oil / Seals",
-            "Clutch & Throttle Cables",
-            "Tyres & Wheel Balancing"
-        )
+        val btnAddItem = MaterialButton(this).apply {
+            text = "+ Add Item"
+            textSize = 11f
+            setTextColor(currentTheme.accentColor)
+            strokeColor = ColorStateList.valueOf(currentTheme.borderColor)
+            strokeWidth = dpToPx(1)
+            backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
+            cornerRadius = dpToPx(12)
+            setPadding(dpToPx(10), 0, dpToPx(10), 0)
+        }
+        rowHeader.addView(btnAddItem)
+        layout.addView(rowHeader)
 
-        val existingNotes = existing?.notes.orEmpty()
-        val checkBoxList = mutableListOf<android.widget.CheckBox>()
-
-        val partsContainer = LinearLayout(this).apply {
+        val itemsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, 8, 0, 8)
+            setPadding(0, dpToPx(4), 0, dpToPx(8))
+        }
+        layout.addView(itemsContainer)
+
+        data class ServiceRowHolder(val rowView: View, val etName: EditText, val etItemCost: EditText)
+        val rowHolders = mutableListOf<ServiceRowHolder>()
+
+        fun recalculateTotalCost() {
+            val sum = rowHolders.sumOf {
+                it.etItemCost.text.toString().toDoubleOrNull() ?: 0.0
+            }
+            if (sum > 0.0 || rowHolders.isNotEmpty()) {
+                etCost.setText("%s%.0f".format(appSettings.currentCurrencySymbol, sum))
+            }
         }
 
-        for (part in partsOptions) {
-            val cb = android.widget.CheckBox(this).apply {
-                text = part
-                setTextColor(currentTheme.textPrimaryColor)
-                buttonTintList = ColorStateList.valueOf(currentTheme.accentColor)
-                isChecked = existingNotes.contains(part, ignoreCase = true)
+        fun addItemRow(name: String = "", itemCost: Double = 0.0) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, dpToPx(4), 0, dpToPx(4))
             }
-            checkBoxList.add(cb)
-            partsContainer.addView(cb)
+
+            val etName = createThemedEditText(
+                hintText = "Item / Part / Labour",
+                initialText = name,
+                inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.8f).apply {
+                    marginEnd = dpToPx(6)
+                }
+            }
+
+            val etItemCost = createThemedEditText(
+                hintText = "Cost (%s)".format(appSettings.currentCurrencySymbol),
+                initialText = if (itemCost > 0.0) "%.0f".format(itemCost) else "",
+                inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.1f).apply {
+                    marginEnd = dpToPx(6)
+                }
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        recalculateTotalCost()
+                    }
+                })
+            }
+
+            val btnRemove = TextView(this).apply {
+                text = "✕"
+                textSize = 15f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.wine_red_light))
+                setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
+                isClickable = true
+                isFocusable = true
+            }
+
+            val holder = ServiceRowHolder(row, etName, etItemCost)
+            rowHolders.add(holder)
+
+            btnRemove.setOnClickListener {
+                itemsContainer.removeView(row)
+                rowHolders.remove(holder)
+                recalculateTotalCost()
+            }
+
+            row.addView(etName)
+            row.addView(etItemCost)
+            row.addView(btnRemove)
+            itemsContainer.addView(row)
         }
-        layout.addView(partsContainer)
+
+        btnAddItem.setOnClickListener {
+            provideHapticFeedback()
+            addItemRow()
+        }
+
+        if (existing != null && existing.items.isNotEmpty()) {
+            for (item in existing.items) {
+                addItemRow(item.name, item.cost)
+            }
+        } else if (existing != null && existing.notes.isNotBlank()) {
+            val parts = existing.notes.replace("Replaced:", "").replace("Notes:", "").split(",", "\n").map { it.trim() }.filter { it.isNotBlank() }
+            if (parts.isNotEmpty()) {
+                for (p in parts) {
+                    addItemRow(p, 0.0)
+                }
+            } else {
+                addItemRow()
+            }
+        } else {
+            // New record: populate 2 starter rows
+            addItemRow()
+            addItemRow()
+        }
 
         // Additional Custom Notes
         val tvNotesLabel = TextView(this).apply {
-            text = "Additional Remarks / Custom Parts:"
+            text = "\nAdditional Remarks / Mechanic Notes:"
             setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvNotesLabel)
 
-        var initialExtra = existingNotes
-        for (part in partsOptions) {
-            initialExtra = initialExtra.replace(part, "", ignoreCase = true)
-        }
-        initialExtra = initialExtra.replace("Replaced:", "", ignoreCase = true)
-            .replace("Notes:", "", ignoreCase = true)
-            .replace(",", " ")
-            .trim()
-
         val etNotes = createThemedEditText(
-            hintText = "e.g. Motul 7100 10W50, specific brand/issues",
-            initialText = initialExtra
+            hintText = "e.g. Done at local workshop, warranty details",
+            initialText = existing?.notes.orEmpty()
         )
         layout.addView(etNotes)
 
@@ -1413,44 +1535,48 @@ class MainActivity : AppCompatActivity() {
                 val title = etTitle.text.toString().trim()
                 val date = etDate.text.toString().trim()
                 val odoVal = etOdo.text.toString().toDoubleOrNull() ?: currentOdo
-                val cost = etCost.text.toString().trim()
 
-                val selectedParts = checkBoxList.filter { it.isChecked }.map { it.text.toString() }
-                val extraNotes = etNotes.text.toString().trim()
-                val partsSummary = if (selectedParts.isNotEmpty()) {
-                    "Replaced: ${selectedParts.joinToString(", ")}"
-                } else ""
-                val notes = when {
-                    partsSummary.isNotEmpty() && extraNotes.isNotEmpty() -> "$partsSummary\nNotes: $extraNotes"
-                    partsSummary.isNotEmpty() -> partsSummary
-                    else -> extraNotes
+                val parsedItems = rowHolders.mapNotNull {
+                    val name = it.etName.text.toString().trim()
+                    val c = it.etItemCost.text.toString().toDoubleOrNull() ?: 0.0
+                    if (name.isNotBlank()) com.pulsarnav.app.maintenance.ServiceItem(name, c) else null
                 }
+                val costStr = etCost.text.toString().trim().ifBlank {
+                    val sum = parsedItems.sumOf { it.cost }
+                    "%s%.0f".format(appSettings.currentCurrencySymbol, sum)
+                }
+                val extraNotes = etNotes.text.toString().trim()
 
                 val rec = existing?.copy(
                     title = if (title.isNotBlank()) title else "Periodic Service",
                     date = if (date.isNotBlank()) date else "Today",
                     odoKm = odoVal,
                     workshop = "Self / Workshop",
-                    cost = if (cost.isNotBlank()) cost else "%s0".format(appSettings.currentCurrencySymbol),
-                    notes = notes
+                    cost = costStr,
+                    notes = extraNotes,
+                    items = parsedItems
                 ) ?: com.pulsarnav.app.maintenance.ServiceRecord(
                     title = if (title.isNotBlank()) title else "Periodic Service",
                     date = if (date.isNotBlank()) date else "Today",
                     odoKm = odoVal,
                     workshop = "Self / Workshop",
-                    cost = if (cost.isNotBlank()) cost else "₹0",
-                    notes = notes
+                    cost = costStr,
+                    notes = extraNotes,
+                    items = parsedItems
                 )
 
                 if (isEdit) {
                     maintenanceManager.updateServiceRecord(rec)
+                    showFeedback("Service record updated")
                 } else {
                     maintenanceManager.addServiceRecord(rec)
+                    showFeedback("Service record added")
                 }
 
                 recordSyncTime()
                 updateServiceHistorySummary()
-                showFeedback("Service record saved!")
+                updateBikeInvestmentDisplay()
+                provideHapticFeedback()
                 showServiceHistoryDialog()
             }
             .setNegativeButton("Cancel", null)
@@ -2697,6 +2823,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnAddFuel.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnAddFuel.strokeColor = ColorStateList.valueOf(theme.borderColor)
         binding.btnAddFuel.setTextColor(theme.accentColor)
+        binding.tvTotalInvestment.setTextColor(theme.accentColor)
 
         val fuelPriceBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -4187,7 +4314,7 @@ class MainActivity : AppCompatActivity() {
                     binding.tvMediaBanner.text = "Media Control: $event"
                     binding.tvMediaBanner.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
                 } else {
-                    binding.tvMediaBanner.text = "Handlebar Button: Click = Accept/Play • Hold = Reject/Next"
+                    binding.tvMediaBanner.text = "Handlebar Button: Click = Play/Pause • Hold = Next • Click+Hold = Prev"
                     binding.tvMediaBanner.setTextColor(currentTheme.accentColor)
                 }
             }
@@ -4502,6 +4629,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             fuelLogManager.stats.collectLatest { stats ->
                 updateHeroRangeDisplay()
+                updateBikeInvestmentDisplay()
                 if (stats.averageKmpl > 0.0) {
                     binding.tvAvgMileage.text = "%.1f km/l".format(stats.averageKmpl)
                 } else {

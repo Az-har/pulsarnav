@@ -141,7 +141,7 @@ object GoogleMapsNotificationParser {
     private data class ManeuverResult(val maneuver: Maneuver, val roundaboutExit: Int = 0)
 
     private val ROUNDABOUT_EXIT_REGEX = Pattern.compile(
-        "(?i)(?:take\\s+(?:the\\s+)?)?(\\d+)(?:st|nd|rd|th)?\\s+exit|(?:take\\s+)?exit\\s+(\\d+)|roundabout.*exit\\s*(\\d+)",
+        "(?i)(?:take\\s+(?:the\\s+)?)?(\\d+)(?:st|nd|rd|th)?\\s+exit|(?:take\\s+)?exit\\s+(\\d+)|roundabout.*exit\\s*(\\d+)|leave.*roundabout.*(\\d+)",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -151,7 +151,7 @@ object GoogleMapsNotificationParser {
 
         val m = ROUNDABOUT_EXIT_REGEX.matcher(s)
         if (m.find()) {
-            val numStr = m.group(1) ?: m.group(2) ?: m.group(3)
+            val numStr = m.group(1) ?: m.group(2) ?: m.group(3) ?: (if (m.groupCount() >= 4) m.group(4) else null)
             val num = numStr?.toIntOrNull()
             if (num != null && num in 1..8) return num
         }
@@ -165,7 +165,7 @@ object GoogleMapsNotificationParser {
             s.contains("6th exit") || s.contains("sixth exit") -> 6
             s.contains("7th exit") || s.contains("seventh exit") -> 7
             s.contains("8th exit") || s.contains("eighth exit") -> 8
-            else -> 1 // Default to 1 so OTC cluster never displays blank
+            else -> 0 // Return 0 when exit is not explicitly stated — never assume or misguide the rider with Exit 1!
         }
     }
 

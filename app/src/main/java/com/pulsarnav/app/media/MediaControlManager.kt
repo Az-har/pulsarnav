@@ -32,21 +32,52 @@ class MediaControlManager private constructor(private val context: Context) {
         }
     }
 
+    private var lastShortPressTimeMs = 0L
+    private var pendingPlayPauseJob: kotlinx.coroutines.Job? = null
+
+    @Synchronized
     fun handleHandlebarButton(isLongPress: Boolean): Boolean {
         if (!AppSettings.getInstance(context).isMediaControlEnabled) {
             return false
         }
 
-        return if (isLongPress) {
+        val now = SystemClock.uptimeMillis()
+
+        if (isLongPress) {
+            // Check if this long press was preceded by a short press within 1000ms ("Press then Long Press")
+            val elapsedSinceShort = now - lastShortPressTimeMs
+            if (elapsedSinceShort in 1..1000) {
+                // Cancel pending Play/Pause
+                pendingPlayPauseJob?.cancel()
+                pendingPlayPauseJob = null
+                lastShortPressTimeMs = 0L
+
+                // Trigger Previous Song
+                sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+                _lastMediaEvent.value = "⏮ Previous Track"
+                clearBannerAfterDelay()
+                return true
+            }
+
+            // Normal Long Press -> Next Track
+            pendingPlayPauseJob?.cancel()
+            pendingPlayPauseJob = null
+            lastShortPressTimeMs = 0L
             sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT)
             _lastMediaEvent.value = "⏭ Next Track"
             clearBannerAfterDelay()
-            true
+            return true
         } else {
-            sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
-            _lastMediaEvent.value = "⏯ Play / Pause"
-            clearBannerAfterDelay()
-            true
+            // Short Press: queue Play/Pause with a 400ms window to detect "press then long press"
+            lastShortPressTimeMs = now
+            pendingPlayPauseJob?.cancel()
+            pendingPlayPauseJob = scope.launch {
+                delay(400)
+                sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+                _lastMediaEvent.value = "⏯ Play / Pause"
+                clearBannerAfterDelay()
+            }
+            return true
         }
     }
 

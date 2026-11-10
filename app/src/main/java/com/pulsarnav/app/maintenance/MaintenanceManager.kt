@@ -18,15 +18,27 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+data class ServiceItem(
+    val name: String,
+    val cost: Double
+)
+
 data class ServiceRecord(
     val id: String = UUID.randomUUID().toString(),
     var date: String,
     var odoKm: Double,
     var title: String,
-    var workshop: String = "Bajaj Authorized Service",
+    var workshop: String = "Self / Workshop",
     var notes: String = "",
-    var cost: String = "₹0"
-)
+    var cost: String = "₹0",
+    var items: List<ServiceItem> = emptyList()
+) {
+    fun getNumericCost(): Double {
+        val parsedCost = cost.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0
+        val itemsSum = items.sumOf { it.cost }
+        return if (parsedCost > 0.0) parsedCost else itemsSum
+    }
+}
 
 data class MaintenanceStatus(
     val totalOdometerKm: Double,
@@ -255,6 +267,10 @@ class MaintenanceManager private constructor(private val context: Context) {
         } catch (_: Exception) {}
     }
 
+    fun getTotalServiceCost(): Double {
+        return getServiceHistory().sumOf { it.getNumericCost() }
+    }
+
     fun getServiceHistory(): MutableList<ServiceRecord> {
         val raw = prefs.getString(KEY_SERVICE_HISTORY_JSON, null)
         if (raw.isNullOrBlank()) {
@@ -266,15 +282,28 @@ class MaintenanceManager private constructor(private val context: Context) {
             val array = JSONArray(raw)
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
+                val itemsList = mutableListOf<ServiceItem>()
+                val itemsArr = obj.optJSONArray("items")
+                if (itemsArr != null) {
+                    for (j in 0 until itemsArr.length()) {
+                        val itemObj = itemsArr.getJSONObject(j)
+                        val name = itemObj.optString("name", "")
+                        val cost = itemObj.optDouble("cost", 0.0)
+                        if (name.isNotBlank()) {
+                            itemsList.add(ServiceItem(name, cost))
+                        }
+                    }
+                }
                 list.add(
                     ServiceRecord(
                         id = obj.optString("id", UUID.randomUUID().toString()),
                         date = obj.optString("date", "Today"),
                         odoKm = obj.optDouble("odoKm", 0.0),
                         title = obj.optString("title", "Periodic Service"),
-                        workshop = obj.optString("workshop", "Bajaj Service"),
+                        workshop = obj.optString("workshop", "Self / Workshop"),
                         notes = obj.optString("notes", ""),
-                        cost = obj.optString("cost", "₹0")
+                        cost = obj.optString("cost", "₹0"),
+                        items = itemsList
                     )
                 )
             }
@@ -294,6 +323,16 @@ class MaintenanceManager private constructor(private val context: Context) {
             obj.put("workshop", rec.workshop)
             obj.put("notes", rec.notes)
             obj.put("cost", rec.cost)
+
+            val itemsArr = JSONArray()
+            for (item in rec.items) {
+                val itemObj = JSONObject()
+                itemObj.put("name", item.name)
+                itemObj.put("cost", item.cost)
+                itemsArr.put(itemObj)
+            }
+            obj.put("items", itemsArr)
+
             array.put(obj)
         }
         prefs.edit().putString(KEY_SERVICE_HISTORY_JSON, array.toString()).apply()
