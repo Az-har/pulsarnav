@@ -556,7 +556,7 @@ class BajajBleManager private constructor(private val context: Context) {
      * Starts continuous Dry Run Turn Simulation at verified ~800 ms cadence.
      * Keeps the arrow, distance, and road name glowing steadily on the motorcycle's LCD.
      */
-    fun startSimulation(maneuver: Maneuver, distanceMeters: Int, streetText: String) {
+    fun startSimulation(maneuver: Maneuver, distanceMeters: Int, streetText: String, roundaboutExit: Int = 0) {
         stopNavigation()
         stopSimulation()
 
@@ -575,7 +575,8 @@ class BajajBleManager private constructor(private val context: Context) {
             rawDistanceText = "${distanceMeters}m",
             etaHour = h,
             etaMinute = (cal.get(Calendar.MINUTE) + 6) % 60,
-            etaIsAm = (cal.get(Calendar.AM_PM) == Calendar.AM)
+            etaIsAm = (cal.get(Calendar.AM_PM) == Calendar.AM),
+            roundaboutExit = roundaboutExit
         )
         activeNavStep = simStep
 

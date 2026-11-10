@@ -1,5 +1,7 @@
 package com.pulsarnav.app.ui
 
+import android.app.DatePickerDialog
+import android.view.WindowManager
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
@@ -119,6 +121,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingDocType: String? = null
     private var activeGloveboxSheet: BottomSheetDialog? = null
     private var activeGloveboxView: View? = null
+    private var roundaboutTestState = 0
     private val documentPicker = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -540,15 +543,21 @@ class MainActivity : AppCompatActivity() {
         val totalServiceSpent = maintenanceManager.getTotalServiceCost()
         val currency = appSettings.currentCurrencySymbol
         binding.tvServiceHistorySummary.text = if (records.isNotEmpty()) {
-            "%d service(s) • %s%.0f invested".format(records.size, currency, totalServiceSpent)
+            "%d service(s) • %s%.0f invested • Tap to view".format(records.size, currency, totalServiceSpent)
         } else {
             "0 services recorded • Tap to log service"
         }
+        binding.tvSupportTotalInvested.text = "%s%.0f".format(currency, totalServiceSpent)
+        val maint = maintenanceManager.status.value
+        binding.tvSupportChainRemaining.text = "%.0f km".format(maint.chainLubeRemainingKm.coerceAtLeast(0.0))
+        binding.tvSupportServiceRemaining.text = if (maint.isServiceOverdue) "OVERDUE" else "%.0f km".format(maint.serviceRemainingKm.coerceAtLeast(0.0))
+
         updateBikeInvestmentDisplay()
     }
 
     private fun showClusterRecalibrateBottomSheet() {
         val dialog = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_recalibrate_cluster, null)
         dialog.setContentView(sheetView)
 
@@ -725,8 +734,33 @@ class MainActivity : AppCompatActivity() {
                 showFeedback("Simulating Right Turn on Cluster (~800ms stream)")
             }
         }
+        binding.btnTestRoundabout.setOnClickListener {
+            provideHapticFeedback()
+            if (bleManager.isSimulationRunning.value && (bleManager.currentActiveManeuver.value == Maneuver.ROUNDABOUT_LEFT || bleManager.currentActiveManeuver.value == Maneuver.ROUNDABOUT_RIGHT)) {
+                if (roundaboutTestState == 1) {
+                    roundaboutTestState = 2
+                    bleManager.startSimulation(Maneuver.ROUNDABOUT_LEFT, 200, "Exit 2 • Ring Road", roundaboutExit = 2)
+                    updateNavDisplay(Maneuver.ROUNDABOUT_LEFT, "200 m", "Exit 2 • Ring Road", "7 min ETA")
+                    binding.btnTestRoundabout.text = "↺  Testing Exit 2 (Tap to Stop)"
+                    showFeedback("Simulating Roundabout Exit 2 (OTC byte 7 = 0x02)")
+                } else {
+                    roundaboutTestState = 0
+                    bleManager.stopSimulation()
+                    binding.btnTestRoundabout.text = "↺  Test Roundabout (Safe / Exit 2)"
+                    showFeedback("Roundabout simulation stopped")
+                }
+            } else {
+                roundaboutTestState = 1
+                bleManager.startSimulation(Maneuver.ROUNDABOUT_LEFT, 200, "Roundabout • Ring Road", roundaboutExit = 0)
+                updateNavDisplay(Maneuver.ROUNDABOUT_LEFT, "200 m", "Roundabout • Ring Road", "7 min ETA")
+                binding.btnTestRoundabout.text = "↺  Testing Safe Exit 0 (Tap for Exit 2)"
+                showFeedback("Simulating Safe Roundabout (Exit 0: No exit number misdirection)")
+            }
+        }
         binding.btnStopSimulation.setOnClickListener {
             provideHapticFeedback()
+            roundaboutTestState = 0
+            binding.btnTestRoundabout.text = "↺  Test Roundabout (Safe / Exit 2)"
             bleManager.stopSimulation()
             bleManager.stopNavigation()
             binding.tvDistance.text = "-- m"
@@ -1345,9 +1379,35 @@ class MainActivity : AppCompatActivity() {
 
         val today = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
         val etDate = createThemedEditText(
-            hintText = "e.g. 29 Oct 2026",
+            hintText = "Select Service Date",
             initialText = existing?.date ?: today
-        )
+        ).apply {
+            isFocusable = false
+            isClickable = true
+            isCursorVisible = false
+            setCompoundDrawablesWithIntrinsicBounds(0, 0, R.drawable.ic_trips, 0)
+            compoundDrawablePadding = dpToPx(8)
+            setOnClickListener {
+                provideHapticFeedback()
+                val cal = Calendar.getInstance()
+                try {
+                    val parsed = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).parse(text.toString().trim())
+                    if (parsed != null) cal.time = parsed
+                } catch (_: Exception) {}
+
+                val dpd = DatePickerDialog(
+                    this@MainActivity,
+                    { _, y, m, d ->
+                        cal.set(y, m, d)
+                        setText(SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(cal.time))
+                    },
+                    cal.get(Calendar.YEAR),
+                    cal.get(Calendar.MONTH),
+                    cal.get(Calendar.DAY_OF_MONTH)
+                )
+                dpd.show()
+            }
+        }
         layout.addView(etDate)
 
         // Odometer
@@ -1580,7 +1640,11 @@ class MainActivity : AppCompatActivity() {
                 showServiceHistoryDialog()
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create()
+            .apply {
+                window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                show()
+            }
     }
 
     private fun showDocumentsDialog() {
@@ -2799,6 +2863,8 @@ class MainActivity : AppCompatActivity() {
 
         // Support Tab
         binding.tvServiceHistoryAction.setTextColor(theme.accentColor)
+        binding.tvSupportTotalInvested.setTextColor(theme.accentColor)
+        binding.tvSupportChainRemaining.setTextColor(theme.accentColor)
         binding.tvIssuesAction.setTextColor(theme.accentColor)
         binding.tvServiceRemaining.setTextColor(theme.accentColor)
         binding.progressService.setIndicatorColor(theme.primaryColor)
@@ -2849,7 +2915,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnConfigWork.setTextColor(theme.accentColor)
 
         val testButtons = listOf(
-            binding.btnTestLeft, binding.btnTestStraight, binding.btnTestRight,
+            binding.btnTestLeft, binding.btnTestStraight, binding.btnTestRight, binding.btnTestRoundabout,
             binding.btnSimulateCall, binding.btnSimulateWhatsApp, binding.btnSimulateMissedCall
         )
         for (btn in testButtons) {
@@ -4278,6 +4344,15 @@ class MainActivity : AppCompatActivity() {
             binding.btnTestRight.setTextColor(defaultText)
         }
 
+        if (running && (maneuver == Maneuver.ROUNDABOUT_LEFT || maneuver == Maneuver.ROUNDABOUT_RIGHT)) {
+            binding.btnTestRoundabout.backgroundTintList = activeTint
+            binding.btnTestRoundabout.setTextColor(activeText)
+        } else {
+            binding.btnTestRoundabout.backgroundTintList = defaultSubtle
+            binding.btnTestRoundabout.strokeColor = defaultBorder
+            binding.btnTestRoundabout.setTextColor(defaultText)
+        }
+
         if (running) {
             binding.btnStopSimulation.strokeColor = ColorStateList.valueOf(theme.accentColor)
             binding.btnStopSimulation.setTextColor(theme.accentColor)
@@ -4604,6 +4679,8 @@ class MainActivity : AppCompatActivity() {
                 updateHeroRangeDisplay()
                 binding.tvChainRemaining.text = "%.0f km left".format(s.chainLubeRemainingKm)
                 binding.progressChain.progress = s.chainLubePercent
+                binding.tvSupportChainRemaining.text = "%.0f km".format(s.chainLubeRemainingKm.coerceAtLeast(0.0))
+                binding.tvSupportServiceRemaining.text = if (s.isServiceOverdue) "OVERDUE" else "%.0f km".format(s.serviceRemainingKm.coerceAtLeast(0.0))
 
                 if (s.isServiceOverdue) {
                     binding.tvServiceRemaining.text = "OVERDUE by %.0f km".format(s.serviceOverdueKm)

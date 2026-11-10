@@ -56,64 +56,73 @@
                 android:textStyle="bold" />
 
             <!-- Non-blocking Hardware Readiness Clues (Bluetooth & GPS status) -->
-            <LinearLayout
-                android:id="@+id/layoutHardwareWarnings"
+            <HorizontalScrollView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:scrollbars="none">
 
-                <TextView
-                    android:id="@+id/chipBtWarning"
+                <LinearLayout
+                    android:id="@+id/layoutHardwareWarnings"
                     android:layout_width="wrap_content"
-                    android:layout_height="22dp"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/pill_badge"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:gravity="center"
-                    android:paddingHorizontal="7dp"
-                    android:text="BT OFF"
-                    android:textColor="@color/amber_accent"
-                    android:textSize="9sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/chipGpsWarning"
-                    android:layout_width="wrap_content"
-                    android:layout_height="22dp"
-                    android:background="@drawable/pill_badge"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:gravity="center"
-                    android:paddingHorizontal="7dp"
-                    android:text="GPS OFF"
-                    android:textColor="@color/amber_accent"
-                    android:textSize="9sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
+                    <TextView
+                        android:id="@+id/chipBtWarning"
+                        android:layout_width="wrap_content"
+                        android:layout_height="22dp"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/pill_badge"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?attr/selectableItemBackground"
+                        android:gravity="center"
+                        android:paddingHorizontal="7dp"
+                        android:singleLine="true"
+                        android:text="BT OFF"
+                        android:textColor="@color/amber_accent"
+                        android:textSize="9sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
 
-                <TextView
-                    android:id="@+id/chipPermWarning"
-                    android:layout_width="wrap_content"
-                    android:layout_height="22dp"
-                    android:layout_marginStart="4dp"
-                    android:background="@drawable/pill_badge"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:gravity="center"
-                    android:paddingHorizontal="7dp"
-                    android:text="PERMS NEEDED"
-                    android:textColor="@color/amber_accent"
-                    android:textSize="9sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
-            </LinearLayout>
+                    <TextView
+                        android:id="@+id/chipGpsWarning"
+                        android:layout_width="wrap_content"
+                        android:layout_height="22dp"
+                        android:background="@drawable/pill_badge"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?attr/selectableItemBackground"
+                        android:gravity="center"
+                        android:paddingHorizontal="7dp"
+                        android:singleLine="true"
+                        android:text="GPS OFF"
+                        android:textColor="@color/amber_accent"
+                        android:textSize="9sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/chipPermWarning"
+                        android:layout_width="wrap_content"
+                        android:layout_height="22dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/pill_badge"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?attr/selectableItemBackground"
+                        android:gravity="center"
+                        android:paddingHorizontal="7dp"
+                        android:singleLine="true"
+                        android:text="PERMS"
+                        android:textColor="@color/amber_accent"
+                        android:textSize="9sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </HorizontalScrollView>
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
@@ -889,180 +898,7 @@
                 android:paddingTop="12dp"
                 android:paddingBottom="24dp">
 
-                <!-- Nearby Fuel Stations (Ather Grid Public Fast Chargers Equivalent) -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardNearbyPumps"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="@dimen/card_margin_bottom"
-                    app:cardBackgroundColor="@color/surface_card"
-                    app:cardCornerRadius="@dimen/card_corner_radius"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/surface_border"
-                    app:strokeWidth="@dimen/card_stroke_width">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="@dimen/card_padding">
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal">
-
-                            <ImageView
-                                android:id="@+id/ivFuelHeaderIcon"
-                                android:layout_width="28dp"
-                                android:layout_height="28dp"
-                                android:src="@drawable/ic_fuel"
-                                app:tint="@color/wine_red_light" />
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginStart="12dp"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="Nearby Petrol Pumps"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="16sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:id="@+id/tvNearbyPumpsSubtext"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="11 fuel stations available nearby"
-                                    android:textColor="@color/wine_red_light"
-                                    android:textSize="12sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-                        </LinearLayout>
-
-                        <!-- Glove-Friendly Primary Action Button -->
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnFindPumps"
-                            android:layout_width="match_parent"
-                            android:layout_height="@dimen/btn_height_primary"
-                            android:layout_marginTop="14dp"
-                            android:backgroundTint="@color/wine_red"
-                            android:text="Find Nearest Fuel Station (Maps 2W)"
-                            android:textColor="@color/on_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold"
-                            app:cornerRadius="@dimen/btn_corner_radius" />
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
-
-                <!-- Quick Refuel Logging Card (Ather "Charge where you are / Scan QR" Equivalent) -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardAddFuel"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="@dimen/card_margin_bottom"
-                    app:cardBackgroundColor="@color/surface_card"
-                    app:cardCornerRadius="@dimen/card_corner_radius"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/surface_border"
-                    app:strokeWidth="@dimen/card_stroke_width">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="@dimen/card_padding">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Refuel your Pulsar"
-                            android:textColor="@color/text_primary"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="Log liters or amount to calculate accurate mileage"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnAddFuel"
-                            style="@style/Widget.Material3.Button.TonalButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="@dimen/btn_height_primary"
-                            android:layout_marginTop="14dp"
-                            android:backgroundTint="@color/wine_red_subtle"
-                            android:text="+  Log Refuel (Litres / Amount)"
-                            android:textColor="@color/wine_red_light"
-                            android:textSize="14sp"
-                            android:textStyle="bold"
-                            app:cornerRadius="@dimen/btn_corner_radius"
-                            app:strokeColor="@color/wine_red_border"
-                            app:strokeWidth="@dimen/card_stroke_width" />
-
-                        <LinearLayout
-                            android:id="@+id/rowFuelPriceSetting"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="10dp"
-                            android:background="@drawable/rounded_box"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:foreground="?attr/selectableItemBackground"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal"
-                            android:paddingHorizontal="14dp"
-                            android:paddingVertical="10dp">
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:id="@+id/tvFuelPriceTitle"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="Fuel Price: ₹104.5 / L"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="13sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:id="@+id/tvFuelPriceCountrySubtitle"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="Tap to change local fuel price"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-
-                            <TextView
-                                android:id="@+id/tvEditFuelPriceAction"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Edit Price →"
-                                android:textColor="@color/wine_red_light"
-                                android:textSize="12sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
-
-                <!-- Fuel Tank & Efficiency Analytics -->
+                <!-- Fuel Tank & Efficiency Analytics (Hero Summary Dashboard) -->
                 <com.google.android.material.card.MaterialCardView
                     android:id="@+id/cardFuelBreakdown"
                     android:layout_width="match_parent"
@@ -1220,6 +1056,179 @@
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
+                <!-- Refuel Logging Card (Ather Quick Log Equivalent) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardAddFuel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="@dimen/card_margin_bottom"
+                    app:cardBackgroundColor="@color/surface_card"
+                    app:cardCornerRadius="@dimen/card_corner_radius"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="@dimen/card_stroke_width">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="@dimen/card_padding">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Refuel your Pulsar"
+                            android:textColor="@color/text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Log liters or amount to calculate accurate mileage"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAddFuel"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="@dimen/btn_height_primary"
+                            android:layout_marginTop="14dp"
+                            android:backgroundTint="@color/wine_red_subtle"
+                            android:text="+  Log Refuel (Litres / Amount)"
+                            android:textColor="@color/wine_red_light"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            app:cornerRadius="@dimen/btn_corner_radius"
+                            app:strokeColor="@color/wine_red_border"
+                            app:strokeWidth="@dimen/card_stroke_width" />
+
+                        <LinearLayout
+                            android:id="@+id/rowFuelPriceSetting"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:background="@drawable/rounded_box"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="14dp"
+                            android:paddingVertical="10dp">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tvFuelPriceTitle"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Fuel Price: ₹104.5 / L"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="13sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvFuelPriceCountrySubtitle"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="Tap to change local fuel price"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/tvEditFuelPriceAction"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Edit Price →"
+                                android:textColor="@color/wine_red_light"
+                                android:textSize="12sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Nearby Fuel Stations (Ather Grid Public Fast Chargers Equivalent) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardNearbyPumps"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="@dimen/card_margin_bottom"
+                    app:cardBackgroundColor="@color/surface_card"
+                    app:cardCornerRadius="@dimen/card_corner_radius"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="@dimen/card_stroke_width">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="@dimen/card_padding">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:id="@+id/ivFuelHeaderIcon"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:src="@drawable/ic_fuel"
+                                app:tint="@color/wine_red_light" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Nearby Petrol Pumps"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="16sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvNearbyPumpsSubtext"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="11 fuel stations available nearby"
+                                    android:textColor="@color/wine_red_light"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <!-- Glove-Friendly Primary Action Button -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnFindPumps"
+                            android:layout_width="match_parent"
+                            android:layout_height="@dimen/btn_height_primary"
+                            android:layout_marginTop="14dp"
+                            android:backgroundTint="@color/wine_red"
+                            android:text="Find Nearest Fuel Station (Maps 2W)"
+                            android:textColor="@color/on_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            app:cornerRadius="@dimen/btn_corner_radius" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
                 <!-- Refueling History -->
                 <com.google.android.material.card.MaterialCardView
                     android:id="@+id/cardFuelLog"
@@ -1275,7 +1284,7 @@
                 android:paddingTop="12dp"
                 android:paddingBottom="24dp">
 
-                <!-- Service History & Maintenance Logs Card (Editable) -->
+                <!-- Maintenance Summary Dashboard (Ather Support Equivalent) -->
                 <com.google.android.material.card.MaterialCardView
                     android:id="@+id/cardServiceHistory"
                     android:layout_width="match_parent"
@@ -1304,45 +1313,127 @@
 
                             <ImageView
                                 android:id="@+id/ivServiceHistoryIcon"
-                                android:layout_width="28dp"
-                                android:layout_height="28dp"
+                                android:layout_width="20dp"
+                                android:layout_height="20dp"
+                                android:layout_marginEnd="8dp"
                                 android:src="@drawable/ic_trips"
                                 app:tint="@color/wine_red_light" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:letterSpacing="0.06"
+                                android:text="MAINTENANCE &amp; HEALTH SUMMARY"
+                                android:textColor="@color/text_tertiary"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvServiceHistoryAction"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Records →"
+                                android:textColor="@color/wine_red_light"
+                                android:textSize="12sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:orientation="horizontal">
 
                             <LinearLayout
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="14dp"
                                 android:layout_weight="1"
                                 android:orientation="vertical">
 
                                 <TextView
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="Service History &amp; Records"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="16sp"
+                                    android:text="SERVICE SPENT"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="10sp"
                                     android:textStyle="bold" />
 
                                 <TextView
-                                    android:id="@+id/tvServiceHistorySummary"
+                                    android:id="@+id/tvSupportTotalInvested"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="2dp"
-                                    android:text="View, edit &amp; log motorcycle maintenance"
-                                    android:textColor="@color/text_secondary"
-                                    android:textSize="12sp" />
+                                    android:text="₹0"
+                                    android:textColor="@color/status_connected"
+                                    android:textSize="18sp"
+                                    android:textStyle="bold" />
                             </LinearLayout>
 
-                            <TextView
-                                android:id="@+id/tvServiceHistoryAction"
-                                android:layout_width="wrap_content"
+                            <LinearLayout
+                                android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:text="Edit →"
-                                android:textColor="@color/wine_red_light"
-                                android:textSize="13sp"
-                                android:textStyle="bold" />
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="CHAIN DUE"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvSupportChainRemaining"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="500 km"
+                                    android:textColor="@color/wine_red_light"
+                                    android:textSize="18sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="NEXT SERVICE"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvSupportServiceRemaining"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="500 km"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="18sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
                         </LinearLayout>
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:layout_marginVertical="10dp"
+                            android:background="@color/surface_border_subtle" />
+
+                        <TextView
+                            android:id="@+id/tvServiceHistorySummary"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0 services recorded • Tap to log service"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -1832,130 +1923,136 @@
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:padding="@dimen/card_padding">
-
-                        <ImageView
-                            android:id="@+id/ivMyBikeIcon"
-                            android:layout_width="36dp"
-                            android:layout_height="36dp"
-                            android:src="@drawable/ic_motorcycle"
-                            app:tint="@color/wine_red_light" />
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="14dp"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:id="@+id/tvBikeName"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Pulsar NS200"
-                                android:textColor="@color/text_primary"
-                                android:textSize="15sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/tvBikeReg"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:text="Add Number Plate • BS6 DTS-i"
-                                android:textColor="@color/text_tertiary"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-
-                        <TextView
-                            android:id="@+id/btnSetupBikeModel"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginEnd="6dp"
-                            android:background="@drawable/pill_badge"
-                            android:paddingHorizontal="10dp"
-                            android:paddingVertical="5dp"
-                            android:text="Model"
-                            android:textColor="@color/wine_red_light"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/btnEditBikeInfo"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:background="@drawable/pill_badge"
-                            android:paddingHorizontal="10dp"
-                            android:paddingVertical="5dp"
-                            android:text="Plate"
-                            android:textColor="@color/text_primary"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:paddingHorizontal="@dimen/card_padding"
-                        android:paddingBottom="@dimen/card_padding">
-
-                        <View
-                            android:layout_width="match_parent"
-                            android:layout_height="1dp"
-                            android:layout_marginBottom="12dp"
-                            android:background="@color/surface_border_subtle" />
+                        android:orientation="vertical">
 
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:gravity="center_vertical"
-                            android:orientation="horizontal">
+                            android:orientation="horizontal"
+                            android:padding="@dimen/card_padding">
+
+                            <ImageView
+                                android:id="@+id/ivMyBikeIcon"
+                                android:layout_width="36dp"
+                                android:layout_height="36dp"
+                                android:src="@drawable/ic_motorcycle"
+                                app:tint="@color/wine_red_light" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
+                                android:layout_marginStart="14dp"
                                 android:layout_weight="1"
                                 android:orientation="vertical">
 
                                 <TextView
+                                    android:id="@+id/tvBikeName"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:letterSpacing="0.06"
-                                    android:text="LIFETIME ODOMETER"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="10sp"
+                                    android:text="Pulsar NS200"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="15sp"
                                     android:textStyle="bold" />
 
                                 <TextView
-                                    android:id="@+id/tvAccountOdometer"
+                                    android:id="@+id/tvBikeReg"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="2dp"
-                                    android:text="0.0 km"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
+                                    android:text="Add Number Plate • BS6 DTS-i"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="12sp" />
                             </LinearLayout>
 
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/btnEditOdo"
-                                style="@style/Widget.Material3.Button.TonalButton"
+                            <TextView
+                                android:id="@+id/btnSetupBikeModel"
                                 android:layout_width="wrap_content"
-                                android:layout_height="32dp"
-                                android:backgroundTint="@color/surface_elevated"
-                                android:letterSpacing="0.02"
-                                android:paddingHorizontal="12dp"
-                                android:paddingVertical="0dp"
-                                android:text="Edit ODO"
+                                android:layout_height="wrap_content"
+                                android:layout_marginEnd="6dp"
+                                android:background="@drawable/pill_badge"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:text="Model"
                                 android:textColor="@color/wine_red_light"
                                 android:textSize="11sp"
-                                android:textStyle="bold"
-                                app:cornerRadius="16dp"
-                                app:strokeColor="@color/surface_border"
-                                app:strokeWidth="1dp" />
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/btnEditBikeInfo"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:background="@drawable/pill_badge"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:text="Plate"
+                                android:textColor="@color/text_primary"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingHorizontal="@dimen/card_padding"
+                            android:paddingBottom="@dimen/card_padding">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginBottom="12dp"
+                                android:background="@color/surface_border_subtle" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
+
+                                <LinearLayout
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:orientation="vertical">
+
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:letterSpacing="0.06"
+                                        android:text="LIFETIME ODOMETER"
+                                        android:textColor="@color/text_tertiary"
+                                        android:textSize="10sp"
+                                        android:textStyle="bold" />
+
+                                    <TextView
+                                        android:id="@+id/tvAccountOdometer"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginTop="2dp"
+                                        android:text="0.0 km"
+                                        android:textColor="@color/text_primary"
+                                        android:textSize="18sp"
+                                        android:textStyle="bold" />
+                                </LinearLayout>
+
+                                <com.google.android.material.button.MaterialButton
+                                    android:id="@+id/btnEditOdo"
+                                    style="@style/Widget.Material3.Button.TonalButton"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="32dp"
+                                    android:backgroundTint="@color/surface_elevated"
+                                    android:letterSpacing="0.02"
+                                    android:paddingHorizontal="12dp"
+                                    android:paddingVertical="0dp"
+                                    android:text="Edit ODO"
+                                    android:textColor="@color/wine_red_light"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold"
+                                    app:cornerRadius="16dp"
+                                    app:strokeColor="@color/surface_border"
+                                    app:strokeWidth="1dp" />
+                            </LinearLayout>
                         </LinearLayout>
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
@@ -3637,7 +3734,7 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="16dp"
+                    android:layout_marginBottom="8dp"
                     android:orientation="horizontal">
 
                     <com.google.android.material.button.MaterialButton
@@ -3688,6 +3785,21 @@
                         app:strokeColor="@color/surface_border"
                         app:strokeWidth="1dp" />
                 </LinearLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTestRoundabout"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginBottom="12dp"
+                    android:backgroundTint="@color/surface_card"
+                    android:text="↺  Test Roundabout (Safe / Exit 2)"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="12dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnStopSimulation"

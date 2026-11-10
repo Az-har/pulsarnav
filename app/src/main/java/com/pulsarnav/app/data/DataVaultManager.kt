@@ -129,6 +129,14 @@ class DataVaultManager private constructor(private val context: Context) {
                 put("workshop", s.workshop)
                 put("notes", s.notes)
                 put("cost", s.cost)
+                val itemsArr = JSONArray()
+                for (item in s.items) {
+                    itemsArr.put(JSONObject().apply {
+                        put("name", item.name)
+                        put("cost", item.cost)
+                    })
+                }
+                put("items", itemsArr)
             }
             serviceArray.put(sObj)
         }
@@ -272,6 +280,19 @@ class DataVaultManager private constructor(private val context: Context) {
                 val importedServices = mutableListOf<ServiceRecord>()
                 for (i in 0 until serviceArray.length()) {
                     val o = serviceArray.getJSONObject(i)
+                    val itemsList = mutableListOf<com.pulsarnav.app.maintenance.ServiceItem>()
+                    val itemsArr = o.optJSONArray("items")
+                    if (itemsArr != null) {
+                        for (j in 0 until itemsArr.length()) {
+                            val itmObj = itemsArr.getJSONObject(j)
+                            itemsList.add(
+                                com.pulsarnav.app.maintenance.ServiceItem(
+                                    name = itmObj.optString("name", ""),
+                                    cost = itmObj.optDouble("cost", 0.0)
+                                )
+                            )
+                        }
+                    }
                     importedServices.add(
                         ServiceRecord(
                             id = o.getString("id"),
@@ -280,7 +301,8 @@ class DataVaultManager private constructor(private val context: Context) {
                             title = o.optString("title", "Periodic Service"),
                             workshop = o.optString("workshop", "Bajaj Service"),
                             notes = o.optString("notes", ""),
-                            cost = o.optString("cost", "₹0")
+                            cost = o.optString("cost", "₹0"),
+                            items = itemsList
                         )
                     )
                 }
