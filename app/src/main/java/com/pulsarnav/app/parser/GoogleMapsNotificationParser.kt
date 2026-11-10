@@ -13,7 +13,8 @@ data class ParsedNavigationStep(
     val rawDistanceText: String,
     val etaHour: Int,
     val etaMinute: Int,
-    val etaIsAm: Boolean
+    val etaIsAm: Boolean,
+    val roundaboutExit: Int = 0
 )
 
 object GoogleMapsNotificationParser {
@@ -55,23 +56,37 @@ object GoogleMapsNotificationParser {
         }
         stepDist = stepDist.coerceAtLeast(0)
 
-        // 2. Total Trip Distance (check Android progressMax direct meters first, then subtext)
-        var totalDist = if (progressMax > 0) progressMax else parseDistanceMeters(sSubtext)
+        // 2. Total Trip Distance (prioritize subtext/secondaryInfo over misleading progressMax)
+        var totalDist = parseDistanceMeters(sSubtext)
+        if (totalDist < 0) {
+            totalDist = parseDistanceMeters(sSecondaryInfo)
+        }
+        if (totalDist < 0 && progressMax > 1000) {
+            totalDist = progressMax
+        }
         if (totalDist < 0) {
             totalDist = stepDist.coerceAtLeast(0)
         }
 
-        // 3. Maneuver Classification
+        // 3. Maneuver Classification & Roundabout Exit Detection
         val fullContent = "$sTitle $sText $sSubtext $sSecondaryInfo".lowercase()
-        var classifiedManeuver = classifyFromText(fullContent)
+        val textResult = classifyFromText(fullContent, stepDist)
+        var classifiedManeuver = textResult?.maneuver
+        var roundaboutExit = textResult?.roundaboutExit ?: 0
 
         if (classifiedManeuver == null && iconObj != null) {
             val match = ManeuverMatcher.match(iconObj)
             if (match != null && match.score >= 0.60) {
                 classifiedManeuver = match.maneuver
+                if (classifiedManeuver == Maneuver.ROUNDABOUT_LEFT || classifiedManeuver == Maneuver.ROUNDABOUT_RIGHT) {
+                    roundaboutExit = parseRoundaboutExit(fullContent)
+                }
             }
         }
         val finalManeuver = classifiedManeuver ?: Maneuver.STRAIGHT
+        if ((finalManeuver == Maneuver.ROUNDABOUT_LEFT || finalManeuver == Maneuver.ROUNDABOUT_RIGHT) && roundaboutExit <= 0) {
+            roundaboutExit = 1 // Safety fallback so OTC cluster never renders a blank maneuver symbol
+        }
 
         // 4. Street / Road Name
         val cleanStreet = if (sSecondaryInfo.isNotBlank()) {
@@ -118,22 +133,79 @@ object GoogleMapsNotificationParser {
             rawDistanceText = rawDist,
             etaHour = etaHour,
             etaMinute = etaMinute,
-            etaIsAm = etaIsAm
+            etaIsAm = etaIsAm,
+            roundaboutExit = roundaboutExit
         )
     }
 
-    private fun classifyFromText(s: String): Maneuver? {
+    private data class ManeuverResult(val maneuver: Maneuver, val roundaboutExit: Int = 0)
+
+    private val ROUNDABOUT_EXIT_REGEX = Pattern.compile(
+        "(?i)(?:take\\s+(?:the\\s+)?)?(\\d+)(?:st|nd|rd|th)?\\s+exit|(?:take\\s+)?exit\\s+(\\d+)|roundabout.*exit\\s*(\\d+)",
+        Pattern.CASE_INSENSITIVE
+    )
+
+    fun parseRoundaboutExit(text: String): Int {
+        val s = text.lowercase()
+        if (!s.contains("roundabout") && !s.contains("rotary")) return 0
+
+        val m = ROUNDABOUT_EXIT_REGEX.matcher(s)
+        if (m.find()) {
+            val numStr = m.group(1) ?: m.group(2) ?: m.group(3)
+            val num = numStr?.toIntOrNull()
+            if (num != null && num in 1..8) return num
+        }
+
+        return when {
+            s.contains("1st exit") || s.contains("first exit") -> 1
+            s.contains("2nd exit") || s.contains("second exit") -> 2
+            s.contains("3rd exit") || s.contains("third exit") -> 3
+            s.contains("4th exit") || s.contains("fourth exit") -> 4
+            s.contains("5th exit") || s.contains("fifth exit") -> 5
+            s.contains("6th exit") || s.contains("sixth exit") -> 6
+            s.contains("7th exit") || s.contains("seventh exit") -> 7
+            s.contains("8th exit") || s.contains("eighth exit") -> 8
+            else -> 1 // Default to 1 so OTC cluster never displays blank
+        }
+    }
+
+    private fun classifyFromText(s: String, distanceMeters: Int): ManeuverResult? {
         if (s.isEmpty()) return null
 
-        if (s.contains("destination") || s.contains("arrived") || s.contains("reached")) {
-            return Maneuver.DESTINATION_REACHED
+        // 1. Arrival detection: only trigger DESTINATION_REACHED if explicitly arrived or <= 25 meters away
+        val isExplicitArrived = s.contains("you have arrived") ||
+                s.contains("you've arrived") ||
+                s.contains("arrived at destination") ||
+                s.contains("welcome to your destination") ||
+                s.contains("has arrived")
+
+        if (isExplicitArrived || ((s.contains("destination") || s.contains("arrived") || s.contains("reached")) && distanceMeters in 0..25)) {
+            return ManeuverResult(Maneuver.DESTINATION_REACHED, 0)
+        }
+
+        // 2. Approaching destination while still riding (distance > 25m)
+        // Never terminate navigation prematurely after the final turn!
+        if (s.contains("destination")) {
+            val m = when {
+                s.contains("right") -> Maneuver.TURN_SLIGHT_RIGHT
+                s.contains("left") -> Maneuver.TURN_SLIGHT_LEFT
+                else -> Maneuver.STRAIGHT
+            }
+            return ManeuverResult(m, 0)
+        }
+
+        // 3. Roundabout / Rotary with exit number extraction
+        val isRoundabout = s.contains("roundabout") || s.contains("rotary") || s.contains("at the roundabout")
+        if (isRoundabout) {
+            val exit = parseRoundaboutExit(s)
+            val m = if (s.contains("left")) Maneuver.ROUNDABOUT_LEFT else Maneuver.ROUNDABOUT_RIGHT
+            return ManeuverResult(m, exit)
         }
 
         val hasDirection = s.contains("turn left") || s.contains("turn right") ||
                 s.contains("left onto") || s.contains("right onto") ||
                 s.contains("keep left") || s.contains("keep right") ||
                 s.contains("slight") || s.contains("sharp") ||
-                s.contains("roundabout") || s.contains("rotary") ||
                 s.contains("fork") || s.contains("merge") ||
                 s.contains("u-turn") || s.contains("uturn") ||
                 s.contains("ramp") || s.contains("head north") ||
@@ -141,17 +213,14 @@ object GoogleMapsNotificationParser {
                 s.contains("head west") || s.contains("head toward") ||
                 s.contains("continue straight") || s.contains("continue onto") ||
                 s.contains("stay on") ||
-                // Waze patterns: "turn left in", "turn right in", "exit left", "exit right"
+                // Waze patterns
                 s.contains("exit left") || s.contains("exit right") ||
-                s.contains("at the roundabout") || s.contains("take the") ||
-                s.contains("in left") || s.contains("in right")  // e.g. "turn in left"
+                s.contains("take the") ||
+                s.contains("in left") || s.contains("in right")
 
         if (!hasDirection) return null
 
-        return when {
-            s.contains("roundabout") || s.contains("rotary") || s.contains("at the roundabout") -> {
-                if (s.contains("right")) Maneuver.ROUNDABOUT_RIGHT else Maneuver.ROUNDABOUT_LEFT
-            }
+        val m = when {
             s.contains("u-turn") || s.contains("uturn") -> {
                 if (s.contains("right")) Maneuver.U_TURN_RIGHT else Maneuver.U_TURN_LEFT
             }
@@ -176,6 +245,8 @@ object GoogleMapsNotificationParser {
             s.contains("merge") -> Maneuver.MERGE
             else -> null
         }
+
+        return m?.let { ManeuverResult(it, 0) }
     }
 
     private fun parseDistanceMeters(s: String): Int {

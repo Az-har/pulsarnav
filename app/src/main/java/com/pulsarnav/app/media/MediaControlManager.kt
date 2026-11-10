@@ -54,6 +54,30 @@ class MediaControlManager private constructor(private val context: Context) {
         val eventTime = SystemClock.uptimeMillis()
         val down = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, 0)
         val up = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, keyCode, 0)
+
+        // 1. Attempt direct control via active MediaSession (Spotify, YT Music, Audible, etc.)
+        try {
+            val mediaSessionManager = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? android.media.session.MediaSessionManager
+            val notificationListenerComponent = android.content.ComponentName(
+                context,
+                com.pulsarnav.app.service.GoogleMapsNotificationListener::class.java
+            )
+            val activeSessions = mediaSessionManager?.getActiveSessions(notificationListenerComponent)
+            if (!activeSessions.isNullOrEmpty()) {
+                val activeController = activeSessions.firstOrNull {
+                    it.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING
+                } ?: activeSessions.first()
+
+                activeController.dispatchMediaButtonEvent(down)
+                activeController.dispatchMediaButtonEvent(up)
+                android.util.Log.i("PulsarMedia", "Dispatched key $keyCode to active MediaSession: ${activeController.packageName}")
+                return
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("PulsarMedia", "MediaSession dispatch fallback: ${e.message}")
+        }
+
+        // 2. Fallback to system AudioManager broadcast
         audioManager?.dispatchMediaKeyEvent(down)
         audioManager?.dispatchMediaKeyEvent(up)
     }

@@ -65,12 +65,45 @@ class BikeBleForegroundService : Service {
         }
     }
 
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
     override fun onCreate() {
         super.onCreate()
+        acquireWakeLock()
+        initCallManagerIfPermitted()
         promoteToForeground()
     }
 
+    private fun acquireWakeLock() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "PulsarNav:BleKeepAliveWakeLock")?.apply {
+                setReferenceCounted(false)
+                acquire(12 * 60 * 60 * 1000L) // 12-hour safe upper bound
+            }
+            Log.d(TAG, "Partial WakeLock acquired for persistent background BLE link")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire WakeLock: ${e.message}")
+        }
+    }
+
+    private fun initCallManagerIfPermitted() {
+        try {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.READ_PHONE_STATE
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                com.pulsarnav.app.telephony.CallManager.getInstance(this).initialize()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "CallManager init in service error: ${e.message}")
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        acquireWakeLock()
+        initCallManagerIfPermitted()
         promoteToForeground()
         return START_STICKY
     }
@@ -131,6 +164,12 @@ class BikeBleForegroundService : Service {
 
     override fun onDestroy() {
         isRunning = false
+        try {
+            wakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+        } catch (_: Exception) {}
+        wakeLock = null
         Log.d(TAG, "BikeBleForegroundService destroyed")
         super.onDestroy()
     }

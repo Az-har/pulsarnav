@@ -1,7 +1,15 @@
 package com.pulsarnav.app.maintenance
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.pulsarnav.app.R
 import com.pulsarnav.app.data.AppSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -126,17 +134,20 @@ class MaintenanceManager private constructor(private val context: Context) {
         val newOdo = currentOdo + km
         prefs.edit().putString(KEY_ODO, "%.1f".format(newOdo)).apply()
         _status.value = computeStatus()
+        checkAndSendMaintenanceReminders()
     }
 
     fun setOdometer(newOdo: Double) {
         prefs.edit().putString(KEY_ODO, "%.1f".format(newOdo)).apply()
         _status.value = computeStatus()
+        checkAndSendMaintenanceReminders()
     }
 
     fun markChainLubed() {
         val currentOdo = prefs.getString(KEY_ODO, "0.0")?.toDoubleOrNull() ?: 0.0
         prefs.edit().putString(KEY_LAST_CHAIN_LUBE, currentOdo.toString()).apply()
         _status.value = computeStatus()
+        checkAndSendMaintenanceReminders()
     }
 
     fun markServiceDone() {
@@ -152,6 +163,96 @@ class MaintenanceManager private constructor(private val context: Context) {
         }
         prefs.edit().putString(KEY_NEXT_SERVICE_TARGET_ODO, "%.1f".format(nextTarget)).apply()
         _status.value = computeStatus()
+        checkAndSendMaintenanceReminders()
+    }
+
+    fun checkAndSendMaintenanceReminders() {
+        try {
+            val currentStatus = _status.value
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    return
+                }
+            }
+
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    "pulsarnav_maintenance_channel",
+                    "Maintenance & Service Alerts",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Alerts for upcoming chain lube and scheduled periodic maintenance"
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+
+            val alertPrefs = context.getSharedPreferences("pulsarnav_maintenance_alerts", Context.MODE_PRIVATE)
+
+            // 1. Chain Lube Reminder (1..100 km threshold)
+            if (currentStatus.chainLubeRemainingKm in 1.0..100.0) {
+                val lubeMilestone = (currentStatus.totalOdometerKm / 500.0).toInt()
+                val lastMilestone = alertPrefs.getInt("last_chain_milestone", -1)
+                if (lubeMilestone != lastMilestone) {
+                    val notif = NotificationCompat.Builder(context, "pulsarnav_maintenance_channel")
+                        .setSmallIcon(R.drawable.ic_launcher)
+                        .setContentTitle("Chain Lube Due Soon")
+                        .setContentText("Only %.0f km remaining before recommended chain cleaning & lube.".format(currentStatus.chainLubeRemainingKm))
+                        .setStyle(NotificationCompat.BigTextStyle().bigText("Your motorcycle drive chain is due for lubrication in %.0f km (Current ODO: %.1f km). Regular chain care prevents sprocket wear.".format(currentStatus.chainLubeRemainingKm, currentStatus.totalOdometerKm)))
+                        .setPriority(NotificationCompat.PRIORITY_HIGH)
+                        .setAutoCancel(true)
+                        .build()
+                    notificationManager.notify(2001, notif)
+                    alertPrefs.edit().putInt("last_chain_milestone", lubeMilestone).apply()
+                }
+            } else if (currentStatus.chainLubeRemainingKm <= 0.0) {
+                val lubeMilestone = (currentStatus.totalOdometerKm / 500.0).toInt()
+                val lastMilestone = alertPrefs.getInt("last_chain_overdue_milestone", -1)
+                if (lubeMilestone != lastMilestone) {
+                    val notif = NotificationCompat.Builder(context, "pulsarnav_maintenance_channel")
+                        .setSmallIcon(R.drawable.ic_launcher)
+                        .setContentTitle("Chain Lubrication OVERDUE")
+                        .setContentText("Chain lube interval has been exceeded (%.1f km ODO).".format(currentStatus.totalOdometerKm))
+                        .setPriority(NotificationCompat.PRIORITY_HIGH)
+                        .setAutoCancel(true)
+                        .build()
+                    notificationManager.notify(2001, notif)
+                    alertPrefs.edit().putInt("last_chain_overdue_milestone", lubeMilestone).apply()
+                }
+            }
+
+            // 2. Periodic Service Reminder (1..300 km threshold)
+            val targetOdo = currentStatus.nextServiceTargetOdoKm
+            if (currentStatus.serviceRemainingKm in 1.0..300.0) {
+                val lastNotifiedTarget = alertPrefs.getFloat("last_notified_service_target", -1f)
+                if (Math.abs(lastNotifiedTarget.toDouble() - targetOdo) > 5.0) {
+                    val notif = NotificationCompat.Builder(context, "pulsarnav_maintenance_channel")
+                        .setSmallIcon(R.drawable.ic_launcher)
+                        .setContentTitle("Periodic Service Approaching")
+                        .setContentText("%.0f km remaining until scheduled service target (%.0f km).".format(currentStatus.serviceRemainingKm, targetOdo))
+                        .setStyle(NotificationCompat.BigTextStyle().bigText("Motorcycle scheduled service is due at %.0f km (%.0f km remaining). Prepare to inspect engine oil, filters, spark plug, and brake pads.".format(targetOdo, currentStatus.serviceRemainingKm)))
+                        .setPriority(NotificationCompat.PRIORITY_HIGH)
+                        .setAutoCancel(true)
+                        .build()
+                    notificationManager.notify(2002, notif)
+                    alertPrefs.edit().putFloat("last_notified_service_target", targetOdo.toFloat()).apply()
+                }
+            } else if (currentStatus.isServiceOverdue) {
+                val overdueKey = "overdue_notified_${targetOdo.toInt()}"
+                if (!alertPrefs.getBoolean(overdueKey, false)) {
+                    val notif = NotificationCompat.Builder(context, "pulsarnav_maintenance_channel")
+                        .setSmallIcon(R.drawable.ic_launcher)
+                        .setContentTitle("Periodic Service OVERDUE")
+                        .setContentText("Service milestone (%.0f km) is overdue by %.0f km.".format(targetOdo, currentStatus.serviceOverdueKm))
+                        .setPriority(NotificationCompat.PRIORITY_HIGH)
+                        .setAutoCancel(true)
+                        .build()
+                    notificationManager.notify(2002, notif)
+                    alertPrefs.edit().putBoolean(overdueKey, true).apply()
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     fun getServiceHistory(): MutableList<ServiceRecord> {

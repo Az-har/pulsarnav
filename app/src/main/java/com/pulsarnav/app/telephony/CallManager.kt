@@ -57,10 +57,51 @@ class CallManager private constructor(private val context: Context) {
 
     private var buttonPressStartTime = 0L
 
+    private var isInitialized = false
+
+    private val phoneStateBroadcastReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            if (intent?.action == TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
+                val stateStr = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+                val incomingNum = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+                when (stateStr) {
+                    TelephonyManager.EXTRA_STATE_RINGING -> {
+                        if (!incomingNum.isNullOrBlank()) {
+                            onIncomingNumberDetected(incomingNum)
+                        } else {
+                            handleCallState(TelephonyManager.CALL_STATE_RINGING, null)
+                        }
+                    }
+                    TelephonyManager.EXTRA_STATE_OFFHOOK -> {
+                        handleCallState(TelephonyManager.CALL_STATE_OFFHOOK, incomingNum)
+                    }
+                    TelephonyManager.EXTRA_STATE_IDLE -> {
+                        handleCallState(TelephonyManager.CALL_STATE_IDLE, null)
+                    }
+                }
+            }
+        }
+    }
+
     fun initialize() {
+        if (isInitialized) return
+
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "READ_PHONE_STATE permission not yet granted; deferring TelephonyCallback registration")
             return
+        }
+
+        isInitialized = true
+
+        try {
+            val filter = android.content.IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(phoneStateBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                context.registerReceiver(phoneStateBroadcastReceiver, filter)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Dynamic receiver registration for PHONE_STATE: ${e.message}")
         }
 
         try {

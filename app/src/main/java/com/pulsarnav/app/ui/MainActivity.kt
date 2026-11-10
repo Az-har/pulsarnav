@@ -190,6 +190,11 @@ class MainActivity : AppCompatActivity() {
         fuelLogManager = FuelLogManager.getInstance(this)
         mediaControlManager = MediaControlManager.getInstance(this)
 
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
+            callManager.initialize()
+            telemetryManager.initialize()
+        }
+
         // Setup UI Sections
         setupBottomNavigation()
         setupListeners()
@@ -201,8 +206,6 @@ class MainActivity : AppCompatActivity() {
         updateHeroRangeDisplay()
         updateBikeIssuesSummary()
         updateEmergencyHomeCard()
-        updateOwnershipDays()
-        setupStatsNavigation()
         setupSupportAndAccountDialogs()
         setupFeatureToggles()
         setupThemeSelector()
@@ -221,8 +224,6 @@ class MainActivity : AppCompatActivity() {
         observeNavigation()
         observeTelephonyAndAlerts()
         observeTelemetry()
-        observeParking()
-        observeTrips()
         observeMaintenance()
         observeFuelLog()
 
@@ -291,9 +292,7 @@ class MainActivity : AppCompatActivity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (binding.scrollTrips.visibility == View.VISIBLE) {
-            switchTab(binding.scrollCockpit)
-        } else if (binding.scrollFuel.visibility == View.VISIBLE ||
+        if (binding.scrollFuel.visibility == View.VISIBLE ||
             binding.scrollSupport.visibility == View.VISIBLE ||
             binding.scrollSettings.visibility == View.VISIBLE
         ) {
@@ -316,13 +315,7 @@ class MainActivity : AppCompatActivity() {
                 launchNavigationTo(if (addr.isNotBlank() && addr != "Work") addr else "Work")
             }
             "com.pulsarnav.action.FIND_BIKE" -> {
-                val walkingIntent = parkingManager.getWalkingDirectionsIntent()
-                    ?: parkingManager.getFallbackWalkingDirectionsIntent()
-                if (walkingIntent != null) {
-                    try {
-                        startActivity(walkingIntent)
-                    } catch (_: Exception) {}
-                }
+                showFeedback("Bike locator feature removed")
             }
             "com.pulsarnav.action.LOG_REFUEL" -> {
                 showAddFuelDialog()
@@ -342,7 +335,6 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         val activeTabId = when {
-            binding.scrollTrips.visibility == View.VISIBLE -> R.id.scrollTrips
             binding.scrollFuel.visibility == View.VISIBLE -> R.id.nav_fuel
             binding.scrollSupport.visibility == View.VISIBLE -> R.id.nav_support
             binding.scrollSettings.visibility == View.VISIBLE -> R.id.nav_account
@@ -380,7 +372,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun restoreActiveTab(tabId: Int) {
         when (tabId) {
-            R.id.scrollTrips -> showRidingStats()
             R.id.nav_fuel -> {
                 binding.bottomNav.selectedItemId = R.id.nav_fuel
                 switchTab(binding.scrollFuel)
@@ -405,33 +396,9 @@ class MainActivity : AppCompatActivity() {
         binding.scrollFuel.visibility = View.GONE
         binding.scrollSupport.visibility = View.GONE
         binding.scrollSettings.visibility = View.GONE
-        binding.scrollTrips.visibility = View.GONE
 
         targetView.visibility = View.VISIBLE
         return true
-    }
-
-    private fun showRidingStats(showAllRidesTab: Boolean = false) {
-        provideHapticFeedback()
-        binding.scrollCockpit.visibility = View.GONE
-        binding.scrollFuel.visibility = View.GONE
-        binding.scrollSupport.visibility = View.GONE
-        binding.scrollSettings.visibility = View.GONE
-        binding.scrollTrips.visibility = View.VISIBLE
-
-        selectStatsTab(if (showAllRidesTab) binding.tabStatsAllRides else binding.tabStatsHighlights)
-    }
-
-    private fun selectStatsTab(selectedTab: TextView) {
-        val isHighlights = (selectedTab.id == R.id.tabStatsHighlights)
-        binding.layoutStatsHighlights.visibility = if (isHighlights) View.VISIBLE else View.GONE
-        binding.layoutStatsAllRides.visibility = if (isHighlights) View.GONE else View.VISIBLE
-
-        binding.tabStatsHighlights.background = getPillChipDrawable(isHighlights, currentTheme)
-        binding.tabStatsHighlights.setTextColor(if (isHighlights) currentTheme.accentColor else ContextCompat.getColor(this, R.color.text_secondary))
-
-        binding.tabStatsAllRides.background = getPillChipDrawable(!isHighlights, currentTheme)
-        binding.tabStatsAllRides.setTextColor(if (!isHighlights) currentTheme.accentColor else ContextCompat.getColor(this, R.color.text_secondary))
     }
 
     private fun getPillChipDrawable(active: Boolean, theme: CockpitTheme): GradientDrawable {
@@ -458,6 +425,14 @@ class MainActivity : AppCompatActivity() {
             showClusterRecalibrateBottomSheet()
         }
         binding.layoutProjectedRange.setOnClickListener {
+            provideHapticFeedback()
+            showClusterRecalibrateBottomSheet()
+        }
+        binding.layoutHomeOdometer.setOnClickListener {
+            provideHapticFeedback()
+            showClusterRecalibrateBottomSheet()
+        }
+        binding.btnEditOdo.setOnClickListener {
             provideHapticFeedback()
             showClusterRecalibrateBottomSheet()
         }
@@ -495,7 +470,7 @@ class MainActivity : AppCompatActivity() {
 
         if (dteKm <= 0 && fuelPercent <= 0) {
             binding.tvProjectedRange.text = "--"
-            binding.tvDteSubtext.text = "Tap Recalibrate to sync"
+            binding.tvDteSubtext.text = "Tap to sync"
             binding.tvFuelLevelText.text = "0% Tank Level • 0.0L / ${"%.1f".format(tankMax)}L"
             binding.progressFuelLevel.progress = 0
         } else {
@@ -503,6 +478,19 @@ class MainActivity : AppCompatActivity() {
             binding.tvDteSubtext.text = "~${"%.1f".format(fuelLiters)}L in tank"
             binding.tvFuelLevelText.text = "${fuelPercent}% Tank Level • ${"%.1f".format(fuelLiters)}L / ${"%.1f".format(tankMax)}L"
             binding.progressFuelLevel.progress = fuelPercent
+        }
+
+        // Unified Odometer & Mileage metrics across Home and Account tabs
+        val totalOdo = maintenanceManager.status.value.totalOdometerKm
+        val odoFormatted = "%.1f km".format(totalOdo)
+        binding.tvHomeOdometer.text = odoFormatted
+        binding.tvAccountOdometer.text = odoFormatted
+
+        val fuelStats = fuelLogManager.stats.value
+        if (fuelStats.averageKmpl > 0.0) {
+            binding.tvHomeMileage.text = "%.1f km/l avg".format(fuelStats.averageKmpl)
+        } else {
+            binding.tvHomeMileage.text = "-- km/l"
         }
 
         binding.tvTankSpecs.text = "${tankMax.toInt()} L FUEL TANK"
@@ -653,44 +641,6 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun setupStatsNavigation() {
-        binding.btnViewAllRidingStats.setOnClickListener {
-            showRidingStats(showAllRidesTab = false)
-        }
-        binding.btnViewRideDetails.setOnClickListener {
-            showRidingStats(showAllRidesTab = true)
-        }
-        binding.btnBackFromStats.setOnClickListener {
-            provideHapticFeedback()
-            switchTab(binding.scrollCockpit)
-        }
-        binding.tabStatsHighlights.setOnClickListener {
-            provideHapticFeedback()
-            selectStatsTab(binding.tabStatsHighlights)
-        }
-        binding.tabStatsAllRides.setOnClickListener {
-            provideHapticFeedback()
-            selectStatsTab(binding.tabStatsAllRides)
-        }
-        binding.btnShareRide.setOnClickListener {
-            provideHapticFeedback()
-            shareRideSummary()
-        }
-    }
-
-    private fun shareRideSummary() {
-        val sendIntent: Intent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(
-                Intent.EXTRA_TEXT,
-                "Pulsar NS200 Ride Log:\nDistance: 6.2 km • Time: 18 min • Avg Mileage: 38.5 km/l\nRecorded via PulsarNav Companion."
-            )
-            type = "text/plain"
-        }
-        val shareIntent = Intent.createChooser(sendIntent, "Share Ride Summary")
-        startActivity(shareIntent)
-    }
-
     private fun setupListeners() {
         // BLE Scan / Disconnect Button
         binding.btnScan.setOnClickListener {
@@ -724,34 +674,9 @@ class MainActivity : AppCompatActivity() {
             launchGoogleMapsRide()
         }
 
-        // Quick Nearby Fuel on Home and Fuel Tabs
-        binding.cardQuickFuel.setOnClickListener {
-            launchNearbyFuelPumps()
-        }
+        // Quick Nearby Fuel on Fuel Tab
         binding.btnFindPumps.setOnClickListener {
             launchNearbyFuelPumps()
-        }
-
-        // Navigate to Bike (Walking Directions)
-        binding.btnNavigateToBike.setOnClickListener {
-            provideHapticFeedback()
-            val loc = parkingManager.lastParkedLocation.value
-            if (loc == null) {
-                showFeedback("Parking spot not saved yet. Turn off bike ignition to save.")
-                return@setOnClickListener
-            }
-
-            try {
-                val intent = parkingManager.getWalkingDirectionsIntent()
-                startActivity(intent)
-            } catch (e: Exception) {
-                try {
-                    val fallback = parkingManager.getFallbackWalkingDirectionsIntent()
-                    startActivity(fallback)
-                } catch (e2: Exception) {
-                    showFeedback("Could not open Maps navigation", isAlert = true)
-                }
-            }
         }
 
         // Turn simulation test bench (Continuous ~800ms stream to motorcycle cluster)
@@ -821,25 +746,10 @@ class MainActivity : AppCompatActivity() {
             showFeedback("Call Ended / Idle")
         }
 
-        // Parking Simulation
-        binding.btnSimulatePark.setOnClickListener {
-            provideHapticFeedback()
-            parkingManager.saveLocation(19.0596, 72.8295, "Bandra Bandstand, Mumbai")
-            showFeedback("Simulated parking location saved!")
-        }
-
-        // Simulate Ride
-        binding.btnSimulateRide.setOnClickListener {
-            provideHapticFeedback()
-            rideTracker.simulateTrip(14.2, 1695, 84.0, 36.2, "Bandra to BKC Ride")
-            maintenanceManager.addDistance(14.2)
-            showFeedback("Simulated 14.2 km ride logged!")
-        }
-
         // Edit Odometer
         binding.btnEditOdo.setOnClickListener {
             provideHapticFeedback()
-            showEditOdometerDialog()
+            showClusterRecalibrateBottomSheet()
         }
 
         // Mark Chain Lubed
@@ -865,17 +775,6 @@ class MainActivity : AppCompatActivity() {
             showAddFuelDialog()
         }
 
-        // Days of Ownership
-        binding.layoutDaysOfOwnership.setOnClickListener {
-            provideHapticFeedback()
-            showEditOwnershipDaysDialog()
-        }
-
-        // Add Manual Ride
-        binding.btnAddManualRide.setOnClickListener {
-            provideHapticFeedback()
-            showAddManualRideDialog()
-        }
 
         // Emergency & Medical Assistance
         binding.btnEmergencyHospitals.setOnClickListener {
@@ -964,21 +863,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupSupportAndAccountDialogs() {
-        // Bajaj Authorized Service Centers -> Launch Maps search for Bajaj Service Center
-        val openBajajService = View.OnClickListener {
-            provideHapticFeedback()
-            try {
-                val uri = Uri.parse("geo:0,0?q=Bajaj+authorized+service+center")
-                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                    setPackage("com.google.android.apps.maps")
-                }
-                startActivity(intent)
-            } catch (_: Exception) {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com?q=Bajaj+service+center")))
-            }
-        }
-        binding.cardServiceCenters.setOnClickListener(openBajajService)
-
         // Service History Dialog (Editable)
         binding.cardServiceHistory.setOnClickListener {
             provideHapticFeedback()
@@ -1311,7 +1195,7 @@ class MainActivity : AppCompatActivity() {
             cardContent.addView(rowTop)
 
             val tvMeta = TextView(this).apply {
-                text = "${rec.date} • ${rec.odoKm} km • ${rec.workshop}"
+                text = "${rec.date} • %.1f km".format(rec.odoKm)
                 setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
                 textSize = 11f
                 setPadding(0, 6, 0, 6)
@@ -1435,21 +1319,6 @@ class MainActivity : AppCompatActivity() {
         )
         layout.addView(etOdo)
 
-        // Workshop
-        val tvWorkshopLabel = TextView(this).apply {
-            text = "\nWorkshop / Service Center:"
-            setTextColor(currentTheme.textPrimaryColor)
-            textSize = 13f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
-        layout.addView(tvWorkshopLabel)
-
-        val etWorkshop = createThemedEditText(
-            hintText = "e.g. Bajaj Authorized Service",
-            initialText = existing?.workshop ?: "Bajaj Authorized Service"
-        )
-        layout.addView(etWorkshop)
-
         // Cost
         val tvCostLabel = TextView(this).apply {
             text = "\nTotal Bill Cost (%s):".format(appSettings.currentCurrencySymbol)
@@ -1465,18 +1334,73 @@ class MainActivity : AppCompatActivity() {
         )
         layout.addView(etCost)
 
-        // Notes
+        // Repaired & Replaced Parts Itemized Checklist
+        val tvPartsLabel = TextView(this).apply {
+            text = "\nRepaired / Replaced Parts Checklist:"
+            setTextColor(currentTheme.textPrimaryColor)
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        layout.addView(tvPartsLabel)
+
+        val partsOptions = listOf(
+            "Engine Oil Flush & Refill",
+            "Oil Filter",
+            "Air Filter",
+            "Spark Plug",
+            "Front Brake Pads",
+            "Rear Brake Pads",
+            "Brake Fluid Bleed",
+            "Chain Cleaning & Lubrication",
+            "Chain & Sprocket Kit",
+            "Coolant Top-up / Flush",
+            "Battery & Electricals",
+            "Front Fork Oil / Seals",
+            "Clutch & Throttle Cables",
+            "Tyres & Wheel Balancing"
+        )
+
+        val existingNotes = existing?.notes.orEmpty()
+        val checkBoxList = mutableListOf<android.widget.CheckBox>()
+
+        val partsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+
+        for (part in partsOptions) {
+            val cb = android.widget.CheckBox(this).apply {
+                text = part
+                setTextColor(currentTheme.textPrimaryColor)
+                buttonTintList = ColorStateList.valueOf(currentTheme.accentColor)
+                isChecked = existingNotes.contains(part, ignoreCase = true)
+            }
+            checkBoxList.add(cb)
+            partsContainer.addView(cb)
+        }
+        layout.addView(partsContainer)
+
+        // Additional Custom Notes
         val tvNotesLabel = TextView(this).apply {
-            text = "\nService Notes & Parts Replaced:"
+            text = "Additional Remarks / Custom Parts:"
             setTextColor(currentTheme.textPrimaryColor)
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         layout.addView(tvNotesLabel)
 
+        var initialExtra = existingNotes
+        for (part in partsOptions) {
+            initialExtra = initialExtra.replace(part, "", ignoreCase = true)
+        }
+        initialExtra = initialExtra.replace("Replaced:", "", ignoreCase = true)
+            .replace("Notes:", "", ignoreCase = true)
+            .replace(",", " ")
+            .trim()
+
         val etNotes = createThemedEditText(
-            hintText = "e.g. Synthetic oil replaced, chain slack adjusted, air filter cleaned",
-            initialText = existing?.notes ?: ""
+            hintText = "e.g. Motul 7100 10W50, specific brand/issues",
+            initialText = initialExtra
         )
         layout.addView(etNotes)
 
@@ -1489,22 +1413,31 @@ class MainActivity : AppCompatActivity() {
                 val title = etTitle.text.toString().trim()
                 val date = etDate.text.toString().trim()
                 val odoVal = etOdo.text.toString().toDoubleOrNull() ?: currentOdo
-                val workshop = etWorkshop.text.toString().trim()
                 val cost = etCost.text.toString().trim()
-                val notes = etNotes.text.toString().trim()
+
+                val selectedParts = checkBoxList.filter { it.isChecked }.map { it.text.toString() }
+                val extraNotes = etNotes.text.toString().trim()
+                val partsSummary = if (selectedParts.isNotEmpty()) {
+                    "Replaced: ${selectedParts.joinToString(", ")}"
+                } else ""
+                val notes = when {
+                    partsSummary.isNotEmpty() && extraNotes.isNotEmpty() -> "$partsSummary\nNotes: $extraNotes"
+                    partsSummary.isNotEmpty() -> partsSummary
+                    else -> extraNotes
+                }
 
                 val rec = existing?.copy(
                     title = if (title.isNotBlank()) title else "Periodic Service",
                     date = if (date.isNotBlank()) date else "Today",
                     odoKm = odoVal,
-                    workshop = if (workshop.isNotBlank()) workshop else "Bajaj Service",
+                    workshop = "Self / Workshop",
                     cost = if (cost.isNotBlank()) cost else "%s0".format(appSettings.currentCurrencySymbol),
                     notes = notes
                 ) ?: com.pulsarnav.app.maintenance.ServiceRecord(
                     title = if (title.isNotBlank()) title else "Periodic Service",
                     date = if (date.isNotBlank()) date else "Today",
                     odoKm = odoVal,
-                    workshop = if (workshop.isNotBlank()) workshop else "Bajaj Service",
+                    workshop = "Self / Workshop",
                     cost = if (cost.isNotBlank()) cost else "₹0",
                     notes = notes
                 )
@@ -2509,7 +2442,6 @@ class MainActivity : AppCompatActivity() {
         binding.scrollFuel.setBackgroundColor(theme.backgroundColor)
         binding.scrollSupport.setBackgroundColor(theme.backgroundColor)
         binding.scrollSettings.setBackgroundColor(theme.backgroundColor)
-        binding.scrollTrips.setBackgroundColor(theme.backgroundColor)
         binding.viewTopDivider.setBackgroundColor(theme.cardBorderColor)
         binding.tvTopBarTitle.setTextColor(theme.textPrimaryColor)
 
@@ -2540,9 +2472,7 @@ class MainActivity : AppCompatActivity() {
         val allThemedIcons = listOf(
             binding.ivIconHome,
             binding.ivIconWork,
-            binding.ivIconFuel,
             binding.ivFuelHeaderIcon,
-            binding.ivServiceCenterIcon,
             binding.ivServiceHistoryIcon,
             binding.ivRsaIcon,
             binding.ivManualIcon,
@@ -2563,19 +2493,14 @@ class MainActivity : AppCompatActivity() {
         val contentCards = listOf(
             binding.cardHeroRange,
             binding.cardConnection,
-            binding.cardLastParked,
             binding.cardEmergencyHome,
-            binding.cardLatestRide,
-            binding.cardLifetimeStatsHome,
             binding.cardQuickHome,
             binding.cardQuickWork,
-            binding.cardQuickFuel,
             binding.cardNearbyPumps,
             binding.cardAddFuel,
             binding.cardFuelBreakdown,
             binding.cardFuelLog,
             binding.cardServiceHistory,
-            binding.cardServiceCenters,
             binding.cardChainLube,
             binding.cardService,
             binding.cardSupportOptions,
@@ -2590,11 +2515,6 @@ class MainActivity : AppCompatActivity() {
             binding.cardToggles,
             binding.cardQuickDestinations,
             binding.cardAboutLegal,
-            binding.cardMonthSoFar,
-            binding.cardLifetimeStats,
-            binding.cardMetricFuel,
-            binding.cardMetricMileage,
-            binding.cardMetricSpirited,
             binding.cardCustomRgb
         )
         for (card in contentCards) {
@@ -2687,10 +2607,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.tvQuickHomeTitle.setTextColor(theme.accentColor)
         binding.tvQuickWorkTitle.setTextColor(theme.accentColor)
-        binding.tvQuickFuelTitle.setTextColor(theme.accentColor)
         binding.cardQuickHome.strokeColor = theme.borderColor
         binding.cardQuickWork.strokeColor = theme.borderColor
-        binding.cardQuickFuel.strokeColor = theme.borderColor
 
         val searchBg = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.RECTANGLE
@@ -2708,11 +2626,6 @@ class MainActivity : AppCompatActivity() {
         binding.tvEtaBadge.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.tvEtaBadge.setTextColor(theme.accentColor)
 
-        binding.tvParkedTime.setTextColor(theme.accentColor)
-        binding.btnNavigateToBike.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
-        binding.btnNavigateToBike.strokeColor = ColorStateList.valueOf(theme.borderColor)
-        binding.btnNavigateToBike.setTextColor(theme.accentColor)
-
         // Emergency Assistance Card
         binding.tvEmergencyBadge.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.tvEmergencyBadge.setTextColor(theme.accentColor)
@@ -2723,13 +2636,6 @@ class MainActivity : AppCompatActivity() {
         binding.tvBloodGroupBadge.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.tvBloodGroupBadge.setTextColor(theme.accentColor)
         binding.tvEditMedicalLink.setTextColor(theme.accentColor)
-
-        // Home Lifetime Highlights Banner
-        binding.layoutLifetimeStatsHeader.setBackgroundColor(theme.subtleColor)
-        binding.tvYouTravelledTitle.setTextColor(theme.accentColor)
-        binding.tvLifetimeFuelHome.setTextColor(theme.accentColor)
-        binding.btnViewAllRidingStats.strokeColor = theme.cardBorderColor
-        binding.tvViewAllRidingStatsArrow.setTextColor(theme.accentColor)
 
         // Primary Buttons (Open Google Maps & Scan)
         binding.btnOpenMaps.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
@@ -2758,25 +2664,14 @@ class MainActivity : AppCompatActivity() {
         binding.tvCallerStatus.setTextColor(theme.accentColor)
         binding.tvWhatsAppAlertBanner.setTextColor(theme.accentColor)
 
-        // Riding Stats Elements
-        binding.btnBackFromStats.imageTintList = ColorStateList.valueOf(theme.accentColor)
-        binding.tvTodayKmBadge.setTextColor(theme.accentColor)
-        binding.tvHighlightMileage.setTextColor(theme.accentColor)
-        binding.tvHighlightSpiritedRides.setTextColor(theme.accentColor)
-        binding.tvHighlightLongestRide.setTextColor(Color.WHITE)
-        binding.btnSimulateRide.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
-        binding.btnSimulateRide.strokeColor = ColorStateList.valueOf(theme.borderColor)
-        binding.btnSimulateRide.setTextColor(theme.accentColor)
-
-        binding.tvOdometer.setTextColor(theme.accentColor)
+        // Streamlined Metrics
+        binding.tvHomeOdometer.setTextColor(theme.accentColor)
+        binding.tvHomeMileage.setTextColor(theme.accentColor)
+        binding.tvAccountOdometer.setTextColor(theme.accentColor)
         binding.btnEditOdo.setTextColor(theme.accentColor)
         binding.btnEditOdo.strokeColor = ColorStateList.valueOf(theme.borderColor)
 
-        binding.btnAddManualRide.setTextColor(theme.accentColor)
-        binding.btnAddManualRide.strokeColor = ColorStateList.valueOf(theme.borderColor)
-
         // Support Tab
-        binding.tvServiceCentersAction.setTextColor(theme.accentColor)
         binding.tvServiceHistoryAction.setTextColor(theme.accentColor)
         binding.tvIssuesAction.setTextColor(theme.accentColor)
         binding.tvServiceRemaining.setTextColor(theme.accentColor)
@@ -2823,12 +2718,8 @@ class MainActivity : AppCompatActivity() {
         binding.tvDocumentsBadge.setTextColor(theme.accentColor)
         binding.tvVaultQrAction.setTextColor(theme.accentColor)
         binding.tvVaultBackupAction.setTextColor(theme.accentColor)
-        binding.btnViewRideDetails.setTextColor(theme.textPrimaryColor)
-        binding.btnShareRide.imageTintList = ColorStateList.valueOf(theme.textPrimaryColor)
-
         binding.btnConfigHome.setTextColor(theme.accentColor)
         binding.btnConfigWork.setTextColor(theme.accentColor)
-        binding.btnSimulatePark.setTextColor(theme.accentColor)
 
         val testButtons = listOf(
             binding.btnTestLeft, binding.btnTestStraight, binding.btnTestRight,
@@ -2843,9 +2734,6 @@ class MainActivity : AppCompatActivity() {
         binding.btnStopSimulation.strokeColor = ColorStateList.valueOf(theme.borderColor)
         binding.btnStopSimulation.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
         updateSimulationUiState(bleManager.isSimulationRunning.value, bleManager.currentActiveManeuver.value)
-
-        // Refresh stats tabs pill chips with current theme
-        selectStatsTab(if (binding.layoutStatsHighlights.visibility == View.VISIBLE) binding.tabStatsHighlights else binding.tabStatsAllRides)
 
         // Switches
         val switches = listOf(
@@ -2894,7 +2782,6 @@ class MainActivity : AppCompatActivity() {
 
         // Dynamic Lists
         try {
-            updateTripList(rideTracker.tripHistory.value)
             updateFuelList(fuelLogManager.entries.value)
         } catch (_: Exception) {}
 
@@ -3435,7 +3322,6 @@ class MainActivity : AppCompatActivity() {
         updateHeroRangeDisplay()
         updateBikeIssuesSummary()
         updateEmergencyHomeCard()
-        updateOwnershipDays()
         updateQuickNavButtons()
         applyTheme(appSettings.appTheme)
     }
@@ -4187,7 +4073,16 @@ class MainActivity : AppCompatActivity() {
             GoogleMapsNotificationListener.currentNavStep.collectLatest { step ->
                 if (step != null) {
                     val dist = step.rawDistanceText.ifBlank { "${step.distanceMeters} m" }
-                    val street = step.streetName.ifBlank { step.maneuver.description }
+                    val maneuverDesc = if (step.roundaboutExit > 0) {
+                        "Roundabout (Exit ${step.roundaboutExit})"
+                    } else {
+                        step.maneuver.description
+                    }
+                    val street = if (step.roundaboutExit > 0 && step.streetName.isNotBlank()) {
+                        "Exit ${step.roundaboutExit} • ${step.streetName}"
+                    } else {
+                        step.streetName.ifBlank { maneuverDesc }
+                    }
                     val etaStr = if (step.etaHour > 0) {
                         val ampm = if (step.etaIsAm) "AM" else "PM"
                         "ETA %d:%02d %s".format(step.etaHour, step.etaMinute, ampm)
@@ -4314,288 +4209,6 @@ class MainActivity : AppCompatActivity() {
                 // Telemetry syncs in background to cluster
             }
         }
-    }
-
-    private fun observeParking() {
-        lifecycleScope.launch {
-            parkingManager.lastParkedLocation.collectLatest { loc ->
-                if (loc != null) {
-                    binding.tvParkedAddress.text = loc.address
-                    binding.tvParkedTime.text = parkingManager.getElapsedParkedTimeFormatted()
-                    binding.btnNavigateToBike.isEnabled = true
-                } else {
-                    binding.tvParkedAddress.text = "Turn off bike ignition to auto-save parking spot"
-                    binding.tvParkedTime.text = "-- Not recorded"
-                }
-            }
-        }
-    }
-
-    @SuppressLint("SetTextI18n")
-    private fun observeTrips() {
-        lifecycleScope.launch {
-            rideTracker.lifetimeStats.collectLatest { stats ->
-                binding.tvLifetimeRides.text = stats.totalTrips.toString()
-                binding.tvLifetimeDistanceHome.text = "%.0f km".format(stats.totalDistanceKm)
-            }
-        }
-
-        lifecycleScope.launch {
-            rideTracker.tripHistory.collectLatest { trips ->
-                updateTripList(trips)
-                if (trips.isNotEmpty()) {
-                    binding.cardLatestRide.visibility = View.VISIBLE
-                    val latest = trips[0]
-                    binding.tvLatestDuration.text = latest.formattedDuration
-                    binding.tvLatestDistance.text = "%.1f km".format(latest.distanceKm)
-                    val fuelStats = fuelLogManager.stats.value
-                    binding.tvLatestEfficiency.text = if (fuelStats.averageKmpl > 0.0) "%.1f km/l".format(fuelStats.averageKmpl) else "-- km/l"
-                    binding.tvLatestOrigin.text = latest.routeTitle
-                    binding.tvLatestDest.text = "Destination • ${latest.formattedDate}"
-                } else {
-                    binding.cardLatestRide.visibility = View.GONE
-                }
-                updateHighlightsAndMonthlyStats(trips)
-            }
-        }
-    }
-
-    @SuppressLint("SetTextI18n")
-    private fun updateHighlightsAndMonthlyStats(trips: List<Trip>) {
-        val longestKm = trips.maxOfOrNull { it.distanceKm } ?: 0.0
-        binding.tvHighlightLongestRide.text = if (longestKm > 0.0) "%.1f km".format(longestKm) else "-- km"
-
-        val longestCruiseSec = trips.maxOfOrNull { it.durationSec } ?: 0L
-        val longestMins = longestCruiseSec / 60
-        binding.tvLifetimeLongestCruise.text = if (longestMins > 0L) "$longestMins mins" else "-- mins"
-
-        val topSpeed = trips.maxOfOrNull { it.topSpeedKmh } ?: 0.0
-        binding.tvLifetimeTopSpeed.text = if (topSpeed > 0.0) "%.0f km/h".format(topSpeed) else "-- km/h"
-
-        val spiritedCount = trips.count { it.topSpeedKmh >= 70.0 }
-        binding.tvHighlightSpiritedRides.text = spiritedCount.toString()
-
-        val cal = Calendar.getInstance()
-        val curMonth = cal.get(Calendar.MONTH)
-        val curYear = cal.get(Calendar.YEAR)
-        val todayDay = cal.get(Calendar.DAY_OF_YEAR)
-
-        val monthTrips = trips.filter { t ->
-            val c = Calendar.getInstance().apply { timeInMillis = t.startTimeMs }
-            c.get(Calendar.MONTH) == curMonth && c.get(Calendar.YEAR) == curYear
-        }
-        val monthKm = monthTrips.sumOf { it.distanceKm }
-        binding.tvMonthDistance.text = "%.0f km".format(monthKm)
-
-        val activeDays = monthTrips.map { t ->
-            Calendar.getInstance().apply { timeInMillis = t.startTimeMs }.get(Calendar.DAY_OF_MONTH)
-        }.distinct().size
-        binding.tvMonthDays.text = if (activeDays > 0) "in $activeDays days" else "this month"
-
-        val todayTrips = trips.filter { t ->
-            val c = Calendar.getInstance().apply { timeInMillis = t.startTimeMs }
-            c.get(Calendar.DAY_OF_YEAR) == todayDay && c.get(Calendar.YEAR) == curYear
-        }
-        val todayKm = todayTrips.sumOf { it.distanceKm }
-        binding.tvTodayKmBadge.text = "%.0f km today".format(todayKm)
-
-        // Populate 7-day bar chart dynamically
-        binding.chartBarContainer.removeAllViews()
-        val dayTotals = DoubleArray(7)
-        val now = Calendar.getInstance()
-        for (i in 6 downTo 0) {
-            val dCal = Calendar.getInstance().apply {
-                timeInMillis = now.timeInMillis
-                add(Calendar.DAY_OF_YEAR, -i)
-            }
-            val dDay = dCal.get(Calendar.DAY_OF_YEAR)
-            val dYr = dCal.get(Calendar.YEAR)
-            val km = trips.filter { t ->
-                val c = Calendar.getInstance().apply { timeInMillis = t.startTimeMs }
-                c.get(Calendar.DAY_OF_YEAR) == dDay && c.get(Calendar.YEAR) == dYr
-            }.sumOf { it.distanceKm }
-            dayTotals[6 - i] = km
-        }
-
-        val maxDayKm = dayTotals.maxOrNull() ?: 0.0
-        for (i in 0 until 7) {
-            val km = dayTotals[i]
-            val isToday = (i == 6)
-            val heightDp = if (maxDayKm > 0.0) {
-                (12 + (km / maxDayKm * 68)).toInt()
-            } else {
-                8
-            }
-            val bar = View(this).apply {
-                layoutParams = LinearLayout.LayoutParams(dpToPx(14), dpToPx(heightDp)).apply {
-                    setMargins(dpToPx(6), 0, dpToPx(6), 0)
-                }
-                setBackgroundResource(R.drawable.pill_badge)
-                val color = when {
-                    isToday && km > 0.0 -> Color.parseColor("#F59E0B")
-                    km > 0.0 -> Color.WHITE
-                    else -> ContextCompat.getColor(this@MainActivity, R.color.surface_elevated)
-                }
-                backgroundTintList = ColorStateList.valueOf(color)
-            }
-            binding.chartBarContainer.addView(bar)
-        }
-    }
-
-    @SuppressLint("SetTextI18n")
-    private fun updateTripList(trips: List<Trip>) {
-        binding.layoutTripList.removeAllViews()
-        if (trips.isEmpty()) {
-            val emptyView = TextView(this).apply {
-                text = "No recorded trips yet. Rides will automatically appear here."
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-                textSize = 13f
-                setPadding(10, 20, 10, 20)
-            }
-            binding.layoutTripList.addView(emptyView)
-            return
-        }
-
-        for (trip in trips) {
-            val view = LayoutInflater.from(this).inflate(R.layout.item_trip, binding.layoutTripList, false)
-            (view as? com.google.android.material.card.MaterialCardView)?.let { card ->
-                card.setCardBackgroundColor(currentTheme.cardColor)
-                card.strokeColor = currentTheme.cardBorderColor
-            }
-            view.findViewById<TextView>(R.id.tvTripTitle).text = trip.routeTitle
-            view.findViewById<TextView>(R.id.tvTripDate).text = trip.formattedDate
-            val tvDist = view.findViewById<TextView>(R.id.tvTripDistance)
-            tvDist.text = "%.1f km".format(trip.distanceKm)
-            tvDist.setTextColor(currentTheme.accentColor)
-            view.findViewById<TextView>(R.id.tvTripDuration).text = trip.formattedDuration
-            view.findViewById<TextView>(R.id.tvTripSpeeds).text = "%.0f / %.0f km/h".format(trip.avgSpeedKmh, trip.topSpeedKmh)
-
-            val btnEdit = view.findViewById<MaterialButton>(R.id.btnEditTrip)
-            btnEdit.setTextColor(currentTheme.accentColor)
-            btnEdit.strokeColor = ColorStateList.valueOf(currentTheme.borderColor)
-            btnEdit.setOnClickListener {
-                provideHapticFeedback()
-                showEditTripDialog(trip)
-            }
-
-            view.setOnClickListener {
-                provideHapticFeedback()
-                showEditTripDialog(trip)
-            }
-
-            binding.layoutTripList.addView(view)
-        }
-    }
-
-    private fun showEditTripDialog(trip: Trip) {
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 20, 48, 10)
-        }
-
-        val tvInfo = TextView(this).apply {
-            text = "Recorded on ${trip.formattedDate}"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
-            textSize = 12f
-            setPadding(0, 0, 0, 16)
-        }
-        layout.addView(tvInfo)
-
-        val tvTitleLabel = TextView(this).apply {
-            text = "Route Title / Name:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            textSize = 11f
-        }
-        val etTitle = createThemedEditText(
-            hintText = "e.g. Work Commute",
-            initialText = trip.routeTitle,
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        )
-        layout.addView(tvTitleLabel)
-        layout.addView(etTitle)
-
-        val tvDistLabel = TextView(this).apply {
-            text = "Distance (km):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            textSize = 11f
-            setPadding(0, 12, 0, 0)
-        }
-        val etDistance = createThemedEditText(
-            hintText = "e.g. 14.2",
-            initialText = "%.1f".format(trip.distanceKm),
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        )
-        layout.addView(tvDistLabel)
-        layout.addView(etDistance)
-
-        val tvDurationLabel = TextView(this).apply {
-            text = "Duration (minutes):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            textSize = 11f
-            setPadding(0, 12, 0, 0)
-        }
-        val mins = (trip.durationSec / 60).coerceAtLeast(1)
-        val etDuration = createThemedEditText(
-            hintText = "e.g. 28",
-            initialText = mins.toString(),
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER
-        )
-        layout.addView(tvDurationLabel)
-        layout.addView(etDuration)
-
-        val tvSpeedLabel = TextView(this).apply {
-            text = "Top Speed (km/h):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-            textSize = 11f
-            setPadding(0, 12, 0, 0)
-        }
-        val etSpeed = createThemedEditText(
-            hintText = "e.g. 84",
-            initialText = "%.0f".format(trip.topSpeedKmh),
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        )
-        layout.addView(tvSpeedLabel)
-        layout.addView(etSpeed)
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Edit Trip Details")
-            .setView(layout)
-            .setPositiveButton("Save") { _, _ ->
-                val newTitle = etTitle.text.toString().trim().ifBlank { "Pulsar Ride" }
-                val newDist = etDistance.text.toString().toDoubleOrNull() ?: trip.distanceKm
-                val newMins = etDuration.text.toString().toLongOrNull() ?: (trip.durationSec / 60)
-                val newSecs = (newMins * 60).coerceAtLeast(1)
-                val newSpeed = etSpeed.text.toString().toDoubleOrNull() ?: trip.topSpeedKmh
-
-                val updated = rideTracker.updateTrip(
-                    id = trip.id,
-                    distanceKm = newDist,
-                    durationSec = newSecs,
-                    routeTitle = newTitle,
-                    topSpeedKmh = newSpeed
-                )
-
-                if (updated) {
-                    provideHapticFeedback()
-                    recordSyncTime()
-                    showFeedback("Trip details updated successfully")
-                }
-            }
-            .setNeutralButton("Delete") { _, _ ->
-                MaterialAlertDialogBuilder(this)
-                    .setTitle("Delete Ride Record?")
-                    .setMessage("Are you sure you want to delete this trip record? This action cannot be undone.")
-                    .setPositiveButton("Delete") { _, _ ->
-                        provideHapticFeedback()
-                        rideTracker.deleteTrip(trip.id)
-                        recordSyncTime()
-                        showFeedback("Trip deleted")
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun showServiceTargetDialog() {
@@ -4861,7 +4474,7 @@ class MainActivity : AppCompatActivity() {
     private fun observeMaintenance() {
         lifecycleScope.launch {
             maintenanceManager.status.collectLatest { s ->
-                binding.tvOdometer.text = "%.1f km".format(s.totalOdometerKm)
+                updateHeroRangeDisplay()
                 binding.tvChainRemaining.text = "%.0f km left".format(s.chainLubeRemainingKm)
                 binding.progressChain.progress = s.chainLubePercent
 
@@ -4888,12 +4501,11 @@ class MainActivity : AppCompatActivity() {
     private fun observeFuelLog() {
         lifecycleScope.launch {
             fuelLogManager.stats.collectLatest { stats ->
+                updateHeroRangeDisplay()
                 if (stats.averageKmpl > 0.0) {
                     binding.tvAvgMileage.text = "%.1f km/l".format(stats.averageKmpl)
-                    binding.tvHighlightMileage.text = "%.1f".format(stats.averageKmpl)
                 } else {
                     binding.tvAvgMileage.text = "-- km/l"
-                    binding.tvHighlightMileage.text = "--"
                 }
                 if (stats.costPerKm > 0.0) {
                     binding.tvCostPerKm.text = "%s%.2f / km".format(appSettings.currentCurrencySymbol, stats.costPerKm)
@@ -4906,10 +4518,6 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             fuelLogManager.entries.collectLatest { entries ->
                 updateFuelList(entries)
-                val totalLiters = entries.sumOf { it.liters }
-                val totalCost = entries.sumOf { it.totalCostInr }
-                binding.tvLifetimeFuelHome.text = "%.0f L • %s%.0f spent".format(totalLiters, appSettings.currentCurrencySymbol, totalCost)
-                binding.tvHighlightFuelUnits.text = if (totalLiters > 0.0) "%.0f L".format(totalLiters) else "-- L"
             }
         }
     }
@@ -5021,129 +4629,6 @@ class MainActivity : AppCompatActivity() {
                 updateHeroRangeDisplay()
                 provideHapticFeedback()
                 showFeedback("Refuel entry deleted")
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun updateOwnershipDays() {
-        binding.tvDaysOfOwnership.text = "${appSettings.daysOfOwnership} Days"
-        binding.tvPurchaseDateSubtext.text = "Purchased: ${appSettings.formattedPurchaseDate}"
-    }
-
-    private fun showEditOwnershipDaysDialog() {
-        provideHapticFeedback()
-        val cal = java.util.Calendar.getInstance().apply {
-            timeInMillis = appSettings.purchaseDateMs
-        }
-        val year = cal.get(java.util.Calendar.YEAR)
-        val month = cal.get(java.util.Calendar.MONTH)
-        val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
-
-        val datePicker = android.app.DatePickerDialog(
-            this,
-            { _, selectedYear, selectedMonth, selectedDay ->
-                val newCal = java.util.Calendar.getInstance().apply {
-                    set(selectedYear, selectedMonth, selectedDay, 12, 0, 0)
-                }
-                appSettings.purchaseDateMs = newCal.timeInMillis
-                updateOwnershipDays()
-                recordSyncTime()
-                provideHapticFeedback()
-                showFeedback("Purchase date set to ${appSettings.formattedPurchaseDate} (${appSettings.daysOfOwnership} days of ownership)")
-            },
-            year,
-            month,
-            day
-        )
-        datePicker.datePicker.maxDate = System.currentTimeMillis()
-        datePicker.setTitle("Select Delivery / Purchase Date")
-        datePicker.show()
-    }
-
-    private fun showAddManualRideDialog() {
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 20, 48, 10)
-        }
-
-        val tvHint = TextView(this).apply {
-            text = "Record a ride logged without phone navigation (e.g. local drop-off or neighborhood spin):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
-            textSize = 12f
-            setPadding(0, 0, 0, 16)
-        }
-        layout.addView(tvHint)
-
-        val titleInput = createThemedEditText(
-            hintText = "Trip Route / Title (e.g. Local Market Run)",
-            initialText = "Local Drop-off",
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS
-        )
-        val distInput = createThemedEditText(
-            hintText = "Distance in km (e.g. 4.5)",
-            initialText = "4.5",
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        )
-        val durInput = createThemedEditText(
-            hintText = "Duration in minutes (e.g. 15)",
-            initialText = "15",
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER
-        )
-        val speedInput = createThemedEditText(
-            hintText = "Top speed in km/h (optional, e.g. 60)",
-            initialText = "58",
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        )
-
-        val cbOdo = com.google.android.material.checkbox.MaterialCheckBox(this).apply {
-            text = "Add distance to motorcycle odometer"
-            isChecked = true
-            textSize = 12f
-        }
-
-        fun addField(label: String, field: View) {
-            val tv = TextView(this).apply {
-                text = label
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-                textSize = 11f
-                setPadding(0, 8, 0, 4)
-            }
-            layout.addView(tv)
-            layout.addView(field)
-        }
-
-        addField("Route Title:", titleInput)
-        addField("Distance (km):", distInput)
-        addField("Duration (Minutes):", durInput)
-        addField("Top Speed (km/h):", speedInput)
-        layout.addView(cbOdo)
-
-        val scrollView = ScrollView(this).apply { addView(layout) }
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Log Past / Manual Ride")
-            .setView(scrollView)
-            .setPositiveButton("Save Ride") { _, _ ->
-                val dist = distInput.text.toString().toDoubleOrNull() ?: 0.0
-                val durMin = durInput.text.toString().toLongOrNull() ?: 0L
-                val topSpeed = speedInput.text.toString().toDoubleOrNull() ?: 0.0
-                val title = titleInput.text.toString().trim().ifBlank { "Local Ride" }
-
-                if (dist > 0 && durMin > 0) {
-                    val durSec = durMin * 60
-                    val avgSpeed = (dist / (durMin / 60.0)).coerceAtLeast(0.0)
-                    rideTracker.addManualTrip(dist, durSec, topSpeed.coerceAtLeast(avgSpeed), avgSpeed, title)
-                    if (cbOdo.isChecked) {
-                        val newOdo = maintenanceManager.status.value.totalOdometerKm + dist
-                        maintenanceManager.setOdometer(newOdo)
-                    }
-                    recordSyncTime()
-                    provideHapticFeedback()
-                    showFeedback("Logged \"$title\" (%.1f km, %d mins)".format(dist, durMin))
-                } else {
-                    showFeedback("Please enter valid distance and duration", isAlert = true)
-                }
             }
             .setNegativeButton("Cancel", null)
             .show()

@@ -91,6 +91,7 @@ class FuelLogManager private constructor(private val context: Context) {
         _entries.value = recalculated
         _stats.value = computeStats(recalculated)
         saveEntries(recalculated)
+        MaintenanceManager.getInstance(context).setOdometer(odometerKm)
         return updated
     }
 

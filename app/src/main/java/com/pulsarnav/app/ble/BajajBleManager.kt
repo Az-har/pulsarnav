@@ -63,7 +63,7 @@ class BajajBleManager private constructor(private val context: Context) {
         val ALERTS_CHAR_UUID: UUID = UUID.fromString("0410676e-6972-6565-6e69-676e4543544f")
         val BUTTON_CONTROL_CHAR_UUID: UUID = UUID.fromString("0a10676e-6972-6565-6e69-676e4543544f")
 
-        private const val TBT_STREAM_CADENCE_MS = 800L
+        private const val TBT_STREAM_CADENCE_MS = 500L
         private const val GEN_HEARTBEAT_PERIOD_MS = 5000L
         private const val CTL_POLL_MS = 700L
 
@@ -158,7 +158,7 @@ class BajajBleManager private constructor(private val context: Context) {
                             totalMeters = step.totalDistanceMeters,
                             etaHour = step.etaHour,
                             etaMinute = step.etaMinute,
-                            roundaboutExit = 0,
+                            roundaboutExit = step.roundaboutExit,
                             streetText = step.streetName
                         )
                         _lastSentPacket.value = frame
@@ -497,13 +497,23 @@ class BajajBleManager private constructor(private val context: Context) {
 
         if (accept != callAcceptCount) {
             callAcceptCount = accept
-            Log.i(TAG, "Handlebar button: CALL ACCEPT pressed ($accept)")
-            CallManager.getInstance(context).acceptIncomingCall()
+            if (currentCallState == CallState.INCOMING_CALL) {
+                Log.i(TAG, "Handlebar button: CALL ACCEPT pressed ($accept)")
+                CallManager.getInstance(context).acceptIncomingCall()
+            } else {
+                Log.i(TAG, "Handlebar button: MEDIA PLAY/PAUSE pressed")
+                com.pulsarnav.app.media.MediaControlManager.getInstance(context).handleHandlebarButton(isLongPress = false)
+            }
         }
         if (reject != callRejectCount) {
             callRejectCount = reject
-            Log.i(TAG, "Handlebar button: CALL REJECT pressed ($reject)")
-            CallManager.getInstance(context).rejectIncomingCall()
+            if (currentCallState == CallState.INCOMING_CALL || currentCallState == CallState.ACTIVE_CALL) {
+                Log.i(TAG, "Handlebar button: CALL REJECT pressed ($reject)")
+                CallManager.getInstance(context).rejectIncomingCall()
+            } else {
+                Log.i(TAG, "Handlebar button: MEDIA NEXT TRACK pressed")
+                com.pulsarnav.app.media.MediaControlManager.getInstance(context).handleHandlebarButton(isLongPress = true)
+            }
         }
     }
 
@@ -654,10 +664,11 @@ class BajajBleManager private constructor(private val context: Context) {
         _lastSentPacketHex.value = OtcPacketBuilder.toHex(pkt)
         generalCharacteristic?.let { target ->
             if (isLinkReady) {
-                enqueueWrite(target, pkt)
+                val isUrgentCall = currentCallState != CallState.NO_CALL
+                enqueueWrite(target, pkt, priority = isUrgentCall)
                 // If there is an active/incoming call, also send the 55-byte legacy frame
                 // to support older cluster firmware that does not accept 89-byte V2 frames
-                if (currentCallState != CallState.NO_CALL) {
+                if (isUrgentCall) {
                     val legacyPkt = OtcPacketBuilder.buildGeneralPacketLegacy(
                         batteryPercent = currentBattery,
                         volumeLevel = currentVolume,
@@ -667,7 +678,7 @@ class BajajBleManager private constructor(private val context: Context) {
                         callRejectSmsAck = callRejectCount,
                         missedCallCount = currentMissedCount
                     )
-                    enqueueWrite(target, legacyPkt)
+                    enqueueWrite(target, legacyPkt, priority = true)
                 }
             }
         }
@@ -681,7 +692,7 @@ class BajajBleManager private constructor(private val context: Context) {
             if (isLinkReady) {
                 // Pause turn-by-turn stream for 6 seconds so the cluster doesn't immediately overwrite the alert
                 alertDisplayHoldUntilMs = System.currentTimeMillis() + 6000L
-                enqueueWrite(target, pkt)
+                enqueueWrite(target, pkt, priority = true)
             }
         }
     }

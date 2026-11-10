@@ -195,7 +195,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
                                 android:letterSpacing="0.08"
-                                android:text="ESTIMATED RANGE (DTE)"
+                                android:text="COCKPIT METRICS (DTE &amp; ODO)"
                                 android:textColor="@color/text_tertiary"
                                 android:textSize="11sp"
                                 android:textStyle="bold" />
@@ -218,49 +218,142 @@
                                 app:strokeWidth="1dp" />
                         </LinearLayout>
 
+                        <!-- Two-Column Streamlined Metrics Row: Range (DTE) on Left, Odometer on Right -->
                         <LinearLayout
-                            android:id="@+id/layoutProjectedRange"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:foreground="?attr/selectableItemBackground"
-                            android:gravity="bottom"
+                            android:layout_marginTop="6dp"
+                            android:baselineAligned="false"
                             android:orientation="horizontal">
 
-                            <TextView
-                                android:id="@+id/tvProjectedRange"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:letterSpacing="-0.04"
-                                android:text="--"
-                                android:textColor="@color/text_primary"
-                                android:textSize="44sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:text="km"
-                                android:textColor="@color/text_secondary"
-                                android:textSize="20sp"
-                                android:textStyle="bold" />
-
-                            <View
+                            <!-- Left: Range / DTE -->
+                            <LinearLayout
+                                android:id="@+id/layoutProjectedRange"
                                 android:layout_width="0dp"
-                                android:layout_height="1dp"
-                                android:layout_weight="1" />
-
-                            <TextView
-                                android:id="@+id/tvDteSubtext"
-                                android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Tap to sync with cluster"
-                                android:textColor="@color/wine_red_light"
-                                android:textSize="12sp"
-                                android:textStyle="bold" />
+                                android:layout_weight="1"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:foreground="?attr/selectableItemBackground"
+                                android:orientation="vertical"
+                                android:padding="2dp">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:letterSpacing="0.06"
+                                    android:text="EST. RANGE (DTE)"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+
+                                <LinearLayout
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="bottom"
+                                    android:orientation="horizontal">
+
+                                    <TextView
+                                        android:id="@+id/tvProjectedRange"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:letterSpacing="-0.03"
+                                        android:text="--"
+                                        android:textColor="@color/text_primary"
+                                        android:textSize="32sp"
+                                        android:textStyle="bold" />
+
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginStart="4dp"
+                                        android:layout_marginBottom="3dp"
+                                        android:text="km"
+                                        android:textColor="@color/text_secondary"
+                                        android:textSize="15sp"
+                                        android:textStyle="bold" />
+                                </LinearLayout>
+
+                                <TextView
+                                    android:id="@+id/tvDteSubtext"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="Tap to sync"
+                                    android:textColor="@color/wine_red_light"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+
+                            <!-- Vertical Dividing Seam -->
+                            <View
+                                android:layout_width="1dp"
+                                android:layout_height="match_parent"
+                                android:layout_marginHorizontal="12dp"
+                                android:background="@color/surface_border_subtle" />
+
+                            <!-- Right: Total Odometer -->
+                            <LinearLayout
+                                android:id="@+id/layoutHomeOdometer"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:foreground="?attr/selectableItemBackground"
+                                android:orientation="vertical"
+                                android:padding="2dp">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:letterSpacing="0.06"
+                                    android:text="TOTAL ODOMETER"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+
+                                <LinearLayout
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="bottom"
+                                    android:orientation="horizontal">
+
+                                    <TextView
+                                        android:id="@+id/tvHomeOdometer"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:letterSpacing="-0.03"
+                                        android:text="0.0"
+                                        android:textColor="@color/text_primary"
+                                        android:textSize="32sp"
+                                        android:textStyle="bold" />
+
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginStart="4dp"
+                                        android:layout_marginBottom="3dp"
+                                        android:text="km"
+                                        android:textColor="@color/text_secondary"
+                                        android:textSize="15sp"
+                                        android:textStyle="bold" />
+                                </LinearLayout>
+
+                                <TextView
+                                    android:id="@+id/tvHomeMileage"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="Avg: 38.5 km/l"
+                                    android:textColor="@color/status_connected"
+                                    android:textSize="11sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
                         </LinearLayout>
 
                         <View
@@ -538,7 +631,7 @@
                             android:id="@+id/cardQuickHome"
                             android:layout_width="0dp"
                             android:layout_height="64dp"
-                            android:layout_marginEnd="4dp"
+                            android:layout_marginEnd="6dp"
                             android:layout_weight="1"
                             android:clickable="true"
                             android:focusable="true"
@@ -580,7 +673,7 @@
                             android:id="@+id/cardQuickWork"
                             android:layout_width="0dp"
                             android:layout_height="64dp"
-                            android:layout_marginHorizontal="2dp"
+                            android:layout_marginStart="6dp"
                             android:layout_weight="1"
                             android:clickable="true"
                             android:focusable="true"
@@ -616,121 +709,8 @@
                                     android:textStyle="bold" />
                             </LinearLayout>
                         </com.google.android.material.card.MaterialCardView>
-
-                        <!-- NEARBY PETROL Card (Replacing Ather's Chargers) -->
-                        <com.google.android.material.card.MaterialCardView
-                            android:id="@+id/cardQuickFuel"
-                            android:layout_width="0dp"
-                            android:layout_height="64dp"
-                            android:layout_marginStart="4dp"
-                            android:layout_weight="1"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:foreground="?attr/selectableItemBackground"
-                            app:cardBackgroundColor="@color/surface_card"
-                            app:cardCornerRadius="@dimen/card_corner_radius_small"
-                            app:cardElevation="0dp"
-                            app:strokeColor="@color/surface_border"
-                            app:strokeWidth="@dimen/card_stroke_width">
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="match_parent"
-                                android:gravity="center"
-                                android:orientation="vertical"
-                                android:padding="6dp">
-
-                                <ImageView
-                                    android:id="@+id/ivIconFuel"
-                                    android:layout_width="22dp"
-                                    android:layout_height="22dp"
-                                    android:src="@drawable/ic_fuel"
-                                    app:tint="@color/wine_red_light" />
-
-                                <TextView
-                                    android:id="@+id/tvQuickFuelTitle"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="Petrol"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="12sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-                        </com.google.android.material.card.MaterialCardView>
                     </LinearLayout>
                 </LinearLayout>
-
-                <!-- Last Parked Location Card (Find My Bike) -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardLastParked"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="@dimen/card_margin_bottom"
-                    app:cardBackgroundColor="@color/surface_card"
-                    app:cardCornerRadius="@dimen/card_corner_radius"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/surface_border"
-                    app:strokeWidth="@dimen/card_stroke_width">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="@dimen/card_padding">
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:letterSpacing="0.06"
-                                android:text="LAST PARKED LOCATION"
-                                android:textColor="@color/text_tertiary"
-                                android:textSize="11sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/tvParkedTime"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="-- Not recorded yet"
-                                android:textColor="@color/wine_red_light"
-                                android:textSize="11sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-
-                        <TextView
-                            android:id="@+id/tvParkedAddress"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="Turn off bike ignition to auto-save parking spot"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <!-- Glove-Friendly Primary Walking Directions Button -->
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnNavigateToBike"
-                            android:layout_width="match_parent"
-                            android:layout_height="@dimen/btn_height_primary"
-                            android:layout_marginTop="12dp"
-                            android:backgroundTint="@color/wine_red_subtle"
-                            android:text="Navigate to Bike (Walking Directions)"
-                            android:textColor="@color/wine_red_light"
-                            android:textSize="14sp"
-                            android:textStyle="bold"
-                            app:cornerRadius="@dimen/btn_corner_radius"
-                            app:strokeColor="@color/wine_red_border"
-                            app:strokeWidth="@dimen/card_stroke_width" />
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
 
                 <!-- Emergency & Medical Assistance Card -->
                 <com.google.android.material.card.MaterialCardView
@@ -888,326 +868,7 @@
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
-                <!-- Ather "Your Latest Ride" Card -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardLatestRide"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
-                    android:visibility="gone"
-                    app:cardBackgroundColor="@color/surface_card"
-                    app:cardCornerRadius="16dp"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/surface_border"
-                    app:strokeWidth="1dp">
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="16dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:letterSpacing="0.06"
-                            android:text="YOUR LATEST RIDE"
-                            android:textColor="@color/text_tertiary"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
-
-                        <!-- Route Pickup & Drop Points -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="10dp"
-                            android:orientation="vertical">
-
-                            <!-- Pickup Point -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:orientation="horizontal">
-
-                                <View
-                                    android:layout_width="8dp"
-                                    android:layout_height="8dp"
-                                    android:background="@drawable/circle_dot"
-                                    android:backgroundTint="#FFFFFF" />
-
-                                <TextView
-                                    android:id="@+id/tvLatestOrigin"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginStart="10dp"
-                                    android:ellipsize="end"
-                                    android:maxLines="1"
-                                    android:text="--"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="13sp" />
-                            </LinearLayout>
-
-                            <!-- Vertical Dotted Line -->
-                            <View
-                                android:layout_width="1.5dp"
-                                android:layout_height="14dp"
-                                android:layout_marginStart="3dp"
-                                android:background="@color/surface_border" />
-
-                            <!-- Drop Point -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:orientation="horizontal">
-
-                                <View
-                                    android:layout_width="8dp"
-                                    android:layout_height="8dp"
-                                    android:background="@color/text_secondary" />
-
-                                <TextView
-                                    android:id="@+id/tvLatestDest"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginStart="10dp"
-                                    android:ellipsize="end"
-                                    android:maxLines="1"
-                                    android:text="--"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="13sp" />
-                            </LinearLayout>
-                        </LinearLayout>
-
-                        <!-- 3 Stats Columns: Duration, Distance, Efficiency -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="14dp"
-                            android:orientation="horizontal">
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:id="@+id/tvLatestDuration"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="18 min"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="Duration"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:id="@+id/tvLatestDistance"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="6.2 km"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="Distance"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:id="@+id/tvLatestEfficiency"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="38.5 km/l"
-                                    android:textColor="@color/status_connected"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="Efficiency"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-                        </LinearLayout>
-
-                        <!-- Action Buttons -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="14dp"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal">
-
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/btnViewRideDetails"
-                                style="@style/Widget.Material3.Button.TonalButton"
-                                android:layout_width="0dp"
-                                android:layout_height="48dp"
-                                android:layout_weight="1"
-                                android:backgroundTint="@color/surface_elevated"
-                                android:text="View ride details  →"
-                                android:textColor="@color/text_primary"
-                                android:textSize="13sp"
-                                android:textStyle="bold"
-                                app:cornerRadius="12dp" />
-
-                            <ImageButton
-                                android:id="@+id/btnShareRide"
-                                android:layout_width="48dp"
-                                android:layout_height="48dp"
-                                android:layout_marginStart="8dp"
-                                android:background="@drawable/rounded_box"
-                                android:src="@drawable/ic_share"
-                                app:tint="@color/text_primary" />
-                        </LinearLayout>
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
-
-
-
-                <!-- Ather "Lifetime Stats" Card (With Milestone Progress) -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardLifetimeStatsHome"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="@dimen/card_margin_bottom"
-                    app:cardBackgroundColor="@color/surface_card"
-                    app:cardCornerRadius="@dimen/card_corner_radius"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/surface_border"
-                    app:strokeWidth="@dimen/card_stroke_width">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical">
-
-                        <!-- Bright Accent Header Banner (like Ather Green) -->
-                        <LinearLayout
-                            android:id="@+id/layoutLifetimeStatsHeader"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:background="@color/wine_red_subtle"
-                            android:orientation="vertical"
-                            android:paddingHorizontal="@dimen/card_padding"
-                            android:paddingTop="@dimen/card_padding"
-                            android:paddingBottom="14dp">
-
-                            <TextView
-                                android:id="@+id/tvYouTravelledTitle"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="You travelled"
-                                android:textColor="@color/wine_red_light"
-                                android:textSize="13sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/tvLifetimeDistanceHome"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:letterSpacing="-0.03"
-                                android:text="0 km"
-                                android:textColor="@color/text_primary"
-                                android:textSize="32sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-
-                        <!-- Dark Card Body: Fuel stats & milestones -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:padding="18dp">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Lifetime Petrol Stats"
-                                android:textColor="@color/text_tertiary"
-                                android:textSize="12sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/tvLifetimeFuelHome"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:text="0 L • ₹0 spent"
-                                android:textColor="@color/status_connected"
-                                android:textSize="22sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-
-                        <!-- View All Riding Stats Action -->
-                        <com.google.android.material.card.MaterialCardView
-                            android:id="@+id/btnViewAllRidingStats"
-                            android:layout_width="match_parent"
-                            android:layout_height="@dimen/btn_height_primary"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:foreground="?attr/selectableItemBackground"
-                            app:cardBackgroundColor="@color/surface_elevated"
-                            app:cardCornerRadius="0dp"
-                            app:cardElevation="0dp"
-                            app:strokeWidth="0dp">
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="match_parent"
-                                android:gravity="center_vertical"
-                                android:orientation="horizontal"
-                                android:paddingHorizontal="18dp">
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:text="View all riding stats"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="14sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:id="@+id/tvViewAllRidingStatsArrow"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="→"
-                                    android:textColor="@color/wine_red_light"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-                        </com.google.android.material.card.MaterialCardView>
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
 
             </LinearLayout>
         </androidx.core.widget.NestedScrollView>
@@ -1566,76 +1227,6 @@
                 android:paddingHorizontal="16dp"
                 android:paddingTop="12dp"
                 android:paddingBottom="24dp">
-
-                <!-- Bajaj Authorized Service Centers Card -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardServiceCenters"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="@dimen/card_margin_bottom"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    app:cardBackgroundColor="@color/surface_card"
-                    app:cardCornerRadius="@dimen/card_corner_radius"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/surface_border"
-                    app:strokeWidth="@dimen/card_stroke_width">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="@dimen/card_padding">
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal">
-
-                            <ImageView
-                                android:id="@+id/ivServiceCenterIcon"
-                                android:layout_width="28dp"
-                                android:layout_height="28dp"
-                                android:src="@drawable/ic_service"
-                                app:tint="@color/wine_red_light" />
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginStart="14dp"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="Bajaj Authorized Service Centers"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="16sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="Locate nearby authorized workshops &amp; book service"
-                                    android:textColor="@color/text_secondary"
-                                    android:textSize="12sp" />
-                            </LinearLayout>
-
-                            <TextView
-                                android:id="@+id/tvServiceCentersAction"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Maps →"
-                                android:textColor="@color/wine_red_light"
-                                android:textSize="13sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
 
                 <!-- Service History & Maintenance Logs Card (Editable) -->
                 <com.google.android.material.card.MaterialCardView
@@ -2255,6 +1846,70 @@
                             android:textColor="@color/text_primary"
                             android:textSize="11sp"
                             android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingHorizontal="@dimen/card_padding"
+                        android:paddingBottom="@dimen/card_padding">
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:layout_marginBottom="12dp"
+                            android:background="@color/surface_border_subtle" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:letterSpacing="0.06"
+                                    android:text="LIFETIME ODOMETER"
+                                    android:textColor="@color/text_tertiary"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvAccountOdometer"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="0.0 km"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="18sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnEditOdo"
+                                style="@style/Widget.Material3.Button.TonalButton"
+                                android:layout_width="wrap_content"
+                                android:layout_height="32dp"
+                                android:backgroundTint="@color/surface_elevated"
+                                android:letterSpacing="0.02"
+                                android:paddingHorizontal="12dp"
+                                android:paddingVertical="0dp"
+                                android:text="Edit ODO"
+                                android:textColor="@color/wine_red_light"
+                                android:textSize="11sp"
+                                android:textStyle="bold"
+                                app:cornerRadius="16dp"
+                                app:strokeColor="@color/surface_border"
+                                app:strokeWidth="1dp" />
+                        </LinearLayout>
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -4136,21 +3791,6 @@
                         app:strokeWidth="@dimen/card_stroke_width" />
                 </LinearLayout>
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnSimulatePark"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="@dimen/btn_height_secondary"
-                    android:layout_marginTop="10dp"
-                    android:layout_marginBottom="@dimen/card_margin_bottom"
-                    android:backgroundTint="@color/surface_card"
-                    android:text="Simulate Saved Parking Spot"
-                    android:textColor="@color/wine_red_light"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:cornerRadius="@dimen/btn_corner_radius"
-                    app:strokeColor="@color/surface_border"
-                    app:strokeWidth="@dimen/card_stroke_width" />
 
                 <!-- About & Legal Compliance -->
                 <TextView
@@ -4232,728 +3872,6 @@
                             android:textSize="10sp" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
-            </LinearLayout>
-        </androidx.core.widget.NestedScrollView>
-
-        <!-- ==================== SUB-VIEW: YOUR RIDING STATS (Ather Riding Stats Equivalent) ==================== -->
-        <androidx.core.widget.NestedScrollView
-            android:id="@+id/scrollTrips"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:fillViewport="true"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingHorizontal="16dp"
-                android:paddingTop="12dp"
-                android:paddingBottom="24dp">
-
-                <!-- Header with Back Button -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <ImageButton
-                        android:id="@+id/btnBackFromStats"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:src="@drawable/ic_route_curve"
-                        app:tint="@color/text_primary" />
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:layout_weight="1"
-                        android:text="Your riding stats"
-                        android:textColor="@color/text_primary"
-                        android:textSize="20sp"
-                        android:textStyle="bold" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnSimulateRide"
-                        style="@style/Widget.Material3.Button.TonalButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:backgroundTint="@color/surface_card"
-                        android:paddingHorizontal="12dp"
-                        android:text="+ Simulate"
-                        android:textColor="@color/wine_red_light"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="10dp" />
-                </LinearLayout>
-
-                <!-- Two Ather Tabs: Highlights vs All rides -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:id="@+id/tabStatsHighlights"
-                        android:layout_width="0dp"
-                        android:layout_height="44dp"
-                        android:layout_marginEnd="4dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/pill_chip_active"
-                        android:gravity="center"
-                        android:text="Highlights"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tabStatsAllRides"
-                        android:layout_width="0dp"
-                        android:layout_height="44dp"
-                        android:layout_marginStart="4dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/pill_chip_inactive"
-                        android:gravity="center"
-                        android:text="All rides"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
-                <!-- TAB CONTENT A: HIGHLIGHTS -->
-                <LinearLayout
-                    android:id="@+id/layoutStatsHighlights"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
-                    android:orientation="vertical"
-                    android:visibility="visible">
-
-                    <!-- "Your month so far" Hero Card with Daily Bar Chart -->
-                    <com.google.android.material.card.MaterialCardView
-                        android:id="@+id/cardMonthSoFar"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginBottom="@dimen/card_margin_bottom"
-                        app:cardBackgroundColor="@color/surface_card"
-                        app:cardCornerRadius="@dimen/card_corner_radius"
-                        app:cardElevation="0dp"
-                        app:strokeColor="@color/surface_border"
-                        app:strokeWidth="@dimen/card_stroke_width">
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:padding="@dimen/card_padding">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Your month so far"
-                                android:textColor="@color/text_tertiary"
-                                android:textSize="12sp"
-                                android:textStyle="bold" />
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:gravity="bottom"
-                                android:orientation="horizontal">
-
-                                <TextView
-                                    android:id="@+id/tvMonthDistance"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:letterSpacing="-0.03"
-                                    android:text="0 km"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="28sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:id="@+id/tvMonthDays"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginStart="8dp"
-                                    android:text="this month"
-                                    android:textColor="@color/text_secondary"
-                                    android:textSize="13sp" />
-
-                                <View
-                                    android:layout_width="0dp"
-                                    android:layout_height="1dp"
-                                    android:layout_weight="1" />
-
-                                <TextView
-                                    android:id="@+id/tvTodayKmBadge"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="0 km today"
-                                    android:textColor="#F59E0B"
-                                    android:textSize="12sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-
-                            <!-- Ather Interactive Daily Bar Chart Visualizer -->
-                            <LinearLayout
-                                android:id="@+id/chartBarContainer"
-                                android:layout_width="match_parent"
-                                android:layout_height="90dp"
-                                android:layout_marginTop="16dp"
-                                android:gravity="bottom|center_horizontal"
-                                android:orientation="horizontal">
-
-                                <View
-                                    android:layout_width="14dp"
-                                    android:layout_height="35dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/pill_badge"
-                                    android:backgroundTint="#FFFFFF" />
-
-                                <View
-                                    android:layout_width="14dp"
-                                    android:layout_height="20dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/pill_badge"
-                                    android:backgroundTint="#FFFFFF" />
-
-                                <View
-                                    android:layout_width="14dp"
-                                    android:layout_height="55dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/pill_badge"
-                                    android:backgroundTint="#FFFFFF" />
-
-                                <View
-                                    android:layout_width="14dp"
-                                    android:layout_height="40dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/pill_badge"
-                                    android:backgroundTint="#FFFFFF" />
-
-                                <View
-                                    android:layout_width="14dp"
-                                    android:layout_height="80dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/pill_badge"
-                                    android:backgroundTint="#FFFFFF" />
-
-                                <View
-                                    android:layout_width="14dp"
-                                    android:layout_height="70dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/pill_badge"
-                                    android:backgroundTint="#FFFFFF" />
-
-                                <View
-                                    android:layout_width="14dp"
-                                    android:layout_height="45dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/pill_badge"
-                                    android:backgroundTint="#FFFFFF" />
-
-                                <View
-                                    android:layout_width="14dp"
-                                    android:layout_height="18dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/circle_dot"
-                                    android:backgroundTint="#F59E0B" />
-
-                                <View
-                                    android:layout_width="10dp"
-                                    android:layout_height="10dp"
-                                    android:layout_marginHorizontal="6dp"
-                                    android:background="@drawable/circle_dot"
-                                    android:backgroundTint="@color/surface_border" />
-                            </LinearLayout>
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_gravity="end"
-                                android:layout_marginTop="6dp"
-                                android:text="29th Oct"
-                                android:textColor="@color/text_tertiary"
-                                android:textSize="11sp" />
-                        </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-
-                    <!-- 3 Metric Tiles (Fuel, Mileage, Spirited Rides) -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginBottom="@dimen/card_margin_bottom"
-                        android:orientation="horizontal">
-
-                        <com.google.android.material.card.MaterialCardView
-                            android:id="@+id/cardMetricFuel"
-                            android:layout_width="0dp"
-                            android:layout_height="90dp"
-                            android:layout_marginEnd="4dp"
-                            android:layout_weight="1"
-                            app:cardBackgroundColor="@color/surface_card"
-                            app:cardCornerRadius="@dimen/card_corner_radius_small"
-                            app:cardElevation="0dp"
-                            app:strokeColor="@color/surface_border"
-                            app:strokeWidth="@dimen/card_stroke_width">
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="match_parent"
-                                android:gravity="center_vertical"
-                                android:orientation="vertical"
-                                android:padding="14dp">
-
-                                <TextView
-                                    android:id="@+id/tvHighlightFuelUnits"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="-- L"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="22sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="Fuel Filled"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-                        </com.google.android.material.card.MaterialCardView>
-
-                        <com.google.android.material.card.MaterialCardView
-                            android:id="@+id/cardMetricMileage"
-                            android:layout_width="0dp"
-                            android:layout_height="90dp"
-                            android:layout_marginHorizontal="2dp"
-                            android:layout_weight="1"
-                            app:cardBackgroundColor="@color/surface_card"
-                            app:cardCornerRadius="@dimen/card_corner_radius_small"
-                            app:cardElevation="0dp"
-                            app:strokeColor="@color/surface_border"
-                            app:strokeWidth="@dimen/card_stroke_width">
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="match_parent"
-                                android:gravity="center_vertical"
-                                android:orientation="vertical"
-                                android:padding="14dp">
-
-                                <TextView
-                                    android:id="@+id/tvHighlightMileage"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="--"
-                                    android:textColor="@color/status_connected"
-                                    android:textSize="22sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="Avg km/l"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-                        </com.google.android.material.card.MaterialCardView>
-
-                        <com.google.android.material.card.MaterialCardView
-                            android:id="@+id/cardMetricSpirited"
-                            android:layout_width="0dp"
-                            android:layout_height="90dp"
-                            android:layout_marginStart="4dp"
-                            android:layout_weight="1"
-                            app:cardBackgroundColor="@color/surface_card"
-                            app:cardCornerRadius="@dimen/card_corner_radius_small"
-                            app:cardElevation="0dp"
-                            app:strokeColor="@color/surface_border"
-                            app:strokeWidth="@dimen/card_stroke_width">
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="match_parent"
-                                android:gravity="center_vertical"
-                                android:orientation="vertical"
-                                android:padding="14dp">
-
-                                <TextView
-                                    android:id="@+id/tvHighlightSpiritedRides"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="0"
-                                    android:textColor="@color/wine_red_light"
-                                    android:textSize="22sp"
-                                    android:textStyle="bold" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="2dp"
-                                    android:text="Spirited Rides"
-                                    android:textColor="@color/text_tertiary"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-                        </com.google.android.material.card.MaterialCardView>
-                    </LinearLayout>
-
-                    <!-- Lifetime Highlights on Pulsar NS200 (Ather 3 Cards) -->
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:letterSpacing="0.06"
-                        android:text="LIFETIME HIGHLIGHTS ON PULSAR NS200"
-                        android:textColor="@color/text_tertiary"
-                        android:textSize="11sp"
-                        android:textStyle="bold" />
-
-                    <HorizontalScrollView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:layout_marginBottom="12dp"
-                        android:scrollbars="none">
-
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <!-- Card 1: Longest Ride (Purple tint) -->
-                            <com.google.android.material.card.MaterialCardView
-                                android:id="@+id/cardHighlightLongest"
-                                android:layout_width="140dp"
-                                android:layout_height="140dp"
-                                android:layout_marginEnd="10dp"
-                                app:cardBackgroundColor="#2D2140"
-                                app:cardCornerRadius="@dimen/card_corner_radius"
-                                app:cardElevation="0dp">
-
-                                <LinearLayout
-                                    android:layout_width="match_parent"
-                                    android:layout_height="match_parent"
-                                    android:orientation="vertical"
-                                    android:padding="14dp">
-
-                                    <ImageView
-                                        android:layout_width="20dp"
-                                        android:layout_height="20dp"
-                                        android:src="@drawable/ic_share"
-                                        app:tint="#C084FC" />
-
-                                    <View
-                                        android:layout_width="1dp"
-                                        android:layout_height="0dp"
-                                        android:layout_weight="1" />
-
-                                    <TextView
-                                        android:id="@+id/tvHighlightLongestRide"
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text="-- km"
-                                        android:textColor="#FFFFFF"
-                                        android:textSize="20sp"
-                                        android:textStyle="bold" />
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:layout_marginTop="2dp"
-                                        android:text="Longest Ride"
-                                        android:textColor="#C084FC"
-                                        android:textSize="11sp" />
-                                </LinearLayout>
-                            </com.google.android.material.card.MaterialCardView>
-
-                            <!-- Card 2: Longest Highway Cruise (Green tint) -->
-                            <com.google.android.material.card.MaterialCardView
-                                android:id="@+id/cardHighlightHighway"
-                                android:layout_width="140dp"
-                                android:layout_height="140dp"
-                                android:layout_marginEnd="10dp"
-                                app:cardBackgroundColor="#16382B"
-                                app:cardCornerRadius="@dimen/card_corner_radius"
-                                app:cardElevation="0dp">
-
-                                <LinearLayout
-                                    android:layout_width="match_parent"
-                                    android:layout_height="match_parent"
-                                    android:orientation="vertical"
-                                    android:padding="14dp">
-
-                                    <ImageView
-                                        android:layout_width="20dp"
-                                        android:layout_height="20dp"
-                                        android:src="@drawable/ic_share"
-                                        app:tint="#4ADE80" />
-
-                                    <View
-                                        android:layout_width="1dp"
-                                        android:layout_height="0dp"
-                                        android:layout_weight="1" />
-
-                                    <TextView
-                                        android:id="@+id/tvLifetimeLongestCruise"
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text="-- mins"
-                                        android:textColor="#FFFFFF"
-                                        android:textSize="20sp"
-                                        android:textStyle="bold" />
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:layout_marginTop="2dp"
-                                        android:text="Longest Cruise"
-                                        android:textColor="#4ADE80"
-                                        android:textSize="11sp" />
-                                </LinearLayout>
-                            </com.google.android.material.card.MaterialCardView>
-
-                            <!-- Card 3: Top Speed (Orange/Amber tint) -->
-                            <com.google.android.material.card.MaterialCardView
-                                android:id="@+id/cardHighlightTopSpeed"
-                                android:layout_width="140dp"
-                                android:layout_height="140dp"
-                                app:cardBackgroundColor="#422812"
-                                app:cardCornerRadius="@dimen/card_corner_radius"
-                                app:cardElevation="0dp">
-
-                                <LinearLayout
-                                    android:layout_width="match_parent"
-                                    android:layout_height="match_parent"
-                                    android:orientation="vertical"
-                                    android:padding="14dp">
-
-                                    <ImageView
-                                        android:layout_width="20dp"
-                                        android:layout_height="20dp"
-                                        android:src="@drawable/ic_share"
-                                        app:tint="#FB923C" />
-
-                                    <View
-                                        android:layout_width="1dp"
-                                        android:layout_height="0dp"
-                                        android:layout_weight="1" />
-
-                                    <TextView
-                                        android:id="@+id/tvLifetimeTopSpeed"
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text="-- km/h"
-                                        android:textColor="#FFFFFF"
-                                        android:textSize="20sp"
-                                        android:textStyle="bold" />
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:layout_marginTop="2dp"
-                                        android:text="Top Speed"
-                                        android:textColor="#FB923C"
-                                        android:textSize="11sp" />
-                                </LinearLayout>
-                            </com.google.android.material.card.MaterialCardView>
-                        </LinearLayout>
-                    </HorizontalScrollView>
-
-                    <!-- Ownership Details Table -->
-                    <com.google.android.material.card.MaterialCardView
-                        android:id="@+id/cardLifetimeStats"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginBottom="@dimen/card_margin_bottom"
-                        app:cardBackgroundColor="@color/surface_card"
-                        app:cardCornerRadius="@dimen/card_corner_radius"
-                        app:cardElevation="0dp"
-                        app:strokeColor="@color/surface_border"
-                        app:strokeWidth="@dimen/card_stroke_width">
-                        app:strokeWidth="1dp">
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:padding="16dp">
-
-                            <LinearLayout
-                                android:id="@+id/layoutDaysOfOwnership"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:clickable="true"
-                                android:focusable="true"
-                                android:background="?attr/selectableItemBackground"
-                                android:orientation="horizontal">
-
-                                <LinearLayout
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:orientation="vertical">
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text="Days of ownership"
-                                        android:textColor="@color/text_secondary"
-                                        android:textSize="14sp" />
-
-                                    <TextView
-                                        android:id="@+id/tvPurchaseDateSubtext"
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:layout_marginTop="2dp"
-                                        android:text="Purchased: 23 Sep 2023"
-                                        android:textColor="@color/text_tertiary"
-                                        android:textSize="11sp" />
-                                </LinearLayout>
-
-                                <TextView
-                                    android:id="@+id/tvDaysOfOwnership"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="1132 Days "
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="14sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-
-                            <View
-                                android:layout_width="match_parent"
-                                android:layout_height="1dp"
-                                android:layout_marginVertical="10dp"
-                                android:background="@color/surface_border_subtle" />
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:orientation="horizontal">
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:text="Total Distance Recorded"
-                                    android:textColor="@color/text_secondary"
-                                    android:textSize="14sp" />
-
-                                <TextView
-                                    android:id="@+id/tvOdometer"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="0.0 km"
-                                    android:textColor="@color/wine_red_light"
-                                    android:textSize="14sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-
-                            <View
-                                android:layout_width="match_parent"
-                                android:layout_height="1dp"
-                                android:layout_marginVertical="10dp"
-                                android:background="@color/surface_border_subtle" />
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:gravity="center_vertical"
-                                android:orientation="horizontal">
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:text="Total Rides Logged"
-                                    android:textColor="@color/text_secondary"
-                                    android:textSize="14sp" />
-
-                                <TextView
-                                    android:id="@+id/tvLifetimeRides"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="0"
-                                    android:textColor="@color/text_primary"
-                                    android:textSize="14sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-
-                            <!-- Edit ODO button in table -->
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/btnEditOdo"
-                                style="@style/Widget.Material3.Button.TonalButton"
-                                android:layout_width="match_parent"
-                                android:layout_height="@dimen/btn_height_compact"
-                                android:layout_marginTop="14dp"
-                                android:backgroundTint="@color/surface_elevated"
-                                android:text="Edit Lifetime Odometer"
-                                android:textColor="@color/text_primary"
-                                android:textSize="12sp"
-                                app:cornerRadius="@dimen/btn_corner_radius_compact" />
-                        </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-
-                </LinearLayout>
-
-                <!-- TAB CONTENT B: ALL RIDES LIST -->
-                <LinearLayout
-                    android:id="@+id/layoutStatsAllRides"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:letterSpacing="0.06"
-                            android:text="PAST RIDE CHRONOLOGY"
-                            android:textColor="@color/text_tertiary"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnAddManualRide"
-                            style="@style/Widget.Material3.Button.TonalButton"
-                            android:layout_width="wrap_content"
-                            android:layout_height="@dimen/btn_height_compact"
-                            android:backgroundTint="@color/surface_elevated"
-                            android:text="+ Log Past Ride"
-                            android:textColor="@color/text_primary"
-                            android:textSize="12sp"
-                            app:cornerRadius="@dimen/btn_corner_radius_compact"
-                            app:strokeColor="@color/surface_border_subtle"
-                            app:strokeWidth="@dimen/card_stroke_width" />
-                    </LinearLayout>
-
-                    <!-- Ride List Container -->
-                    <LinearLayout
-                        android:id="@+id/layoutTripList"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:orientation="vertical" />
-                </LinearLayout>
-
             </LinearLayout>
         </androidx.core.widget.NestedScrollView>
 
