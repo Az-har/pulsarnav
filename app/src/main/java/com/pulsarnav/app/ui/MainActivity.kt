@@ -170,16 +170,6 @@ class MainActivity : AppCompatActivity() {
             else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
         )
         super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-            )
-        }
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -279,6 +269,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateNotificationAccessUi()
+        updateBatteryOptimizationUi()
         updateHardwareReadinessUi()
         updateBikeInfoDisplay()
         updateQuickNavButtons()
@@ -694,7 +685,10 @@ class MainActivity : AppCompatActivity() {
         binding.btnScan.setOnClickListener {
             provideHapticFeedback()
             when (bleManager.connectionState.value) {
-                is BleConnectionState.Connected -> bleManager.disconnect()
+                is BleConnectionState.Connected -> {
+                    bleManager.disconnect()
+                    BikeBleForegroundService.stop(this)
+                }
                 is BleConnectionState.Scanning -> bleManager.stopScan()
                 else -> checkAndStartScan(silent = false)
             }
@@ -714,6 +708,10 @@ class MainActivity : AppCompatActivity() {
         binding.rowNotificationAccess.setOnClickListener {
             provideHapticFeedback()
             openNotificationListenerSettings()
+        }
+        binding.rowBatteryOptimization.setOnClickListener {
+            provideHapticFeedback()
+            requestIgnoreBatteryOptimization()
         }
 
         // Search Bar click
@@ -2723,7 +2721,8 @@ class MainActivity : AppCompatActivity() {
             binding.ivVaultQrIcon,
             binding.ivVaultBackupIcon,
             binding.ivNavAppPrefIcon,
-            binding.ivInterceptorIcon
+            binding.ivInterceptorIcon,
+            binding.ivBatteryOptIcon
         )
         for (icon in allThemedIcons) {
             icon.imageTintList = ColorStateList.valueOf(theme.accentColor)
@@ -3645,6 +3644,53 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun isBatteryOptimizationIgnored(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            return pm?.isIgnoringBatteryOptimizations(packageName) ?: true
+        }
+        return true
+    }
+
+    private fun requestIgnoreBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    try {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    } catch (_: Exception) {
+                        showFeedback("Set Battery to 'Unrestricted' in App Info -> Battery", isAlert = true)
+                    }
+                }
+            } else {
+                showFeedback("Background execution is already unrestricted")
+            }
+        } else {
+            showFeedback("Background execution is unrestricted on this Android version")
+        }
+    }
+
+    private fun updateBatteryOptimizationUi() {
+        val isUnrestricted = isBatteryOptimizationIgnored()
+        binding.tvBatteryOptimizationStatus.text = if (isUnrestricted) {
+            "Unrestricted (Protected in background)"
+        } else {
+            "Optimized (Tap to allow unrestricted background)"
+        }
+        binding.tvBatteryOptimizationStatus.setTextColor(
+            ContextCompat.getColor(
+                this,
+                if (isUnrestricted) R.color.mint_accent else R.color.amber_accent
+            )
+        )
+    }
+
     private fun showNotificationAccessDialog(onContinueAnyway: (() -> Unit)? = null) {
         MaterialAlertDialogBuilder(this, R.style.ObsidianAlertDialog)
             .setTitle("Navigation Interceptor Access")
@@ -4213,6 +4259,7 @@ class MainActivity : AppCompatActivity() {
             bleManager.connectionState.collectLatest { state ->
                 when (state) {
                     is BleConnectionState.Disconnected -> {
+                        BikeBleForegroundService.stop(this@MainActivity)
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
                         binding.tvConnectionStatus.text = "Disconnected"
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
@@ -4257,6 +4304,7 @@ class MainActivity : AppCompatActivity() {
                         binding.tvTopConnectionStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_scanning))
                     }
                     is BleConnectionState.Connected -> {
+                        BikeBleForegroundService.start(this@MainActivity)
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_connected)
                         binding.tvConnectionStatus.text = "Connected • ${state.deviceName}"
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
@@ -4274,6 +4322,7 @@ class MainActivity : AppCompatActivity() {
                         recordSyncTime()
                     }
                     is BleConnectionState.Error -> {
+                        BikeBleForegroundService.stop(this@MainActivity)
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
                         binding.tvConnectionStatus.text = state.message
                         binding.btnScan.text = "Scan"

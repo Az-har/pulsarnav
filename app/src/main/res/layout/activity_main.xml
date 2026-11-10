@@ -3576,6 +3576,68 @@
                             android:layout_marginVertical="6dp"
                             android:background="@color/surface_border_subtle" />
 
+                        <!-- Background Keep-Alive / Battery Optimization Exemption Row -->
+                        <LinearLayout
+                            android:id="@+id/rowBatteryOptimization"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:minHeight="58dp"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="4dp"
+                            android:paddingVertical="8dp">
+
+                            <ImageView
+                                android:id="@+id/ivBatteryOptIcon"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:background="@drawable/circle_dot"
+                                android:backgroundTint="@color/surface_elevated"
+                                android:padding="9dp"
+                                android:src="@drawable/ic_health_shield"
+                                app:tint="@color/wine_red_light" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="14dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Background Keep-Alive (Never Kill)"
+                                    android:textColor="@color/text_primary"
+                                    android:textSize="14sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvBatteryOptimizationStatus"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Unrestricted (Protected)"
+                                    android:textColor="@color/status_connected"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Manage ›"
+                                android:textColor="@color/text_tertiary"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:layout_marginVertical="6dp"
+                            android:background="@color/surface_border_subtle" />
+
                         <!-- WhatsApp Alerts Switch -->
                         <LinearLayout
                             android:id="@+id/rowWhatsAppAlerts"
