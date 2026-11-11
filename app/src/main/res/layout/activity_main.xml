@@ -499,26 +499,6 @@
                             android:layout_marginTop="10dp"
                             android:orientation="vertical"
                             android:visibility="gone" />
-
-                        <View
-                            android:id="@+id/viewConnectionDivider"
-                            android:layout_width="match_parent"
-                            android:layout_height="1dp"
-                            android:layout_marginVertical="14dp"
-                            android:background="@color/surface_border_subtle" />
-
-                        <!-- Glove-Friendly Primary Action Button -->
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnOpenMaps"
-                            android:layout_width="match_parent"
-                            android:layout_height="@dimen/btn_height_primary"
-                            android:backgroundTint="@color/wine_red"
-                            android:letterSpacing="0.02"
-                            android:text="Start Ride with Google Maps"
-                            android:textColor="@color/on_primary"
-                            android:textSize="15sp"
-                            android:textStyle="bold"
-                            app:cornerRadius="@dimen/btn_corner_radius" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 

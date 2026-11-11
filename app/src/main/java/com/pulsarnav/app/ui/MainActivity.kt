@@ -715,12 +715,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Open Google Maps
-        binding.btnOpenMaps.setOnClickListener {
-            provideHapticFeedback()
-            launchGoogleMapsRide()
-        }
-
         // Notification Access Prompts
         binding.btnEnableNotificationAccess.setOnClickListener {
             provideHapticFeedback()
@@ -2910,13 +2904,9 @@ class MainActivity : AppCompatActivity() {
         binding.tvBloodGroupBadge.setTextColor(theme.accentColor)
         binding.tvEditMedicalLink.setTextColor(theme.accentColor)
 
-        // Primary Buttons (Open Google Maps & Scan)
-        binding.btnOpenMaps.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
-        binding.btnOpenMaps.setTextColor(theme.onPrimaryColor)
         binding.btnEnableNotificationAccess.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
         binding.btnEnableNotificationAccess.setTextColor(theme.onPrimaryColor)
         binding.cardNotificationPermissionBanner.strokeColor = theme.cardBorderColor
-        binding.viewConnectionDivider.setBackgroundColor(theme.cardBorderColor)
 
         binding.btnFindPumps.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
         binding.btnFindPumps.setTextColor(theme.onPrimaryColor)
@@ -3223,8 +3213,6 @@ class MainActivity : AppCompatActivity() {
 
         binding.tvSettingsHome.text = "Home: ${if (home.isNotBlank()) home else defaultHomeLabel}"
         binding.tvSettingsWork.text = "Work: ${if (work.isNotBlank()) work else defaultWorkLabel}"
-
-        binding.btnOpenMaps.text = if (isWaze) "Start Ride with Waze" else "Start Ride with Google Maps"
     }
 
     private fun provideHapticFeedback() {
