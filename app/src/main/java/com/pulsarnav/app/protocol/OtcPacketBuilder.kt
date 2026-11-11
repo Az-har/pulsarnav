@@ -3,6 +3,9 @@ package com.pulsarnav.app.protocol
 import android.os.Build
 import com.pulsarnav.app.model.Maneuver
 import java.nio.charset.StandardCharsets
+import java.text.Normalizer
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.round
 
 enum class CallState(val value: Int) {
     NO_CALL(0),
@@ -18,10 +21,35 @@ enum class AlertType(val value: Byte) {
 }
 
 /**
+ * Decoded handlebar/switchgear & volume control state from characteristic 0a10676e-...
+ * (18B legacy LCD or 20..26B TFT such as Pulsar NS400Z).
+ */
+data class OtcControlFrame(
+    val volumeToSet: Int,
+    val dialSource: Int,
+    val callAccept: Int,
+    val callReject: Int,
+    val callRejectWithSms: Int,
+    val takeMeHome: Int,
+    val resumeSong: Int,
+    val pauseSong: Int,
+    val skipToNext: Int,
+    val skipToPrev: Int,
+    val stopSong: Int,
+    val missedCallGet: Int,
+    val alertGet: Int,
+    val launchMediaPlayer: Int,
+    val selectPlaylistSongReq: Int,
+    val selectedPlaylistSong: Int,
+    val dialIndex: Int,
+    val dialTxn: Int
+)
+
+/**
  * Encodes turn-by-turn navigation, general telemetry heartbeat, caller ID, and WhatsApp notifications
- * into byte-for-byte verified BLE packet frames for the Bajaj Pulsar NS200 / Dominar digital cluster.
+ * into byte-for-byte verified BLE packet frames for the Bajaj Pulsar NS200 / NS400Z / Dominar digital clusters.
  *
- * Reverse-engineered from official Bajaj Ride Connect (com.bajajconnect.rideapp v1.11.57)
+ * Reverse-engineered from official Bajaj Ride Connect (com.bajajconnect.rideapp v1.11.57 - v1.11.80)
  * and verified by manov-ik/ride-relay.
  */
 object OtcPacketBuilder {
@@ -31,12 +59,16 @@ object OtcPacketBuilder {
     const val GENERAL_LEGACY_SIZE = 55
     const val ALERT_PACKET_SIZE = 44
     const val MISSED_CALL_PACKET_SIZE = 63
+    const val MUSIC_INFO_PACKET_SIZE = 111
 
     private const val MAX_STREET_LEN = 31
     private const val MAX_NAME_LEN = 32
     private const val MAX_PHONE_LEN = 18
 
-    private var heartbeatCounter: Byte = 0
+    private val heartbeatCounter = AtomicInteger(0)
+
+    private fun nextHeartbeatByte(): Byte =
+        (heartbeatCounter.incrementAndGet() and 0xFF).toByte()
 
     // =========================================================================
     // 1. Turn-by-Turn Navigation Frame (48 bytes, Characteristic 0110676e-...)
@@ -50,10 +82,10 @@ object OtcPacketBuilder {
      *                    bits4-7 = distance unit for STEP distance (1 = metres, 0 = km)
      *                    bit7 = 1 if ETA is PM, 0 if AM
      *  1     1    maneuver icon id (66..90 base; +32 = 98..122 blinking when < 100m)
-     *  2-5   4    STEP distance, little-endian 16.16 fixed point (iHigh, iLow, fHigh, fLow)
+     *  2-5   4    STEP distance in little-endian decimal integer + hundredths (fLow, fHigh, iLow, iHigh)
      *  6     1    ETA minute (0-59)
      *  7     1    ETA hour (1-12) | (roundabout exit number << 4)
-     *  8-11  4    TOTAL distance, little-endian 16.16 fixed point
+     *  8-11  4    TOTAL distance in little-endian decimal integer + hundredths (fLow, fHigh, iLow, iHigh)
      * 12     1    bit0 = total-dist unit (1 = metres, 0 = km) | bits2-3 = GPS active (1)
      * 13     1    takeMeHome ack (0)
      * 14     1    street/instruction text length (max 31)
@@ -75,9 +107,12 @@ object OtcPacketBuilder {
         val step = formatDistance(stepMeters.coerceAtLeast(0).toDouble())
         val total = formatDistance(totalMeters.coerceAtLeast(0).toDouble())
 
-        var t = (streetText ?: "").replace(Regex("[^0-9a-zA-Z.]"), " ").trim()
-        if (t.length > 31) {
-            t = t.substring(0, 31) + "."
+        var t = transliterateAscii(streetText)
+            .replace(Regex("[^0-9a-zA-Z.]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (t.length > MAX_STREET_LEN) {
+            t = t.substring(0, MAX_STREET_LEN - 1).trimEnd() + "."
         }
 
         val b = ByteArray(TBT_PACKET_SIZE)
@@ -89,34 +124,42 @@ object OtcPacketBuilder {
         b[0] = b0.toByte()
 
         // Byte 1: Maneuver Icon ID
-        // The cluster adds 32 for the blinking variant when turn is < 100m (except destination reached)
+        // The cluster adds 32 for the blinking variant when turn is < 100m (active updates only)
         var icon = maneuverIcon
-        if (stepMeters in 0..99 && icon != Maneuver.DESTINATION_REACHED.opcode.toInt() && icon < 98) {
+        if (type != 0 && stepMeters in 0..99 && icon > 0 &&
+            icon != Maneuver.DESTINATION_REACHED.opcode.toInt() && icon < 98
+        ) {
             icon += 32
         }
         b[1] = (icon and 0xFF).toByte()
 
-        // Bytes 2-5: Step distance (16.16 fixed point stored as little-endian shorts)
+        // Bytes 2-5: Step distance (decimal integer + hundredths stored as LE shorts)
         b[2] = step[4]
         b[3] = step[3]
         b[4] = step[2]
         b[5] = step[1]
 
         // Byte 6: ETA minute (0-59)
-        b[6] = (etaMinute and 0xFF).toByte()
+        b[6] = (etaMinute.coerceIn(0, 59) and 0xFF).toByte()
 
-        // Byte 7: ETA hour (1-12) | (roundabout exit << 4)
-        val validHour = if (etaHour in 1..12) etaHour else 12
-        b[7] = ((validHour and 0x0F) or ((roundaboutExit and 0x0F) shl 4)).toByte()
+        // Byte 7: ETA hour (1-12 for active updates; 0 allowed for stop frames) | (roundabout exit << 4)
+        val validHour = if (type == 0) {
+            etaHour.coerceIn(0, 12)
+        } else if (etaHour in 1..12) {
+            etaHour
+        } else {
+            12
+        }
+        b[7] = ((validHour and 0x0F) or ((roundaboutExit.coerceIn(0, 15) and 0x0F) shl 4)).toByte()
 
-        // Bytes 8-11: Total distance (16.16 fixed point stored as little-endian shorts)
+        // Bytes 8-11: Total distance (decimal integer + hundredths stored as LE shorts)
         b[8] = total[4]
         b[9] = total[3]
         b[10] = total[2]
         b[11] = total[1]
 
-        // Byte 12: total-unit(bit0) | gps status(bits2-3, 1 = GPS active)
-        val gpsActive = 1
+        // Byte 12: total-unit(bit0) | gps status(bits2-3, 1 = GPS active when type != 0)
+        val gpsActive = if (type == 0) 0 else 1
         b[12] = ((total[0].toInt() and 0x01) or (gpsActive shl 2)).toByte()
 
         // Byte 13: takeMeHome ack
@@ -125,7 +168,7 @@ object OtcPacketBuilder {
         // Bytes 14-45: Street length and ASCII content
         if (t.isNotEmpty()) {
             val tb = t.toByteArray(StandardCharsets.US_ASCII)
-            val n = tb.size.coerceAtMost(31)
+            val n = tb.size.coerceAtMost(MAX_STREET_LEN)
             b[14] = n.toByte()
             System.arraycopy(tb, 0, b, 15, n)
         } else {
@@ -146,21 +189,11 @@ object OtcPacketBuilder {
     }
 
     /**
-     * Nav stop frame: type 0, all parameters zeroed, valid checksum.
+     * Nav stop frame: type 0, all parameters zeroed, valid checksum (0).
      * Clears turn-by-turn navigation graphics on the bike's LCD.
      */
     fun buildTbtStopFrame(): ByteArray {
-        return buildTbtFrame(
-            type = 0,
-            maneuverIcon = 0,
-            isAm = true,
-            stepMeters = 0,
-            totalMeters = 0,
-            etaHour = 0,
-            etaMinute = 0,
-            roundaboutExit = 0,
-            streetText = ""
-        )
+        return ByteArray(TBT_PACKET_SIZE)
     }
 
     /**
@@ -170,17 +203,20 @@ object OtcPacketBuilder {
      *  - If d >= 1000m: value in km, unit = 0, two decimal places
      */
     fun formatDistance(d: Double): ByteArray {
-        val v: Double
+        val clamped = d.coerceAtLeast(0.0)
         val unit: Int
-        if (d < 1000.0) {
-            v = d.toInt().toDouble()
+        val i: Int
+        val frac: Int
+        if (clamped < 999.5) {
             unit = 1
+            i = round(clamped).toInt()
+            frac = 0
         } else {
-            v = d / 1000.0
             unit = 0
+            val totalHundredths = round((clamped / 1000.0) * 100.0).toInt()
+            i = totalHundredths / 100
+            frac = totalHundredths % 100
         }
-        val i = v.toInt()
-        val frac = ((v - i) * 100.0).toInt()
         return byteArrayOf(
             unit.toByte(),
             ((i shr 8) and 0xFF).toByte(),
@@ -209,22 +245,35 @@ object OtcPacketBuilder {
         callRejectSmsAck: Int = 0,
         missedCallCount: Int = 0,
         missedCallGetAck: Int = 0,
-        callProgress: Int = 0
+        callProgress: Int = 0,
+        isHeadsetConnected: Boolean = false,
+        isDndEnabled: Boolean = false,
+        resumeSongAck: Int = 0,
+        pauseSongAck: Int = 0,
+        skipToNextAck: Int = 0,
+        skipToPrevAck: Int = 0,
+        stopSongAck: Int = 0,
+        launchMediaPlayerAck: Int = 0,
+        smsCount: Int = 0,
+        alertsGetAck: Int = 0,
+        selectPlaylistSongAck: Int = 0
     ): ByteArray {
-        heartbeatCounter = ((heartbeatCounter + 1) and 0xFF).toByte()
+        val counter = nextHeartbeatByte()
         val b = ByteArray(GENERAL_PACKET_SIZE)
 
-        // [0] Volume (low nibble 0..15) | 0xC0 marker
-        b[0] = ((volumeLevel.coerceIn(0, 15) and 0x0F) or 0xC0).toByte()
+        // [0] Volume (low nibble 0..15) | headset connected (bit 4) | 0xC0 marker
+        val headsetBit = if (isHeadsetConnected) 0x10 else 0
+        b[0] = ((volumeLevel.coerceIn(0, 15) and 0x0F) or headsetBit or 0xC0).toByte()
 
-        // [1] Battery coarse bars 0..3 (bits 4-5) | Call state (bits 0-3)
+        // [1] DND flag (bit 7) | Battery coarse bars 0..3 (bits 4-5) | Call state (bits 0-3)
         val batBars = when {
             batteryPercent >= 75 -> 3
             batteryPercent >= 50 -> 2
             batteryPercent >= 25 -> 1
             else -> 0
         }
-        b[1] = (((batBars and 0x03) shl 4) or (callState.value and 0x0F)).toByte()
+        val dndBit = if (isDndEnabled) 0x80 else 0
+        b[1] = (dndBit or ((batBars and 0x03) shl 4) or (callState.value and 0x0F)).toByte()
 
         // [2] Signal bars 0..7 (bits 0-2)
         b[2] = (signalBars.coerceIn(0, 7) and 0x07).toByte()
@@ -237,10 +286,20 @@ object OtcPacketBuilder {
         b[5] = (callRejectAck and 0xFF).toByte()
         b[6] = (callRejectSmsAck and 0xFF).toByte()
 
-        // [13..14] Missed calls count & ack
+        // [7..12] Music / switchgear action acks (TFT / V2 clusters)
+        b[7] = (resumeSongAck and 0xFF).toByte()
+        b[8] = (pauseSongAck and 0xFF).toByte()
+        b[9] = (skipToNextAck and 0xFF).toByte()
+        b[10] = (skipToPrevAck and 0xFF).toByte()
+        b[11] = (stopSongAck and 0xFF).toByte()
+        b[12] = (launchMediaPlayerAck and 0xFF).toByte()
+
+        // [13..17] Missed calls, SMS & playlist/alert acks
         b[13] = (missedCallCount.coerceIn(0, 255)).toByte()
         b[14] = (missedCallGetAck and 0xFF).toByte()
-        b[17] = 0
+        b[15] = (smsCount.coerceIn(0, 255)).toByte()
+        b[16] = (alertsGetAck and 0xFF).toByte()
+        b[17] = (selectPlaylistSongAck and 0xFF).toByte()
 
         // [18..51] Caller ID info
         val hasCaller = (callState == CallState.INCOMING_CALL || callState == CallState.ACTIVE_CALL)
@@ -265,7 +324,7 @@ object OtcPacketBuilder {
         b[53] = ((callProgress shr 8) and 0xFF).toByte()
 
         // [54] Heartbeat counter (increments every packet)
-        b[54] = heartbeatCounter
+        b[54] = counter
 
         // [55..87] Phone model string
         val model = sanitizeAscii(Build.MODEL ?: "Android", 32)
@@ -297,7 +356,7 @@ object OtcPacketBuilder {
         missedCallCount: Int = 0,
         missedCallGetAck: Int = 0
     ): ByteArray {
-        heartbeatCounter = ((heartbeatCounter + 1) and 0xFF).toByte()
+        val counter = nextHeartbeatByte()
         val b = ByteArray(GENERAL_LEGACY_SIZE)
 
         b[0] = ((volumeLevel.coerceIn(0, 15) and 0x0F) or 0xC0).toByte()
@@ -337,7 +396,7 @@ object OtcPacketBuilder {
             b[18] = 0
         }
 
-        b[53] = heartbeatCounter
+        b[53] = counter
         return b
     }
 
@@ -412,9 +471,99 @@ object OtcPacketBuilder {
         return packet
     }
 
+    // =========================================================================
+    // 5. TFT Media Info (0610) & Switchgear Control Frame Parser (0a10)
+    // =========================================================================
+
+    /**
+     * Builds the 111-byte Media Info frame (Characteristic 0610676e-...) for Bajaj TFT clusters
+     * such as Pulsar NS400Z.
+     *
+     * Byte Layout (verified against CallFrame.musicInfoFrame & PULSAR1854 wire captures):
+     *  0       1    header flag (1)
+     *  1       1    title byte length (0..32)
+     *  2..33   32   title UTF-8/ASCII bytes (zero-padded)
+     *  34      1    artist byte length (0..32)
+     *  35..66  32   artist UTF-8/ASCII bytes (zero-padded)
+     *  67      1    album byte length (0..32)
+     *  68..99  32   album UTF-8/ASCII bytes (zero-padded)
+     *  100..101 2   elapsed playback time in seconds (uint16 big-endian)
+     *  102..103 2   track duration in seconds (uint16 big-endian)
+     *  104     1    play status (0 = stopped/none, 1 = paused, 2 = playing)
+     *  105..110 6   reserved zeros
+     */
+    fun buildMusicInfoFrame(
+        title: String,
+        artist: String = "",
+        album: String = "",
+        elapsedSeconds: Int = 0,
+        durationSeconds: Int = 0,
+        playStatus: Int = 0
+    ): ByteArray {
+        val b = ByteArray(MUSIC_INFO_PACKET_SIZE)
+        b[0] = 1
+
+        writeUtf8Field32(b, lenIndex = 1, dataOffset = 2, value = sanitizeAscii(title, MAX_NAME_LEN))
+        writeUtf8Field32(b, lenIndex = 34, dataOffset = 35, value = sanitizeAscii(artist, MAX_NAME_LEN))
+        writeUtf8Field32(b, lenIndex = 67, dataOffset = 68, value = sanitizeAscii(album, MAX_NAME_LEN))
+
+        val elapsed = elapsedSeconds.coerceIn(0, 0xFFFF)
+        b[100] = ((elapsed ushr 8) and 0xFF).toByte()
+        b[101] = (elapsed and 0xFF).toByte()
+
+        val duration = durationSeconds.coerceIn(0, 0xFFFF)
+        b[102] = ((duration ushr 8) and 0xFF).toByte()
+        b[103] = (duration and 0xFF).toByte()
+
+        b[104] = playStatus.coerceIn(0, 2).toByte()
+        return b
+    }
+
+    /**
+     * Parses characteristic 0a10 control notifications/reads (18B LCD or 20..26B TFT).
+     */
+    fun parseControlFrame(b: ByteArray): OtcControlFrame? {
+        if (b.size < 18) return null
+        val b0 = b[0].toInt() and 0xFF
+        return OtcControlFrame(
+            volumeToSet = b0 and 0x0F,
+            dialSource = (b0 ushr 6) and 0x03,
+            callAccept = b[1].toInt() and 0xFF,
+            callReject = b[2].toInt() and 0xFF,
+            callRejectWithSms = b[3].toInt() and 0xFF,
+            takeMeHome = b[5].toInt() and 0xFF,
+            resumeSong = b[6].toInt() and 0xFF,
+            pauseSong = b[7].toInt() and 0xFF,
+            skipToNext = b[8].toInt() and 0xFF,
+            skipToPrev = b[9].toInt() and 0xFF,
+            stopSong = b[10].toInt() and 0xFF,
+            missedCallGet = b[11].toInt() and 0xFF,
+            alertGet = b[12].toInt() and 0xFF,
+            launchMediaPlayer = b[13].toInt() and 0xFF,
+            selectPlaylistSongReq = b[14].toInt() and 0xFF,
+            selectedPlaylistSong = b[15].toInt() and 0xFF,
+            dialIndex = (b[16].toInt() and 0xFF).coerceIn(0, 4),
+            dialTxn = b[17].toInt() and 0xFF
+        )
+    }
+
+    private fun writeUtf8Field32(dest: ByteArray, lenIndex: Int, dataOffset: Int, value: String) {
+        if (value.isEmpty()) return
+        val bytes = value.toByteArray(StandardCharsets.UTF_8)
+        val len = bytes.size.coerceAtMost(MAX_NAME_LEN)
+        dest[lenIndex] = len.toByte()
+        System.arraycopy(bytes, 0, dest, dataOffset, len)
+    }
+
+    private fun transliterateAscii(input: String?): String {
+        if (input.isNullOrBlank()) return ""
+        val normalized = Normalizer.normalize(input, Normalizer.Form.NFD)
+        return normalized.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+    }
+
     private fun sanitizeAscii(input: String?, maxLength: Int): String {
         if (input.isNullOrBlank()) return ""
-        val cleaned = input.replace(Regex("[^\\x20-\\x7E]"), " ").trim()
+        val cleaned = transliterateAscii(input).replace(Regex("[^\\x20-\\x7E]"), " ").trim()
         return if (cleaned.length > maxLength) cleaned.substring(0, maxLength) else cleaned
     }
 

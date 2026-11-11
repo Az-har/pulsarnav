@@ -51,7 +51,12 @@ class PhoneTelemetryManager private constructor(private val context: Context) {
     private val _telemetryState = MutableStateFlow(TelemetryState())
     val telemetryState: StateFlow<TelemetryState> = _telemetryState
 
-    private var isInitialized = false
+    private var isReceiverRegistered = false
+    private var isSignalListenerRegistered = false
+    private var isHeartbeatRunning = false
+    private var registeredTelephonyCallback: Any? = null
+    @Suppress("DEPRECATION")
+    private var registeredPhoneStateListener: PhoneStateListener? = null
 
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, intent: Intent?) {
@@ -80,18 +85,49 @@ class PhoneTelemetryManager private constructor(private val context: Context) {
     }
 
     fun initialize() {
-        if (isInitialized) return
-        isInitialized = true
+        // Register Battery Receiver once
+        if (!isReceiverRegistered) {
+            val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+            ContextCompat.registerReceiver(context, batteryReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            isReceiverRegistered = true
+        }
 
-        // Register Battery Receiver
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        context.registerReceiver(batteryReceiver, filter)
+        // Register Cellular Signal Listener (can be retried after READ_PHONE_STATE is granted)
+        if (!isSignalListenerRegistered) {
+            setupSignalListener()
+        }
 
-        // Register Cellular Signal Listener
-        setupSignalListener()
+        // Start periodic sync heartbeat once
+        if (!isHeartbeatRunning) {
+            isHeartbeatRunning = true
+            mainHandler.post(heartbeatRunnable)
+        }
+    }
 
-        // Start periodic sync heartbeat
-        mainHandler.post(heartbeatRunnable)
+    fun release() {
+        mainHandler.removeCallbacks(heartbeatRunnable)
+        isHeartbeatRunning = false
+        if (isReceiverRegistered) {
+            try {
+                context.unregisterReceiver(batteryReceiver)
+            } catch (_: Exception) {}
+            isReceiverRegistered = false
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (registeredTelephonyCallback as? TelephonyCallback)?.let {
+                    telephonyManager?.unregisterTelephonyCallback(it)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                registeredPhoneStateListener?.let {
+                    telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE)
+                }
+            }
+        } catch (_: Exception) {}
+        registeredTelephonyCallback = null
+        registeredPhoneStateListener = null
+        isSignalListenerRegistered = false
     }
 
     private fun setupSignalListener() {
@@ -102,31 +138,31 @@ class PhoneTelemetryManager private constructor(private val context: Context) {
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                telephonyManager?.registerTelephonyCallback(
-                    context.mainExecutor,
-                    object : TelephonyCallback(), TelephonyCallback.SignalStrengthsListener {
-                        override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
-                            val bars = (signalStrength.level + 1).coerceIn(0, 5)
-                            _telemetryState.value = _telemetryState.value.copy(signalBars = bars)
-                            pushTelemetryToCluster()
-                        }
+                val callback = object : TelephonyCallback(), TelephonyCallback.SignalStrengthsListener {
+                    override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
+                        val bars = (signalStrength.level + 1).coerceIn(0, 5)
+                        _telemetryState.value = _telemetryState.value.copy(signalBars = bars)
+                        pushTelemetryToCluster()
                     }
-                )
+                }
+                telephonyManager?.registerTelephonyCallback(context.mainExecutor, callback)
+                registeredTelephonyCallback = callback
             } else {
                 @Suppress("DEPRECATION")
-                telephonyManager?.listen(
-                    object : PhoneStateListener() {
-                        @Deprecated("Deprecated in Java")
-                        override fun onSignalStrengthsChanged(signalStrength: SignalStrength?) {
-                            val level = signalStrength?.level ?: 3
-                            val bars = (level + 1).coerceIn(0, 5)
-                            _telemetryState.value = _telemetryState.value.copy(signalBars = bars)
-                            pushTelemetryToCluster()
-                        }
-                    },
-                    PhoneStateListener.LISTEN_SIGNAL_STRENGTHS
-                )
+                val listener = object : PhoneStateListener() {
+                    @Deprecated("Deprecated in Java")
+                    override fun onSignalStrengthsChanged(signalStrength: SignalStrength?) {
+                        val level = signalStrength?.level ?: 3
+                        val bars = (level + 1).coerceIn(0, 5)
+                        _telemetryState.value = _telemetryState.value.copy(signalBars = bars)
+                        pushTelemetryToCluster()
+                    }
+                }
+                @Suppress("DEPRECATION")
+                telephonyManager?.listen(listener, PhoneStateListener.LISTEN_SIGNAL_STRENGTHS)
+                registeredPhoneStateListener = listener
             }
+            isSignalListenerRegistered = true
         } catch (e: Exception) {
             Log.w(TAG, "Signal strength listener registration failed: ${e.message}")
         }
@@ -134,6 +170,7 @@ class PhoneTelemetryManager private constructor(private val context: Context) {
 
     private fun pushTelemetryToCluster() {
         if (!com.pulsarnav.app.data.AppSettings.getInstance(context).isTelemetrySyncEnabled) return
+        if (!bleManager.isLinkReady) return
         val state = _telemetryState.value
         bleManager.updateTelemetry(
             batteryPercent = state.batteryPercent,

@@ -50,8 +50,13 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile
+    private var activeNavKey: String? = null
+    @Volatile
+    private var activeNavPackage: String? = null
 
     private val revertToNavigationRunnable = Runnable {
+        _lastWhatsAppAlert.value = null
         val activeStep = _currentNavStep.value
         val bleManager = BajajBleManager.getInstance(applicationContext)
         if (activeStep != null) {
@@ -141,6 +146,8 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
             iconObj = iconObj
         ) ?: return
 
+        activeNavKey = sbn.key
+        activeNavPackage = sbn.packageName
         _currentNavStep.value = parsedStep
 
         Log.d(TAG, "[$sourceName] TBT: ${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m on ${parsedStep.streetName} (ETA: ${parsedStep.etaHour}:${parsedStep.etaMinute})")
@@ -155,6 +162,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
     }
 
     private fun isNavigationNotification(n: Notification, ex: Bundle): Boolean {
+        if ((n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return false
         if (Notification.CATEGORY_NAVIGATION == n.category) return true
         if (n.category?.contains("nav", ignoreCase = true) == true) return true
         if (ex.containsKey("android.ongoingActivityNoti.primaryInfo")) return true
@@ -170,9 +178,8 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
                     channelId.contains("projection")
                 )) return true
 
-        if ((n.flags and Notification.FLAG_ONGOING_EVENT) != 0 &&
-            (ex.containsKey(Notification.EXTRA_TITLE) || ex.containsKey(Notification.EXTRA_TEXT))) return true
-        return ex.containsKey("android.subText")
+        return (n.flags and Notification.FLAG_ONGOING_EVENT) != 0 &&
+            (ex.containsKey(Notification.EXTRA_TITLE) || ex.containsKey(Notification.EXTRA_TEXT))
     }
 
     private fun extractIconObject(notification: Notification, ex: Bundle): Any? {
@@ -232,6 +239,15 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         val pkg = sbn?.packageName ?: return
         if (pkg == GOOGLE_MAPS_PACKAGE || pkg == WAZE_PACKAGE || pkg == ANDROID_AUTO_PACKAGE) {
+            val key = sbn.key
+            val matchesTrackedKey = activeNavKey != null && key == activeNavKey
+            val matchesFallbackPkg = activeNavKey == null && pkg == activeNavPackage &&
+                (sbn.notification?.let { isNavigationNotification(it, it.extras ?: Bundle.EMPTY) } == true)
+            if (!matchesTrackedKey && !matchesFallbackPkg) {
+                return
+            }
+            activeNavKey = null
+            activeNavPackage = null
             _currentNavStep.value = null
             Log.i(TAG, "Navigation session ended ($pkg) -> sending stop frame")
             val bleManager = BajajBleManager.getInstance(applicationContext)

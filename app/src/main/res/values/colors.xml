@@ -55,17 +55,17 @@
     <color name="text_secondary">#475569</color>
     <color name="text_tertiary">#64748B</color>
 
-    <!-- Status Accents -->
-    <color name="status_connected">#22C55E</color>
-    <color name="status_connected_subtle">#132B1C</color>
-    <color name="status_connected_border">#1D4A2B</color>
+    <!-- Status Accents (Light Mode Defaults; Dark Mode in values-night) -->
+    <color name="status_connected">#16A34A</color>
+    <color name="status_connected_subtle">#DCFCE7</color>
+    <color name="status_connected_border">#86EFAC</color>
 
-    <color name="status_scanning">#F59E0B</color>
-    <color name="status_scanning_subtle">#2D2012</color>
-    <color name="status_scanning_border">#4E3517</color>
+    <color name="status_scanning">#D97706</color>
+    <color name="status_scanning_subtle">#FEF3C7</color>
+    <color name="status_scanning_border">#FCD34D</color>
 
     <color name="status_disconnected">#9E1B32</color>
-    <color name="status_disconnected_subtle">#2C1218</color>
+    <color name="status_disconnected_subtle">#FEE2E2</color>
 
     <!-- Material Design 3 Mapping -->
     <color name="primary">#9E1B32</color>

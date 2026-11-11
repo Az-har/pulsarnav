@@ -32,5 +32,5 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      - name: Compile and Test
-        run: ./gradlew assembleRelease test --stacktrace
+      - name: Compile, Lint and Test
+        run: ./gradlew assembleRelease testDebugUnitTest lintDebug --stacktrace

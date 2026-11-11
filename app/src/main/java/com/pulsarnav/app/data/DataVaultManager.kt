@@ -37,12 +37,19 @@ data class VaultImportSummary(
     val totalOdometerKm: Double
 )
 
+class VaultPassphraseRequiredException : Exception("This .pnav backup is encrypted. Enter your passphrase to decrypt.")
+
 class DataVaultManager private constructor(private val context: Context) {
 
     companion object {
         private const val TAG = "DataVaultManager"
-        const val VAULT_SCHEMA_VERSION = 1
+        const val VAULT_SCHEMA_VERSION = 2
         const val QR_MAGIC_HEADER = "PNAV_SETUP"
+        private val EXCLUDED_SETTINGS_KEYS = setOf(
+            AppSettings.KEY_DOC_RC_PATH,
+            AppSettings.KEY_DOC_INSURANCE_PATH,
+            AppSettings.KEY_DOC_PUC_PATH
+        )
 
         @Volatile
         private var instance: DataVaultManager? = null
@@ -79,10 +86,10 @@ class DataVaultManager private constructor(private val context: Context) {
         }
         root.put("header", header)
 
-        // 1. AppSettings
+        // 1. AppSettings (exclude device-local filesystem paths)
         val settingsObj = JSONObject()
         for ((key, value) in settings.getAllSettingsMap()) {
-            if (value != null) {
+            if (value != null && key !in EXCLUDED_SETTINGS_KEYS) {
                 settingsObj.put(key, value)
             }
         }
@@ -97,6 +104,7 @@ class DataVaultManager private constructor(private val context: Context) {
                 put("odometerKm", f.odometerKm)
                 put("liters", f.liters)
                 put("totalCostInr", f.totalCostInr)
+                put("isFullTank", f.isFullTank)
                 if (f.calculatedKmpl != null) put("calculatedKmpl", f.calculatedKmpl)
             }
             fuelArray.put(fObj)
@@ -167,14 +175,22 @@ class DataVaultManager private constructor(private val context: Context) {
     }
 
     /**
-     * Writes the vault to a timestamped file in cacheDir/vault/ and returns it.
+     * Writes the vault to a timestamped `.pnav` (AES-256-GCM encrypted when passphrase supplied)
+     * or `.pnav.json` file in cacheDir/vault/, pruning stale cached exports first.
      */
-    fun exportVaultToFile(): File {
+    fun exportVaultToFile(passphrase: String? = null): File {
         val vaultDir = File(context.cacheDir, "vault").apply { mkdirs() }
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val file = File(vaultDir, "pulsarnav_vault_$timeStamp.pnav.json")
+        vaultDir.listFiles()?.forEach { oldFile ->
+            if (oldFile.isFile) oldFile.delete()
+        }
+        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val json = exportVaultJson()
+        val encrypted = !passphrase.isNullOrBlank()
+        val payload = if (encrypted) VaultCrypto.encrypt(json, passphrase!!) else json
+        val ext = if (encrypted) "pnav" else "pnav.json"
+        val file = File(vaultDir, "pulsarnav_vault_$timeStamp.$ext")
         FileOutputStream(file).use { out ->
-            out.write(exportVaultJson().toByteArray(Charsets.UTF_8))
+            out.write(payload.toByteArray(Charsets.UTF_8))
         }
         return file
     }
@@ -188,13 +204,18 @@ class DataVaultManager private constructor(private val context: Context) {
             "${context.packageName}.fileprovider",
             file
         )
+        val mime = if (file.name.endsWith(".pnav", ignoreCase = true)) {
+            "application/octet-stream"
+        } else {
+            "application/json"
+        }
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/json"
+            type = mime
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, "PulsarNav Data Vault Backup")
             putExtra(
                 Intent.EXTRA_TEXT,
-                "PulsarNav Data Vault backup for ${settings.bikeName}. Open this file on your phone in PulsarNav to restore."
+                "PulsarNav Data Vault backup for ${settings.bikeName}. Open this file in PulsarNav to restore."
             )
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -205,8 +226,27 @@ class DataVaultManager private constructor(private val context: Context) {
     // 2. FULL VAULT IMPORT & RESTORE
     // =========================================================================
 
+    fun isEncryptedBackup(rawContent: String): Boolean = VaultCrypto.isEncryptedPayload(rawContent)
+
     /**
-     * Restores all data from a vault JSON string.
+     * Imports either an AES-256-GCM encrypted `.pnav` backup (using `passphrase`)
+     * or a legacy plaintext `.pnav.json` backup.
+     */
+    fun importVaultFromInput(rawContent: String, passphrase: String? = null): Result<VaultImportSummary> {
+        if (VaultCrypto.isEncryptedPayload(rawContent)) {
+            if (passphrase.isNullOrBlank()) {
+                return Result.failure(VaultPassphraseRequiredException())
+            }
+            val decrypted = VaultCrypto.decrypt(rawContent, passphrase).getOrElse { err ->
+                return Result.failure(err)
+            }
+            return importVaultFromJson(decrypted)
+        }
+        return importVaultFromJson(rawContent)
+    }
+
+    /**
+     * Restores all data from a plaintext vault JSON string.
      */
     fun importVaultFromJson(jsonString: String): Result<VaultImportSummary> {
         return try {
@@ -229,7 +269,9 @@ class DataVaultManager private constructor(private val context: Context) {
                 val keys = settingsObj.keys()
                 while (keys.hasNext()) {
                     val k = keys.next()
-                    map[k] = settingsObj.get(k)
+                    if (k !in EXCLUDED_SETTINGS_KEYS) {
+                        map[k] = settingsObj.get(k)
+                    }
                 }
                 settings.restoreSettingsMap(map)
             }
@@ -248,7 +290,8 @@ class DataVaultManager private constructor(private val context: Context) {
                             odometerKm = o.optDouble("odometerKm", 0.0),
                             liters = o.optDouble("liters", 0.0),
                             totalCostInr = o.optDouble("totalCostInr", 0.0),
-                            calculatedKmpl = if (o.has("calculatedKmpl") && !o.isNull("calculatedKmpl")) o.optDouble("calculatedKmpl") else null
+                            calculatedKmpl = if (o.has("calculatedKmpl") && !o.isNull("calculatedKmpl")) o.optDouble("calculatedKmpl") else null,
+                            isFullTank = o.optBoolean("isFullTank", true)
                         )
                     )
                 }
@@ -355,6 +398,7 @@ class DataVaultManager private constructor(private val context: Context) {
                 )
             }
 
+            settings.isSetupCompleted = true
             val displayRiderName = settings.riderName.ifBlank { settings.bikeName.ifBlank { "Active Rider" } }
             Result.success(
                 VaultImportSummary(
@@ -398,6 +442,7 @@ class DataVaultManager private constructor(private val context: Context) {
             put("cc", settings.selectedCountryCode)
             put("fpr", settings.petrolPricePerLiter)
             put("dm", settings.isDarkMode)
+            put("ac", settings.isAutoConnectEnabled)
             put("odo", maintenanceManager.status.value.totalOdometerKm)
             put("dte", settings.projectedDteKm)
         }
@@ -421,12 +466,14 @@ class DataVaultManager private constructor(private val context: Context) {
         // Obsidian card background (#1C1B20) with crisp white QR modules (#F8FAFC)
         val colorDark = Color.parseColor("#F8FAFC")
         val colorLight = Color.parseColor("#1C1B20")
-
-        for (x in 0 until width) {
-            for (y in 0 until height) {
-                bitmap.setPixel(x, y, if (matrix.get(x, y)) colorDark else colorLight)
+        val pixels = IntArray(width * height)
+        for (y in 0 until height) {
+            val rowOffset = y * width
+            for (x in 0 until width) {
+                pixels[rowOffset + x] = if (matrix.get(x, y)) colorDark else colorLight
             }
         }
+        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
         return bitmap
     }
 
@@ -440,23 +487,34 @@ class DataVaultManager private constructor(private val context: Context) {
                 return Result.failure(IllegalArgumentException("Not a valid PulsarNav Migration QR code."))
             }
 
-            if (obj.has("r")) settings.riderName = obj.getString("r")
-            if (obj.has("p")) settings.riderPhone = obj.getString("p")
-            if (obj.has("bg")) settings.riderBloodGroup = obj.getString("bg")
-            if (obj.has("in")) settings.emergencyContactName = obj.getString("in")
-            if (obj.has("ip")) settings.emergencyContactPhone = obj.getString("ip")
-            if (obj.has("mn")) settings.medicalNotes = obj.getString("mn")
-            if (obj.has("bn")) settings.bikeName = obj.getString("bn")
-            if (obj.has("mac")) settings.lastConnectedBikeMac = obj.getString("mac")
-            if (obj.has("reg")) settings.bikeRegNumber = obj.getString("reg")
-            if (obj.has("th")) settings.appTheme = obj.getString("th")
-            if (obj.has("ha")) settings.homeAddress = obj.getString("ha")
-            if (obj.has("wa")) settings.workAddress = obj.getString("wa")
-            if (obj.has("pnav")) settings.preferredNavApp = obj.getString("pnav")
-            if (obj.has("mid")) settings.selectedModelId = obj.getString("mid")
-            if (obj.has("cc")) settings.selectedCountryCode = obj.getString("cc")
-            if (obj.has("fpr")) settings.petrolPricePerLiter = obj.getDouble("fpr")
-            if (obj.has("dm")) settings.isDarkMode = obj.getBoolean("dm")
+            fun JSONObject.optNonNullString(key: String): String? =
+                if (has(key) && !isNull(key)) getString(key) else null
+
+            val mid = obj.optNonNullString("mid")
+            val cc = obj.optNonNullString("cc")
+            if (mid != null && cc != null) {
+                settings.applyBikeAndCountrySelection(mid, cc)
+            } else {
+                if (mid != null) settings.selectedModelId = mid
+                if (cc != null) settings.selectedCountryCode = cc
+            }
+
+            obj.optNonNullString("r")?.let { settings.riderName = it }
+            obj.optNonNullString("p")?.let { settings.riderPhone = it }
+            obj.optNonNullString("bg")?.let { settings.riderBloodGroup = it }
+            obj.optNonNullString("in")?.let { settings.emergencyContactName = it }
+            obj.optNonNullString("ip")?.let { settings.emergencyContactPhone = it }
+            obj.optNonNullString("mn")?.let { settings.medicalNotes = it }
+            obj.optNonNullString("bn")?.let { settings.bikeName = it }
+            obj.optNonNullString("mac")?.let { settings.lastConnectedBikeMac = it }
+            obj.optNonNullString("reg")?.let { settings.bikeRegNumber = it }
+            obj.optNonNullString("th")?.let { settings.appTheme = it }
+            obj.optNonNullString("ha")?.let { settings.homeAddress = it }
+            obj.optNonNullString("wa")?.let { settings.workAddress = it }
+            obj.optNonNullString("pnav")?.let { settings.preferredNavApp = it }
+            if (obj.has("fpr") && !obj.isNull("fpr")) settings.petrolPricePerLiter = obj.getDouble("fpr")
+            if (obj.has("dm") && !obj.isNull("dm")) settings.isDarkMode = obj.getBoolean("dm")
+            if (obj.has("ac") && !obj.isNull("ac")) settings.isAutoConnectEnabled = obj.getBoolean("ac")
 
             val odo = obj.optDouble("odo", -1.0)
             if (odo > 0) maintenanceManager.setOdometer(odo)
@@ -464,6 +522,7 @@ class DataVaultManager private constructor(private val context: Context) {
             val dte = obj.optInt("dte", -1)
             if (dte > 0) settings.projectedDteKm = dte
 
+            settings.isSetupCompleted = true
             Result.success("Profile restored for ${settings.riderName} (${settings.bikeName})")
         } catch (e: Exception) {
             Result.failure(e)

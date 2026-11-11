@@ -48,12 +48,16 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.android.material.snackbar.Snackbar
 import com.pulsarnav.app.data.DataVaultManager
+import com.pulsarnav.app.data.VaultPassphraseRequiredException
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import android.webkit.MimeTypeMap
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -80,30 +84,17 @@ import com.pulsarnav.app.telemetry.PhoneTelemetryManager
 import com.pulsarnav.app.telephony.CallManager
 import com.pulsarnav.app.tracking.RideTracker
 import com.pulsarnav.app.tracking.Trip
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-
-data class CockpitTheme(
-    val id: String,
-    val name: String,
-    val displayName: String,
-    val isLight: Boolean,
-    val backgroundColor: Int,
-    val surfaceColor: Int,
-    val cardColor: Int,
-    val cardBorderColor: Int,
-    val textPrimaryColor: Int,
-    val textSecondaryColor: Int,
-    val textTertiaryColor: Int,
-    val primaryColor: Int,
-    val onPrimaryColor: Int,
-    val accentColor: Int,
-    val subtleColor: Int,
-    val borderColor: Int
-)
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
+
+    private companion object {
+        private const val MAX_VAULT_IMPORT_BYTES = 5 * 1024 * 1024
+    }
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var bleManager: BajajBleManager
@@ -121,6 +112,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingDocType: String? = null
     private var activeGloveboxSheet: BottomSheetDialog? = null
     private var activeGloveboxView: View? = null
+    private var activeServiceHistoryDialog: AlertDialog? = null
     private var roundaboutTestState = 0
     private val documentPicker = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -172,6 +164,20 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (binding.scrollFuel.visibility == View.VISIBLE ||
+                    binding.scrollSupport.visibility == View.VISIBLE ||
+                    binding.scrollSettings.visibility == View.VISIBLE
+                ) {
+                    binding.bottomNav.selectedItemId = R.id.nav_home
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
 
         // Initialize Managers
         bleManager = BajajBleManager.getInstance(this)
@@ -271,7 +277,12 @@ class MainActivity : AppCompatActivity() {
                 addAction(LocationManager.MODE_CHANGED_ACTION)
             }
         }
-        registerReceiver(hardwareStateReceiver, filter)
+        ContextCompat.registerReceiver(
+            this,
+            hardwareStateReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         updateHardwareReadinessUi()
     }
 
@@ -305,32 +316,19 @@ class MainActivity : AppCompatActivity() {
         intent?.let { handleIntentActions(it) }
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (binding.scrollFuel.visibility == View.VISIBLE ||
-            binding.scrollSupport.visibility == View.VISIBLE ||
-            binding.scrollSettings.visibility == View.VISIBLE
-        ) {
-            binding.bottomNav.selectedItemId = R.id.nav_home
-        } else {
-            @Suppress("DEPRECATION")
-            super.onBackPressed()
-        }
-    }
-
     private fun handleIntentActions(intent: Intent) {
         val action = intent.action ?: return
         when (action) {
             "com.pulsarnav.action.NAV_HOME" -> {
                 val addr = appSettings.homeAddress
-                launchNavigationTo(if (addr.isNotBlank() && addr != "Home") addr else "Home")
+                launchNavigationTo(if (addr.isNotBlank() && !addr.equals("Home", ignoreCase = true)) addr else "Home")
             }
             "com.pulsarnav.action.NAV_WORK" -> {
                 val addr = appSettings.workAddress
-                launchNavigationTo(if (addr.isNotBlank() && addr != "Work") addr else "Work")
+                launchNavigationTo(if (addr.isNotBlank() && !addr.equals("Work", ignoreCase = true)) addr else "Work")
             }
             "com.pulsarnav.action.FIND_BIKE" -> {
-                showFeedback("Bike locator feature removed")
+                openParkedBikeLocation()
             }
             "com.pulsarnav.action.LOG_REFUEL" -> {
                 showAddFuelDialog()
@@ -346,6 +344,35 @@ class MainActivity : AppCompatActivity() {
         intent.data = null
         setIntent(Intent(this, MainActivity::class.java))
     }
+
+    private fun openParkedBikeLocation() {
+        val primaryIntent = parkingManager.getWalkingDirectionsIntent()
+        val fallbackIntent = parkingManager.getFallbackWalkingDirectionsIntent()
+        val parked = parkingManager.lastParkedLocation.value
+        if (primaryIntent == null || parked == null) {
+            showFeedback("No parked bike location saved yet")
+            return
+        }
+        try {
+            startActivity(primaryIntent)
+            showFeedback("Walking directions to ${parked.address}")
+        } catch (_: Exception) {
+            if (fallbackIntent != null) {
+                try {
+                    startActivity(fallbackIntent)
+                    showFeedback("Opening parked location: ${parked.address}")
+                } catch (_: Exception) {
+                    showFeedback("Unable to open Maps for parked location", isAlert = true)
+                }
+            }
+        }
+    }
+
+    private fun parseDecimal(raw: CharSequence?): Double? =
+        raw?.toString()?.trim()?.replace(',', '.')?.toDoubleOrNull()
+
+    private fun formatDecimal(value: Number, decimals: Int = 1): String =
+        String.format(Locale.US, "%.${decimals}f", value.toDouble())
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
@@ -482,32 +509,34 @@ class MainActivity : AppCompatActivity() {
         val fuelLiters = appSettings.fuelLevelLiters
         val model = appSettings.getActiveBikeProfile()
         val tankMax = model.tankCapacityLiters
+        val reserveMax = model.reserveCapacityLiters
 
         if (dteKm <= 0 && fuelPercent <= 0) {
             binding.tvProjectedRange.text = "--"
             binding.tvDteSubtext.text = "Tap to sync"
-            binding.tvFuelLevelText.text = "0% Tank Level • 0.0L / ${"%.1f".format(tankMax)}L"
+            binding.tvFuelLevelText.text = "0% Tank Level • 0.0L / ${formatDecimal(tankMax)}L"
             binding.progressFuelLevel.progress = 0
         } else {
             binding.tvProjectedRange.text = if (dteKm > 0) dteKm.toString() else "--"
-            binding.tvDteSubtext.text = "~${"%.1f".format(fuelLiters)}L in tank"
-            binding.tvFuelLevelText.text = "${fuelPercent}% Tank Level • ${"%.1f".format(fuelLiters)}L / ${"%.1f".format(tankMax)}L"
+            binding.tvDteSubtext.text = "~${formatDecimal(fuelLiters.toDouble())}L in tank"
+            binding.tvFuelLevelText.text = "${fuelPercent}% Tank Level • ${formatDecimal(fuelLiters.toDouble())}L / ${formatDecimal(tankMax)}L"
             binding.progressFuelLevel.progress = fuelPercent
         }
 
         // Unified Odometer & Mileage metrics across Home and Account tabs
         val totalOdo = maintenanceManager.status.value.totalOdometerKm
-        binding.tvHomeOdometer.text = "%.1f".format(totalOdo)
-        binding.tvAccountOdometer.text = "%.1f km".format(totalOdo)
+        binding.tvHomeOdometer.text = formatDecimal(totalOdo)
+        binding.tvAccountOdometer.text = "${formatDecimal(totalOdo)} km"
 
         val fuelStats = fuelLogManager.stats.value
         if (fuelStats.averageKmpl > 0.0) {
-            binding.tvHomeMileage.text = "%.1f km/l avg".format(fuelStats.averageKmpl)
+            binding.tvHomeMileage.text = "${formatDecimal(fuelStats.averageKmpl)} km/l avg"
         } else {
             binding.tvHomeMileage.text = "-- km/l"
         }
 
-        binding.tvTankSpecs.text = "%.0fL Tank Capacity • 2.4L Res".format(tankMax)
+        binding.tvTankSpecs.text = "${formatDecimal(tankMax)}L Tank Capacity • ${formatDecimal(reserveMax)}L Res"
+        binding.tvTankReserveNote.text = "Reserve triggers below ${formatDecimal(reserveMax)}L"
         updateSyncTimeDisplay()
     }
 
@@ -520,7 +549,7 @@ class MainActivity : AppCompatActivity() {
         val reg = if (appSettings.bikeRegNumber.isNotBlank()) appSettings.bikeRegNumber else "Add Number Plate"
         binding.tvBikeReg.text = "$reg • ${country.labelTag} ${country.name}"
         binding.tvProfileName.text = appSettings.riderName.ifBlank { "Rider Profile" }
-        binding.tvTankSpecs.text = "%.0fL Tank Capacity • 2.4L Res".format(model.tankCapacityLiters)
+        binding.tvTankSpecs.text = "${formatDecimal(model.tankCapacityLiters)}L Tank Capacity • ${formatDecimal(model.reserveCapacityLiters)}L Res"
     }
 
     private fun updateDocumentsSummary() {
@@ -564,9 +593,10 @@ class MainActivity : AppCompatActivity() {
         val records = maintenanceManager.getServiceHistory()
         val totalServiceSpent = maintenanceManager.getTotalServiceCost()
         val currency = appSettings.currentCurrencySymbol
+        val serviceInterval = MaintenanceManager.SERVICE_INTERVAL_KM
 
-        binding.tvSupportTotalInvested.text = "%s%.0f".format(currency, totalServiceSpent)
-        binding.tvSupportServiceRecordsCount.text = "%d service(s) logged".format(records.size)
+        binding.tvSupportTotalInvested.text = String.format(Locale.US, "%s%.0f", currency, totalServiceSpent)
+        binding.tvSupportServiceRecordsCount.text = String.format(Locale.US, "%d service(s) logged", records.size)
 
         val maint = maintenanceManager.status.value
         if (maint.isServiceOverdue) {
@@ -577,19 +607,18 @@ class MainActivity : AppCompatActivity() {
             binding.progressSupportService.progress = 100
             binding.tvSupportHealthNote.text = "Schedule periodic service to maintain engine longevity"
         } else {
-            binding.tvSupportServiceRemaining.text = "%.0f".format(maint.serviceRemainingKm.coerceAtLeast(0.0))
+            binding.tvSupportServiceRemaining.text = String.format(Locale.US, "%.0f", maint.serviceRemainingKm.coerceAtLeast(0.0))
             binding.tvSupportServiceRemainingUnit.visibility = View.VISIBLE
             binding.tvSupportServiceRemaining.setTextColor(currentTheme.accentColor)
 
-            val serviceInterval = 5000.0
             val serviceElapsed = (serviceInterval - maint.serviceRemainingKm.coerceIn(0.0, serviceInterval))
             val serviceProgress = ((serviceElapsed / serviceInterval) * 100).toInt().coerceIn(0, 100)
             binding.progressSupportService.progress = serviceProgress
             binding.tvServiceHistorySummary.text = "Periodic Service • $serviceProgress% of cycle elapsed"
-            binding.tvSupportHealthNote.text = "Next routine service due in %.0f km".format(maint.serviceRemainingKm.coerceAtLeast(0.0))
+            binding.tvSupportHealthNote.text = String.format(Locale.US, "Next routine service due in %.0f km", maint.serviceRemainingKm.coerceAtLeast(0.0))
         }
-        binding.tvSupportChainRemaining.text = "Chain Lube: %.0f km left".format(maint.chainLubeRemainingKm.coerceAtLeast(0.0))
-        binding.tvSupportServiceStatusPill.text = "5,000 km Cycle"
+        binding.tvSupportChainRemaining.text = String.format(Locale.US, "Chain Lube: %.0f km left", maint.chainLubeRemainingKm.coerceAtLeast(0.0))
+        binding.tvSupportServiceStatusPill.text = String.format(Locale.US, "%,.0f km Cycle", serviceInterval)
 
         updateBikeInvestmentDisplay()
     }
@@ -600,15 +629,29 @@ class MainActivity : AppCompatActivity() {
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_recalibrate_cluster, null)
         dialog.setContentView(sheetView)
 
+        val model = appSettings.getActiveBikeProfile()
+        val tankMax = model.tankCapacityLiters.toFloat().coerceAtLeast(1.0f)
+        val reserveL = model.reserveCapacityLiters.toFloat().coerceIn(0.5f, tankMax)
+        val quarterL = (tankMax * 0.25f)
+        val halfL = (tankMax * 0.50f)
+        val estMileage = fuelLogManager.stats.value.averageKmpl.takeIf { it > 0.0 } ?: 35.0
+
         val etDte = sheetView.findViewById<EditText>(R.id.etRecalibrateDte)
         val etOdo = sheetView.findViewById<EditText>(R.id.etRecalibrateOdo)
         val etFuel = sheetView.findViewById<EditText>(R.id.etRecalibrateFuelLiters)
+        val tvFuelSub = sheetView.findViewById<TextView>(R.id.tvRecalibrateFuelSubtitle)
         listOfNotNull(etDte, etOdo, etFuel).forEach { applyThemeToEditText(it) }
         val chipReserve = sheetView.findViewById<MaterialButton>(R.id.chipPresetReserve)
         val chipQuarter = sheetView.findViewById<MaterialButton>(R.id.chipPresetQuarter)
         val chipHalf = sheetView.findViewById<MaterialButton>(R.id.chipPresetHalf)
         val chipFull = sheetView.findViewById<MaterialButton>(R.id.chipPresetFull)
         val btnSave = sheetView.findViewById<MaterialButton>(R.id.btnSaveRecalibration)
+
+        tvFuelSub?.text = "Quick select from cluster fuel bars or enter liters (Total ${formatDecimal(tankMax.toDouble())}L)"
+        chipReserve?.text = "Reserve\n(${formatDecimal(reserveL.toDouble())}L)"
+        chipQuarter?.text = "1/4 Tank\n(${formatDecimal(quarterL.toDouble())}L)"
+        chipHalf?.text = "1/2 Tank\n(${formatDecimal(halfL.toDouble())}L)"
+        chipFull?.text = "Full\n(${formatDecimal(tankMax.toDouble())}L)"
 
         val currentOdo = maintenanceManager.status.value.totalOdometerKm
         val currentDte = appSettings.projectedDteKm
@@ -617,18 +660,18 @@ class MainActivity : AppCompatActivity() {
         } else {
             etDte?.setText("")
         }
-        etOdo?.setText(String.format(Locale.US, "%.1f", currentOdo))
-        etFuel?.setText(String.format(Locale.US, "%.1f", appSettings.fuelLevelLiters))
+        etOdo?.setText(formatDecimal(currentOdo))
+        etFuel?.setText(formatDecimal(appSettings.fuelLevelLiters.toDouble()))
 
         btnSave?.backgroundTintList = ColorStateList.valueOf(currentTheme.primaryColor)
         btnSave?.setTextColor(currentTheme.onPrimaryColor)
 
         val updatePresetChips = { selectedLiters: Float ->
             val presets = listOf(
-                chipReserve to 2.4f,
-                chipQuarter to 3.0f,
-                chipHalf to 6.0f,
-                chipFull to 12.0f
+                chipReserve to reserveL,
+                chipQuarter to quarterL,
+                chipHalf to halfL,
+                chipFull to tankMax
             )
             for ((chip, lit) in presets) {
                 if (chip != null) {
@@ -638,9 +681,9 @@ class MainActivity : AppCompatActivity() {
                         chip.strokeColor = ColorStateList.valueOf(currentTheme.accentColor)
                         chip.setTextColor(currentTheme.accentColor)
                     } else {
-                        chip.backgroundTintList = ContextCompat.getColorStateList(this, R.color.surface_card)
-                        chip.strokeColor = ContextCompat.getColorStateList(this, R.color.surface_border)
-                        chip.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+                        chip.backgroundTintList = ColorStateList.valueOf(currentTheme.cardColor)
+                        chip.strokeColor = ColorStateList.valueOf(currentTheme.cardBorderColor)
+                        chip.setTextColor(currentTheme.textSecondaryColor)
                     }
                 }
             }
@@ -648,44 +691,44 @@ class MainActivity : AppCompatActivity() {
 
         updatePresetChips(appSettings.fuelLevelLiters)
 
-        val autoFillDteIfEmpty = { suggestedDte: Int ->
+        val autoFillDteIfEmpty = { litersSelected: Float ->
             val current = etDte?.text?.toString()?.trim().orEmpty()
             if (current.isEmpty() || current == "0") {
-                etDte?.setText(suggestedDte.toString())
+                etDte?.setText((litersSelected * estMileage).roundToInt().toString())
             }
         }
 
         chipReserve?.setOnClickListener {
             provideHapticFeedback()
-            etFuel?.setText("2.4")
-            autoFillDteIfEmpty(80)
-            updatePresetChips(2.4f)
+            etFuel?.setText(formatDecimal(reserveL.toDouble()))
+            autoFillDteIfEmpty(reserveL)
+            updatePresetChips(reserveL)
         }
         chipQuarter?.setOnClickListener {
             provideHapticFeedback()
-            etFuel?.setText("3.0")
-            autoFillDteIfEmpty(105)
-            updatePresetChips(3.0f)
+            etFuel?.setText(formatDecimal(quarterL.toDouble()))
+            autoFillDteIfEmpty(quarterL)
+            updatePresetChips(quarterL)
         }
         chipHalf?.setOnClickListener {
             provideHapticFeedback()
-            etFuel?.setText("6.0")
-            autoFillDteIfEmpty(210)
-            updatePresetChips(6.0f)
+            etFuel?.setText(formatDecimal(halfL.toDouble()))
+            autoFillDteIfEmpty(halfL)
+            updatePresetChips(halfL)
         }
         chipFull?.setOnClickListener {
             provideHapticFeedback()
-            etFuel?.setText("12.0")
-            autoFillDteIfEmpty(420)
-            updatePresetChips(12.0f)
+            etFuel?.setText(formatDecimal(tankMax.toDouble()))
+            autoFillDteIfEmpty(tankMax)
+            updatePresetChips(tankMax)
         }
 
         btnSave?.setOnClickListener {
             provideHapticFeedback()
-            val enteredDte = etDte?.text?.toString()?.toIntOrNull() ?: appSettings.projectedDteKm
-            val enteredOdo = etOdo?.text?.toString()?.toDoubleOrNull() ?: currentOdo
-            val enteredLiters = (etFuel?.text?.toString()?.toFloatOrNull() ?: appSettings.fuelLevelLiters).coerceIn(0.0f, 12.0f)
-            val percent = ((enteredLiters / 12.0f) * 100).toInt().coerceIn(0, 100)
+            val enteredDte = (etDte?.text?.toString()?.trim()?.toIntOrNull() ?: appSettings.projectedDteKm).coerceAtLeast(0)
+            val enteredOdo = (parseDecimal(etOdo?.text) ?: currentOdo).coerceAtLeast(0.0)
+            val enteredLiters = ((parseDecimal(etFuel?.text)?.toFloat()) ?: appSettings.fuelLevelLiters).coerceIn(0.0f, tankMax)
+            val percent = ((enteredLiters / tankMax) * 100f).roundToInt().coerceIn(0, 100)
 
             appSettings.projectedDteKm = enteredDte
             appSettings.fuelLevelPercent = percent
@@ -695,7 +738,7 @@ class MainActivity : AppCompatActivity() {
             updateHeroRangeDisplay()
 
             dialog.dismiss()
-            showFeedback("Cluster synced: ${enteredDte} km DTE • ${String.format(Locale.US, "%.1f", enteredOdo)} km ODO")
+            showFeedback("Cluster synced: $enteredDte km DTE • ${formatDecimal(enteredOdo)} km ODO")
         }
 
         dialog.show()
@@ -813,8 +856,13 @@ class MainActivity : AppCompatActivity() {
         // Call & WhatsApp simulation
         binding.btnSimulateCall.setOnClickListener {
             provideHapticFeedback()
-            callManager.simulateIncomingCall("Dad (Mobile)", "+91 98765 43210")
-            showFeedback("Simulating Incoming Call to Cluster")
+            if (callManager.callInfo.value.state == CallState.NO_CALL) {
+                callManager.simulateIncomingCall("Dad (Mobile)", "+91 98765 43210")
+                showFeedback("Simulating Incoming Call to Cluster (tap again to end)")
+            } else {
+                callManager.simulateEndCall()
+                showFeedback("Call Ended / Idle")
+            }
         }
 
         binding.btnSimulateWhatsApp.setOnClickListener {
@@ -828,8 +876,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSimulateMissedCall.setOnClickListener {
             provideHapticFeedback()
-            callManager.simulateEndCall()
-            showFeedback("Call Ended / Idle")
+            callManager.simulateMissedCall("Mom", "+91 98765 12345")
+            showFeedback("Simulating Missed Call Alert on Cluster")
         }
 
         // Edit Odometer
@@ -1105,7 +1153,7 @@ class MainActivity : AppCompatActivity() {
 
         val tvInfo = TextView(this).apply {
             text = "Edit your motorcycle registration and specs:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
             setPadding(0, 0, 0, 16)
         }
@@ -1181,7 +1229,7 @@ class MainActivity : AppCompatActivity() {
 
         val tvInfo = TextView(this).apply {
             text = "Edit your rider profile name and contact number:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
             setPadding(0, 0, 0, 16)
         }
@@ -1234,6 +1282,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showServiceHistoryDialog() {
+        activeServiceHistoryDialog?.dismiss()
+        activeServiceHistoryDialog = null
+
         val records = maintenanceManager.getServiceHistory()
         val odo = maintenanceManager.status.value.totalOdometerKm
         val currency = appSettings.currentCurrencySymbol
@@ -1245,13 +1296,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         val tvSummary = TextView(this).apply {
-            text = "Total Maintenance Investment: %s%.0f (%d services)\nNext Due at %.0f km • Tap to edit or delete:".format(
+            text = String.format(
+                Locale.US,
+                "Total Maintenance Investment: %s%.0f (%d services)\nNext Due at %.0f km • Tap to edit or delete:",
                 currency,
                 totalServiceSpent,
                 records.size,
                 odo + maintenanceManager.status.value.serviceRemainingKm
             )
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
             setPadding(0, 0, 0, 16)
         }
@@ -1260,7 +1313,7 @@ class MainActivity : AppCompatActivity() {
         if (records.isEmpty()) {
             val tvEmpty = TextView(this).apply {
                 text = "No service records logged yet.\nTap 'Add Service Record' below to track maintenance."
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                setTextColor(currentTheme.textTertiaryColor)
                 textSize = 13f
                 setPadding(10, 20, 10, 30)
             }
@@ -1294,7 +1347,7 @@ class MainActivity : AppCompatActivity() {
             val tvTitle = TextView(this).apply {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 text = rec.title
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+                setTextColor(currentTheme.textPrimaryColor)
                 textSize = 14f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
             }
@@ -1310,8 +1363,8 @@ class MainActivity : AppCompatActivity() {
             cardContent.addView(rowTop)
 
             val tvMeta = TextView(this).apply {
-                text = "${rec.date} • %.1f km".format(rec.odoKm)
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                text = "${rec.date} • ${formatDecimal(rec.odoKm)} km"
+                setTextColor(currentTheme.textTertiaryColor)
                 textSize = 11f
                 setPadding(0, 4, 0, 4)
             }
@@ -1330,11 +1383,11 @@ class MainActivity : AppCompatActivity() {
                     val tvItemName = TextView(this).apply {
                         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                         text = "• ${item.name}"
-                        setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+                        setTextColor(currentTheme.textSecondaryColor)
                         textSize = 12f
                     }
                     val tvItemCost = TextView(this).apply {
-                        text = if (item.cost > 0.0) "%s%.0f".format(currency, item.cost) else "--"
+                        text = if (item.cost > 0.0) String.format(Locale.US, "%s%.0f", currency, item.cost) else "--"
                         setTextColor(currentTheme.accentColor)
                         textSize = 12f
                         setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -1349,7 +1402,7 @@ class MainActivity : AppCompatActivity() {
             if (rec.notes.isNotBlank()) {
                 val tvNotes = TextView(this).apply {
                     text = rec.notes
-                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                    setTextColor(currentTheme.textTertiaryColor)
                     textSize = 11f
                     setPadding(0, 4, 0, 0)
                 }
@@ -1377,7 +1430,7 @@ class MainActivity : AppCompatActivity() {
             val btnDelete = MaterialButton(this).apply {
                 text = "Delete"
                 textSize = 11f
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.wine_red_light))
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_disconnected))
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 setOnClickListener {
                     provideHapticFeedback()
@@ -1386,7 +1439,7 @@ class MainActivity : AppCompatActivity() {
                     updateServiceHistorySummary()
                     updateBikeInvestmentDisplay()
                     showFeedback("Record deleted")
-                    showServiceHistoryDialog() // refresh dialog
+                    showServiceHistoryDialog()
                 }
             }
             rowActions.addView(btnDelete)
@@ -1398,7 +1451,7 @@ class MainActivity : AppCompatActivity() {
 
         val scrollView: View = ScrollView(this).apply { addView(layout) }
 
-        MaterialAlertDialogBuilder(this)
+        activeServiceHistoryDialog = MaterialAlertDialogBuilder(this)
             .setTitle("Service History & Records")
             .setView(scrollView)
             .setPositiveButton("Add Service Record") { _, _ ->
@@ -1406,7 +1459,15 @@ class MainActivity : AppCompatActivity() {
                 showAddOrEditServiceRecordDialog(null)
             }
             .setNegativeButton("Close", null)
-            .show()
+            .create()
+            .apply {
+                setOnDismissListener {
+                    if (activeServiceHistoryDialog === this) {
+                        activeServiceHistoryDialog = null
+                    }
+                }
+                show()
+            }
     }
 
     private fun showAddOrEditServiceRecordDialog(existing: com.pulsarnav.app.maintenance.ServiceRecord?) {
@@ -1486,7 +1547,7 @@ class MainActivity : AppCompatActivity() {
 
         val etOdo = createThemedEditText(
             hintText = "e.g. 14250.0",
-            initialText = if (isEdit) "%.1f".format(existing!!.odoKm) else "%.1f".format(currentOdo),
+            initialText = if (isEdit) formatDecimal(existing!!.odoKm) else formatDecimal(currentOdo),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
         layout.addView(etOdo)
@@ -1546,10 +1607,10 @@ class MainActivity : AppCompatActivity() {
 
         fun recalculateTotalCost() {
             val sum = rowHolders.sumOf {
-                it.etItemCost.text.toString().toDoubleOrNull() ?: 0.0
+                parseDecimal(it.etItemCost.text) ?: 0.0
             }
             if (sum > 0.0 || rowHolders.isNotEmpty()) {
-                etCost.setText("%s%.0f".format(appSettings.currentCurrencySymbol, sum))
+                etCost.setText(String.format(Locale.US, "%s%.0f", appSettings.currentCurrencySymbol, sum))
             }
         }
 
@@ -1572,7 +1633,7 @@ class MainActivity : AppCompatActivity() {
 
             val etItemCost = createThemedEditText(
                 hintText = "Cost (%s)".format(appSettings.currentCurrencySymbol),
-                initialText = if (itemCost > 0.0) "%.0f".format(itemCost) else "",
+                initialText = if (itemCost > 0.0) String.format(Locale.US, "%.0f", itemCost) else "",
                 inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             ).apply {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.1f).apply {
@@ -1590,7 +1651,7 @@ class MainActivity : AppCompatActivity() {
             val btnRemove = TextView(this).apply {
                 text = "✕"
                 textSize = 15f
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.wine_red_light))
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_disconnected))
                 setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
                 isClickable = true
                 isFocusable = true
@@ -1658,16 +1719,16 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Save Record") { _, _ ->
                 val title = etTitle.text.toString().trim()
                 val date = etDate.text.toString().trim()
-                val odoVal = etOdo.text.toString().toDoubleOrNull() ?: currentOdo
+                val odoVal = parseDecimal(etOdo.text) ?: currentOdo
 
                 val parsedItems = rowHolders.mapNotNull {
                     val name = it.etName.text.toString().trim()
-                    val c = it.etItemCost.text.toString().toDoubleOrNull() ?: 0.0
+                    val c = parseDecimal(it.etItemCost.text) ?: 0.0
                     if (name.isNotBlank()) com.pulsarnav.app.maintenance.ServiceItem(name, c) else null
                 }
                 val costStr = etCost.text.toString().trim().ifBlank {
                     val sum = parsedItems.sumOf { it.cost }
-                    "%s%.0f".format(appSettings.currentCurrencySymbol, sum)
+                    String.format(Locale.US, "%s%.0f", appSettings.currentCurrencySymbol, sum)
                 }
                 val extraNotes = etNotes.text.toString().trim()
 
@@ -1979,24 +2040,38 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveUploadedDocument(uri: Uri, docType: String?) {
         if (docType == null) return
+        var targetFile: File? = null
         try {
-            val contentResolver = contentResolver
             val mime = contentResolver.getType(uri) ?: "application/octet-stream"
-            val extension = if (mime.contains("pdf")) "pdf" else "jpg"
-            val docsDir = File(filesDir, "documents")
-            if (!docsDir.exists()) docsDir.mkdirs()
-            val targetFile = File(docsDir, "${docType}_${System.currentTimeMillis()}.$extension")
+            val mappedExt = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+            val extension = when {
+                !mappedExt.isNullOrBlank() && mappedExt.length <= 5 -> mappedExt.lowercase(Locale.US)
+                mime.contains("pdf", ignoreCase = true) -> "pdf"
+                mime.contains("png", ignoreCase = true) -> "png"
+                mime.contains("webp", ignoreCase = true) -> "webp"
+                else -> "jpg"
+            }
+            val docsDir = File(filesDir, "documents").apply { mkdirs() }
+            val createdFile = File(docsDir, "${docType}_${System.currentTimeMillis()}.$extension")
+            targetFile = createdFile
 
-            contentResolver.openInputStream(uri)?.use { input ->
-                targetFile.outputStream().use { output ->
-                    input.copyTo(output)
+            val input = contentResolver.openInputStream(uri)
+                ?: throw java.io.IOException("Unable to read selected document")
+            input.use { stream ->
+                createdFile.outputStream().use { output ->
+                    stream.copyTo(output)
                 }
             }
 
-            when (docType) {
-                "rc" -> appSettings.docRcPath = targetFile.absolutePath
-                "insurance" -> appSettings.docInsurancePath = targetFile.absolutePath
-                "puc" -> appSettings.docPucPath = targetFile.absolutePath
+            val oldPath = when (docType) {
+                "rc" -> appSettings.docRcPath.also { appSettings.docRcPath = createdFile.absolutePath }
+                "insurance" -> appSettings.docInsurancePath.also { appSettings.docInsurancePath = createdFile.absolutePath }
+                "puc" -> appSettings.docPucPath.also { appSettings.docPucPath = createdFile.absolutePath }
+                else -> null
+            }
+
+            if (!oldPath.isNullOrBlank() && oldPath != createdFile.absolutePath) {
+                File(oldPath).takeIf { it.exists() }?.delete()
             }
 
             recordSyncTime()
@@ -2005,6 +2080,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             showFeedback("Document uploaded successfully!")
         } catch (e: Exception) {
+            targetFile?.takeIf { it.exists() }?.delete()
             showFeedback("Failed to upload document: ${e.message}", isAlert = true)
         }
     }
@@ -2040,20 +2116,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRsaDialog() {
-        val options = arrayOf(
-            "Bajaj 24x7 RSA Helpline (1800 233 2453)",
-            "National Highway Assistance (1033)",
-            "Emergency Services (112)"
-        )
+        val country = appSettings.getActiveCountryProfile()
+        val entries = linkedMapOf<String, String>()
+        if (country.roadsideAssistance.isNotBlank()) {
+            entries[country.roadsideAssistance] = "Roadside Assistance (${country.roadsideAssistance})"
+        }
+        if (country.ambulanceNumber.isNotBlank()) {
+            entries.putIfAbsent(country.ambulanceNumber, "Ambulance / Medical (${country.ambulanceNumber})")
+        }
+        if (country.policeNumber.isNotBlank()) {
+            entries.putIfAbsent(country.policeNumber, "Police (${country.policeNumber})")
+        }
+        if (country.sosNumber.isNotBlank()) {
+            entries.putIfAbsent(country.sosNumber, "${country.name} Emergency SOS (${country.sosNumber})")
+        }
+        val phones = entries.keys.toList()
+        val options = entries.values.toTypedArray()
         MaterialAlertDialogBuilder(this)
-            .setTitle("Emergency Roadside Assistance")
+            .setTitle("Emergency Roadside Assistance (${country.name})")
             .setItems(options) { _, which ->
                 provideHapticFeedback()
-                val phone = when (which) {
-                    0 -> "18002332453"
-                    1 -> "1033"
-                    else -> "112"
-                }
+                val phone = phones.getOrNull(which) ?: country.sosNumber
                 val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))
                 try {
                     startActivity(intent)
@@ -2206,273 +2289,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun getThemeDefinition(themeKey: String, isLightMode: Boolean? = null): CockpitTheme {
         val isLight = isLightMode ?: if (::appSettings.isInitialized) !appSettings.isDarkMode else false
-        return if (isLight) {
-            when (themeKey) {
-                AppSettings.THEME_AMOLED -> CockpitTheme(
-                    AppSettings.THEME_AMOLED, "Pearl Minimal", "Pearl Minimal",
-                    isLight = true,
-                    backgroundColor = Color.parseColor("#F4F5F8"),
-                    surfaceColor = Color.parseColor("#FFFFFF"),
-                    cardColor = Color.parseColor("#FFFFFF"),
-                    cardBorderColor = Color.parseColor("#E2E8F0"),
-                    textPrimaryColor = Color.parseColor("#0F172A"),
-                    textSecondaryColor = Color.parseColor("#475569"),
-                    textTertiaryColor = Color.parseColor("#64748B"),
-                    primaryColor = Color.parseColor("#0F172A"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#0F172A"),
-                    subtleColor = Color.parseColor("#F1F5F9"),
-                    borderColor = Color.parseColor("#CBD5E1")
-                )
-                AppSettings.THEME_STEALTH -> CockpitTheme(
-                    AppSettings.THEME_STEALTH, "Stealth Platinum", "Stealth Platinum",
-                    isLight = true,
-                    backgroundColor = Color.parseColor("#F4F5F8"),
-                    surfaceColor = Color.parseColor("#FFFFFF"),
-                    cardColor = Color.parseColor("#FFFFFF"),
-                    cardBorderColor = Color.parseColor("#E2E8F0"),
-                    textPrimaryColor = Color.parseColor("#0F172A"),
-                    textSecondaryColor = Color.parseColor("#475569"),
-                    textTertiaryColor = Color.parseColor("#64748B"),
-                    primaryColor = Color.parseColor("#334155"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#334155"),
-                    subtleColor = Color.parseColor("#F1F5F9"),
-                    borderColor = Color.parseColor("#CBD5E1")
-                )
-                AppSettings.THEME_AMBER -> CockpitTheme(
-                    AppSettings.THEME_AMBER, "Neon Amber", "Neon Amber",
-                    isLight = true,
-                    backgroundColor = Color.parseColor("#F4F5F8"),
-                    surfaceColor = Color.parseColor("#FFFFFF"),
-                    cardColor = Color.parseColor("#FFFFFF"),
-                    cardBorderColor = Color.parseColor("#E2E8F0"),
-                    textPrimaryColor = Color.parseColor("#0F172A"),
-                    textSecondaryColor = Color.parseColor("#475569"),
-                    textTertiaryColor = Color.parseColor("#64748B"),
-                    primaryColor = Color.parseColor("#D97706"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#B45309"),
-                    subtleColor = Color.parseColor("#FEF3C7"),
-                    borderColor = Color.parseColor("#FDE68A")
-                )
-                AppSettings.THEME_MINT -> CockpitTheme(
-                    AppSettings.THEME_MINT, "Hyper Mint", "Hyper Mint",
-                    isLight = true,
-                    backgroundColor = Color.parseColor("#F4F5F8"),
-                    surfaceColor = Color.parseColor("#FFFFFF"),
-                    cardColor = Color.parseColor("#FFFFFF"),
-                    cardBorderColor = Color.parseColor("#E2E8F0"),
-                    textPrimaryColor = Color.parseColor("#0F172A"),
-                    textSecondaryColor = Color.parseColor("#475569"),
-                    textTertiaryColor = Color.parseColor("#64748B"),
-                    primaryColor = Color.parseColor("#059669"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#047857"),
-                    subtleColor = Color.parseColor("#ECFDF5"),
-                    borderColor = Color.parseColor("#A7F3D0")
-                )
-                AppSettings.THEME_BLUE -> CockpitTheme(
-                    AppSettings.THEME_BLUE, "Liquid Blue", "Liquid Blue",
-                    isLight = true,
-                    backgroundColor = Color.parseColor("#F4F5F8"),
-                    surfaceColor = Color.parseColor("#FFFFFF"),
-                    cardColor = Color.parseColor("#FFFFFF"),
-                    cardBorderColor = Color.parseColor("#E2E8F0"),
-                    textPrimaryColor = Color.parseColor("#0F172A"),
-                    textSecondaryColor = Color.parseColor("#475569"),
-                    textTertiaryColor = Color.parseColor("#64748B"),
-                    primaryColor = Color.parseColor("#0284C7"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#0369A1"),
-                    subtleColor = Color.parseColor("#F0F9FF"),
-                    borderColor = Color.parseColor("#BAE6FD")
-                )
-                AppSettings.THEME_CUSTOM -> {
-                    val r = if (::appSettings.isInitialized) appSettings.customAccentRed else 158
-                    val g = if (::appSettings.isInitialized) appSettings.customAccentGreen else 27
-                    val b = if (::appSettings.isInitialized) appSettings.customAccentBlue else 50
-                    val customColor = Color.rgb(r, g, b)
-                    val lum = 0.299 * r + 0.587 * g + 0.114 * b
-                    val onPrimary = if (lum > 150) Color.BLACK else Color.WHITE
-                    val subtle = Color.rgb(
-                        (255 * 0.90 + r * 0.10).toInt().coerceIn(0, 255),
-                        (255 * 0.90 + g * 0.10).toInt().coerceIn(0, 255),
-                        (255 * 0.90 + b * 0.10).toInt().coerceIn(0, 255)
-                    )
-                    val border = Color.rgb(
-                        (255 * 0.75 + r * 0.25).toInt().coerceIn(0, 255),
-                        (255 * 0.75 + g * 0.25).toInt().coerceIn(0, 255),
-                        (255 * 0.75 + b * 0.25).toInt().coerceIn(0, 255)
-                    )
-                    CockpitTheme(
-                        AppSettings.THEME_CUSTOM, "Custom RGB", "Custom RGB",
-                        isLight = true,
-                        backgroundColor = Color.parseColor("#F4F5F8"),
-                        surfaceColor = Color.parseColor("#FFFFFF"),
-                        cardColor = Color.parseColor("#FFFFFF"),
-                        cardBorderColor = Color.parseColor("#E2E8F0"),
-                        textPrimaryColor = Color.parseColor("#0F172A"),
-                        textSecondaryColor = Color.parseColor("#475569"),
-                        textTertiaryColor = Color.parseColor("#64748B"),
-                        primaryColor = customColor,
-                        onPrimaryColor = onPrimary,
-                        accentColor = customColor,
-                        subtleColor = subtle,
-                        borderColor = border
-                    )
-                }
-                else -> CockpitTheme(
-                    AppSettings.THEME_WINE_RED, "Wine Red", "Wine Red",
-                    isLight = true,
-                    backgroundColor = Color.parseColor("#F4F5F8"),
-                    surfaceColor = Color.parseColor("#FFFFFF"),
-                    cardColor = Color.parseColor("#FFFFFF"),
-                    cardBorderColor = Color.parseColor("#E2E8F0"),
-                    textPrimaryColor = Color.parseColor("#0F172A"),
-                    textSecondaryColor = Color.parseColor("#475569"),
-                    textTertiaryColor = Color.parseColor("#64748B"),
-                    primaryColor = Color.parseColor("#9E1B32"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#9E1B32"),
-                    subtleColor = Color.parseColor("#FDF2F4"),
-                    borderColor = Color.parseColor("#F8D7DA")
-                )
-            }
-        } else {
-            when (themeKey) {
-                AppSettings.THEME_AMOLED -> CockpitTheme(
-                    AppSettings.THEME_AMOLED, "AMOLED Black", "AMOLED Black",
-                    isLight = false,
-                    backgroundColor = Color.parseColor("#000000"),
-                    surfaceColor = Color.parseColor("#000000"),
-                    cardColor = Color.parseColor("#0B0B0E"),
-                    cardBorderColor = Color.parseColor("#262630"),
-                    textPrimaryColor = Color.parseColor("#F8FAFC"),
-                    textSecondaryColor = Color.parseColor("#A5A4AF"),
-                    textTertiaryColor = Color.parseColor("#72707D"),
-                    primaryColor = Color.parseColor("#FFFFFF"),
-                    onPrimaryColor = Color.BLACK,
-                    accentColor = Color.parseColor("#FFFFFF"),
-                    subtleColor = Color.parseColor("#141418"),
-                    borderColor = Color.parseColor("#383844")
-                )
-                AppSettings.THEME_STEALTH -> CockpitTheme(
-                    AppSettings.THEME_STEALTH, "Stealth Mono", "Stealth Mono",
-                    isLight = false,
-                    backgroundColor = Color.parseColor("#131215"),
-                    surfaceColor = Color.parseColor("#1C1B20"),
-                    cardColor = Color.parseColor("#222128"),
-                    cardBorderColor = Color.parseColor("#32303B"),
-                    textPrimaryColor = Color.parseColor("#F7F7F8"),
-                    textSecondaryColor = Color.parseColor("#A5A4AF"),
-                    textTertiaryColor = Color.parseColor("#72707D"),
-                    primaryColor = Color.parseColor("#475569"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#94A3B8"),
-                    subtleColor = Color.parseColor("#1E293B"),
-                    borderColor = Color.parseColor("#334155")
-                )
-                AppSettings.THEME_AMBER -> CockpitTheme(
-                    AppSettings.THEME_AMBER, "Neon Amber", "Neon Amber",
-                    isLight = false,
-                    backgroundColor = Color.parseColor("#131215"),
-                    surfaceColor = Color.parseColor("#1C1B20"),
-                    cardColor = Color.parseColor("#222128"),
-                    cardBorderColor = Color.parseColor("#32303B"),
-                    textPrimaryColor = Color.parseColor("#F7F7F8"),
-                    textSecondaryColor = Color.parseColor("#A5A4AF"),
-                    textTertiaryColor = Color.parseColor("#72707D"),
-                    primaryColor = Color.parseColor("#D97706"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#F59E0B"),
-                    subtleColor = Color.parseColor("#2E1E08"),
-                    borderColor = Color.parseColor("#5C3D10")
-                )
-                AppSettings.THEME_MINT -> CockpitTheme(
-                    AppSettings.THEME_MINT, "Hyper Mint", "Hyper Mint",
-                    isLight = false,
-                    backgroundColor = Color.parseColor("#131215"),
-                    surfaceColor = Color.parseColor("#1C1B20"),
-                    cardColor = Color.parseColor("#222128"),
-                    cardBorderColor = Color.parseColor("#32303B"),
-                    textPrimaryColor = Color.parseColor("#F7F7F8"),
-                    textSecondaryColor = Color.parseColor("#A5A4AF"),
-                    textTertiaryColor = Color.parseColor("#72707D"),
-                    primaryColor = Color.parseColor("#059669"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#10B981"),
-                    subtleColor = Color.parseColor("#0D2E21"),
-                    borderColor = Color.parseColor("#134E35")
-                )
-                AppSettings.THEME_BLUE -> CockpitTheme(
-                    AppSettings.THEME_BLUE, "Liquid Blue", "Liquid Blue",
-                    isLight = false,
-                    backgroundColor = Color.parseColor("#131215"),
-                    surfaceColor = Color.parseColor("#1C1B20"),
-                    cardColor = Color.parseColor("#222128"),
-                    cardBorderColor = Color.parseColor("#32303B"),
-                    textPrimaryColor = Color.parseColor("#F7F7F8"),
-                    textSecondaryColor = Color.parseColor("#A5A4AF"),
-                    textTertiaryColor = Color.parseColor("#72707D"),
-                    primaryColor = Color.parseColor("#0284C7"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#38BDF8"),
-                    subtleColor = Color.parseColor("#0C253B"),
-                    borderColor = Color.parseColor("#144566")
-                )
-                AppSettings.THEME_CUSTOM -> {
-                    val r = if (::appSettings.isInitialized) appSettings.customAccentRed else 158
-                    val g = if (::appSettings.isInitialized) appSettings.customAccentGreen else 27
-                    val b = if (::appSettings.isInitialized) appSettings.customAccentBlue else 50
-                    val customColor = Color.rgb(r, g, b)
-                    val lum = 0.299 * r + 0.587 * g + 0.114 * b
-                    val onPrimary = if (lum > 150) Color.BLACK else Color.WHITE
-                    val subtle = Color.rgb(
-                        (19 * 0.80 + r * 0.20).toInt().coerceIn(0, 255),
-                        (18 * 0.80 + g * 0.20).toInt().coerceIn(0, 255),
-                        (21 * 0.80 + b * 0.20).toInt().coerceIn(0, 255)
-                    )
-                    val border = Color.rgb(
-                        (19 * 0.60 + r * 0.40).toInt().coerceIn(0, 255),
-                        (18 * 0.60 + g * 0.40).toInt().coerceIn(0, 255),
-                        (21 * 0.60 + b * 0.40).toInt().coerceIn(0, 255)
-                    )
-                    CockpitTheme(
-                        AppSettings.THEME_CUSTOM, "Custom RGB", "Custom RGB",
-                        isLight = false,
-                        backgroundColor = Color.parseColor("#131215"),
-                        surfaceColor = Color.parseColor("#1C1B20"),
-                        cardColor = Color.parseColor("#222128"),
-                        cardBorderColor = Color.parseColor("#32303B"),
-                        textPrimaryColor = Color.parseColor("#F7F7F8"),
-                        textSecondaryColor = Color.parseColor("#A5A4AF"),
-                        textTertiaryColor = Color.parseColor("#72707D"),
-                        primaryColor = customColor,
-                        onPrimaryColor = onPrimary,
-                        accentColor = customColor,
-                        subtleColor = subtle,
-                        borderColor = border
-                    )
-                }
-                else -> CockpitTheme(
-                    AppSettings.THEME_WINE_RED, "Wine Red", "Wine Red",
-                    isLight = false,
-                    backgroundColor = Color.parseColor("#131215"),
-                    surfaceColor = Color.parseColor("#1C1B20"),
-                    cardColor = Color.parseColor("#222128"),
-                    cardBorderColor = Color.parseColor("#32303B"),
-                    textPrimaryColor = Color.parseColor("#F7F7F8"),
-                    textSecondaryColor = Color.parseColor("#A5A4AF"),
-                    textTertiaryColor = Color.parseColor("#72707D"),
-                    primaryColor = Color.parseColor("#9E1B32"),
-                    onPrimaryColor = Color.WHITE,
-                    accentColor = Color.parseColor("#C92A45"),
-                    subtleColor = Color.parseColor("#2C1218"),
-                    borderColor = Color.parseColor("#541B26")
-                )
-            }
-        }
+        val r = if (::appSettings.isInitialized) appSettings.customAccentRed else 158
+        val g = if (::appSettings.isInitialized) appSettings.customAccentGreen else 27
+        val b = if (::appSettings.isInitialized) appSettings.customAccentBlue else 50
+        return CockpitThemePalette.getThemeDefinition(themeKey, isLight, r, g, b)
     }
 
     private fun setupThemeSelector() {
@@ -3006,7 +2826,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.btnStopSimulation.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnStopSimulation.strokeColor = ColorStateList.valueOf(theme.borderColor)
-        binding.btnStopSimulation.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        binding.btnStopSimulation.setTextColor(theme.textSecondaryColor)
         updateSimulationUiState(bleManager.isSimulationRunning.value, bleManager.currentActiveManeuver.value)
 
         // Switches
@@ -3026,11 +2846,11 @@ class MainActivity : AppCompatActivity() {
         )
         val trackColors = intArrayOf(
             theme.primaryColor,
-            ContextCompat.getColor(this, R.color.surface_border)
+            theme.cardBorderColor
         )
         val thumbColors = intArrayOf(
             theme.onPrimaryColor,
-            ContextCompat.getColor(this, R.color.text_tertiary)
+            theme.textTertiaryColor
         )
         val trackTintList = ColorStateList(switchStates, trackColors)
         val thumbTintList = ColorStateList(switchStates, thumbColors)
@@ -3049,7 +2869,7 @@ class MainActivity : AppCompatActivity() {
         )
         val navColors = intArrayOf(
             theme.accentColor,
-            ContextCompat.getColor(this, R.color.text_tertiary)
+            theme.textTertiaryColor
         )
         val navColorList = ColorStateList(navStates, navColors)
         binding.bottomNav.itemIconTintList = navColorList
@@ -3123,7 +2943,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             val isWaze = appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE
             val addr = appSettings.homeAddress
-            if (isWaze && addr.isBlank()) {
+            if (isWaze && (addr.isBlank() || addr.equals("Home", ignoreCase = true))) {
                 try {
                     val uri = Uri.parse("waze://?favorite=home&navigate=yes")
                     val intent = Intent(Intent.ACTION_VIEW, uri).apply {
@@ -3147,7 +2967,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             val isWaze = appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE
             val addr = appSettings.workAddress
-            if (isWaze && addr.isBlank()) {
+            if (isWaze && (addr.isBlank() || addr.equals("Work", ignoreCase = true))) {
                 try {
                     val uri = Uri.parse("waze://?favorite=work&navigate=yes")
                     val intent = Intent(Intent.ACTION_VIEW, uri).apply {
@@ -3211,25 +3031,30 @@ class MainActivity : AppCompatActivity() {
         binding.tvQuickHomeTitle.text = "Home"
         binding.tvQuickWorkTitle.text = "Work"
 
-        binding.tvSettingsHome.text = "Home: ${if (home.isNotBlank()) home else defaultHomeLabel}"
-        binding.tvSettingsWork.text = "Work: ${if (work.isNotBlank()) work else defaultWorkLabel}"
+        val displayHome = if (home.isNotBlank() && !home.equals("Home", ignoreCase = true)) home else defaultHomeLabel
+        val displayWork = if (work.isNotBlank() && !work.equals("Work", ignoreCase = true)) work else defaultWorkLabel
+        binding.tvSettingsHome.text = "Home: $displayHome"
+        binding.tvSettingsWork.text = "Work: $displayWork"
     }
 
     private fun provideHapticFeedback() {
         try {
-            window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
-                vibratorManager?.defaultVibrator?.vibrate(
-                    android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK)
-                )
-            } else {
-                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(35, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            val performed = window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+            if (!performed) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                    vibratorManager?.defaultVibrator?.vibrate(
+                        android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK)
+                    )
                 } else {
                     @Suppress("DEPRECATION")
-                    vibrator?.vibrate(35)
+                    val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        vibrator?.vibrate(android.os.VibrationEffect.createOneShot(20, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                    } else {
+                        @Suppress("DEPRECATION")
+                        vibrator?.vibrate(20)
+                    }
                 }
             }
         } catch (_: Exception) {}
@@ -3249,12 +3074,12 @@ class MainActivity : AppCompatActivity() {
             )
             snackbar.anchorView = binding.bottomNav
             snackbar.setBackgroundTint(
-                if (isAlert) ContextCompat.getColor(this, R.color.wine_red_subtle)
-                else ContextCompat.getColor(this, R.color.surface_elevated)
+                if (isAlert) currentTheme.cardColor
+                else currentTheme.surfaceColor
             )
             snackbar.setTextColor(
-                if (isAlert) ContextCompat.getColor(this, R.color.wine_red_light)
-                else ContextCompat.getColor(this, R.color.text_primary)
+                if (isAlert) ContextCompat.getColor(this, R.color.status_disconnected)
+                else currentTheme.textPrimaryColor
             )
             if (actionText != null && onAction != null) {
                 snackbar.setActionTextColor(currentTheme.accentColor)
@@ -3385,24 +3210,32 @@ class MainActivity : AppCompatActivity() {
         btnScanQr?.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
         btnScanQr?.setTextColor(currentTheme.accentColor)
 
-        if (openQrDirectly) {
-            try {
-                val bitmap = DataVaultManager.getInstance(this).generateSetupQrBitmap(600, 600)
-                ivQr?.setImageBitmap(bitmap)
-                layoutQr?.visibility = View.VISIBLE
-            } catch (e: Exception) {
-                showFeedback("QR Generation failed: ${e.message}", isAlert = true)
+        fun loadAndShowQr() {
+            lifecycleScope.launch {
+                try {
+                    val bitmap = withContext(Dispatchers.Default) {
+                        DataVaultManager.getInstance(this@MainActivity).generateSetupQrBitmap(600, 600)
+                    }
+                    if (!dialog.isShowing) return@launch
+                    ivQr?.setImageBitmap(bitmap)
+                    layoutQr?.visibility = View.VISIBLE
+                } catch (e: Exception) {
+                    showFeedback("QR Generation failed: ${e.message}", isAlert = true)
+                }
             }
+        }
+
+        if (openQrDirectly) {
+            layoutQr?.visibility = View.VISIBLE
+            dialog.setOnShowListener { loadAndShowQr() }
         }
 
         btnShowQr?.setOnClickListener {
             provideHapticFeedback()
-            try {
-                val bitmap = DataVaultManager.getInstance(this).generateSetupQrBitmap(600, 600)
-                ivQr?.setImageBitmap(bitmap)
-                layoutQr?.visibility = if (layoutQr?.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-            } catch (e: Exception) {
-                showFeedback("QR Generation failed: ${e.message}", isAlert = true)
+            if (layoutQr?.visibility == View.VISIBLE) {
+                layoutQr.visibility = View.GONE
+            } else {
+                loadAndShowQr()
             }
         }
 
@@ -3416,7 +3249,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             dialog.dismiss()
             binding.rootLayout.postDelayed({
-                exportVaultFile()
+                showExportVaultPassphraseDialog()
             }, 250)
         }
 
@@ -3439,77 +3272,116 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun exportVaultFile() {
-        try {
-            android.util.Log.i("PulsarNav", "Exporting vault file...")
-            val file = DataVaultManager.getInstance(this).exportVaultToFile()
-            android.util.Log.i("PulsarNav", "Vault file created: ${file.absolutePath}, size=${file.length()} bytes")
-            val chooser = DataVaultManager.getInstance(this).createVaultShareIntent(file)
-            startActivity(chooser)
-            showFeedback("Vault bundle exported successfully")
-        } catch (e: Throwable) {
-            android.util.Log.e("PulsarNav", "Export failed", e)
-            showFeedback("Export failed: ${e.message}", isAlert = true)
+    private fun showExportVaultPassphraseDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 20, 48, 10)
+        }
+        val tvDesc = TextView(this).apply {
+            text = "Enter a passphrase to encrypt your .pnav backup with AES-256-GCM, or leave blank to export a plaintext .pnav.json file."
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+            setPadding(0, 0, 0, 14)
+        }
+        val etPassphrase = createThemedEditText(
+            hintText = "Passphrase (optional)",
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        )
+        layout.addView(tvDesc)
+        layout.addView(etPassphrase)
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Export Data Vault")
+            .setView(layout)
+            .setPositiveButton("Export") { _, _ ->
+                val pass = etPassphrase.text.toString().trim().ifBlank { null }
+                exportVaultFile(pass)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun exportVaultFile(passphrase: String? = null) {
+        lifecycleScope.launch {
+            try {
+                android.util.Log.i("PulsarNav", "Exporting vault file...")
+                val manager = DataVaultManager.getInstance(this@MainActivity)
+                val file = withContext(Dispatchers.IO) {
+                    manager.exportVaultToFile(passphrase)
+                }
+                android.util.Log.i("PulsarNav", "Vault file created: ${file.absolutePath}, size=${file.length()} bytes")
+                val chooser = manager.createVaultShareIntent(file)
+                startActivity(chooser)
+                showFeedback(if (passphrase != null) "Encrypted .pnav vault exported" else "Vault JSON bundle exported")
+            } catch (e: Throwable) {
+                android.util.Log.e("PulsarNav", "Export failed", e)
+                showFeedback("Export failed: ${e.message}", isAlert = true)
+            }
         }
     }
 
-    private fun readTextFromUri(uri: Uri): String? {
-        android.util.Log.i("PulsarNav", "Attempting to read text from URI: $uri, scheme: ${uri.scheme}")
-        // Strategy 1: ContentResolver openInputStream
+    private fun readBoundedText(stream: java.io.InputStream): String {
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val n = stream.read(buf)
+            if (n <= 0) break
+            total += n
+            if (total > MAX_VAULT_IMPORT_BYTES) {
+                throw IllegalArgumentException("Vault file exceeds ${MAX_VAULT_IMPORT_BYTES / (1024 * 1024)} MB limit")
+            }
+            out.write(buf, 0, n)
+        }
+        return out.toString(Charsets.UTF_8.name())
+    }
+
+    private suspend fun readTextFromUriSafe(uri: Uri): String? = withContext(Dispatchers.IO) {
+        android.util.Log.i("PulsarNav", "Reading vault text from URI: $uri, scheme: ${uri.scheme}")
         try {
             contentResolver.openInputStream(uri)?.use { stream ->
-                val content = stream.bufferedReader(Charsets.UTF_8).readText()
-                if (content.isNotBlank()) {
-                    android.util.Log.i("PulsarNav", "Read ${content.length} chars via contentResolver.openInputStream")
-                    return content
-                }
+                val content = readBoundedText(stream)
+                if (content.isNotBlank()) return@withContext content
             }
+        } catch (e: IllegalArgumentException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.w("PulsarNav", "openInputStream failed for $uri: ${e.message}")
         }
 
-        // Strategy 2: Direct File access if scheme is file or path is extractable
-        val rawPath = when {
-            uri.scheme == ContentResolver.SCHEME_FILE -> uri.path
-            uri.scheme == null -> uri.path
-            else -> {
-                val fullUri = Uri.decode(uri.toString())
-                val idx = fullUri.indexOf("/storage/emulated/0/")
-                if (idx != -1) fullUri.substring(idx) else null
-            }
-        }
-
-        if (!rawPath.isNullOrBlank()) {
-            try {
-                val file = java.io.File(rawPath)
-                if (file.exists() && file.canRead()) {
-                    val content = file.readText(Charsets.UTF_8)
-                    if (content.isNotBlank()) {
-                        android.util.Log.i("PulsarNav", "Read ${content.length} chars via direct File($rawPath)")
-                        return content
+        if (uri.scheme == ContentResolver.SCHEME_FILE) {
+            val filePath = uri.path
+            if (!filePath.isNullOrBlank()) {
+                try {
+                    val file = File(filePath)
+                    if (file.exists() && file.canRead()) {
+                        file.inputStream().use { stream ->
+                            val content = readBoundedText(stream)
+                            if (content.isNotBlank()) return@withContext content
+                        }
                     }
+                } catch (e: IllegalArgumentException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w("PulsarNav", "Direct file read failed for $filePath: ${e.message}")
                 }
-            } catch (e: Exception) {
-                android.util.Log.w("PulsarNav", "Direct File read failed for $rawPath: ${e.message}")
             }
         }
 
-        // Strategy 3: ParcelFileDescriptor
         try {
             contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                 java.io.FileInputStream(pfd.fileDescriptor).use { stream ->
-                    val content = stream.bufferedReader(Charsets.UTF_8).readText()
-                    if (content.isNotBlank()) {
-                        android.util.Log.i("PulsarNav", "Read ${content.length} chars via ParcelFileDescriptor")
-                        return content
-                    }
+                    val content = readBoundedText(stream)
+                    if (content.isNotBlank()) return@withContext content
                 }
             }
+        } catch (e: IllegalArgumentException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.w("PulsarNav", "openFileDescriptor failed: ${e.message}")
         }
 
-        return null
+        null
     }
 
     private fun showExternalVaultImportConfirmation(uri: Uri) {
@@ -3528,30 +3400,73 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun importVaultFromUri(uri: Uri) {
-        try {
-            android.util.Log.i("PulsarNav", "Importing vault from URI: $uri")
-            val jsonString = readTextFromUri(uri)
-            if (!jsonString.isNullOrBlank()) {
-                val result = DataVaultManager.getInstance(this).importVaultFromJson(jsonString)
-                result.onSuccess { summary ->
-                    val name = summary.riderName.ifBlank { summary.bikeName.ifBlank { "Bike" } }
-                    showFeedback("Vault Restored: ${summary.tripsImported} trips, ${summary.fuelEntriesImported} fuel logs for $name")
-                    try {
-                        refreshAllUiAfterVaultImport()
-                    } catch (e: Exception) {
-                        android.util.Log.e("PulsarNav", "Error refreshing UI after vault import", e)
-                    }
-                }.onFailure { err ->
+    private fun showDecryptVaultPassphraseDialog(rawContent: String) {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 20, 48, 10)
+        }
+        val tvDesc = TextView(this).apply {
+            text = "This .pnav backup is encrypted. Enter your passphrase to restore:"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+            setPadding(0, 0, 0, 14)
+        }
+        val etPassphrase = createThemedEditText(
+            hintText = "Passphrase",
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        )
+        layout.addView(tvDesc)
+        layout.addView(etPassphrase)
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Unlock Encrypted Vault")
+            .setView(layout)
+            .setPositiveButton("Unlock & Restore") { _, _ ->
+                val pass = etPassphrase.text.toString().trim()
+                executeVaultImport(rawContent, pass)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun executeVaultImport(rawContent: String, passphrase: String?) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                DataVaultManager.getInstance(this@MainActivity).importVaultFromInput(rawContent, passphrase)
+            }
+            result.onSuccess { summary ->
+                val name = summary.riderName.ifBlank { summary.bikeName.ifBlank { "Bike" } }
+                showFeedback("Vault Restored: ${summary.tripsImported} trips, ${summary.fuelEntriesImported} fuel logs for $name")
+                try {
+                    refreshAllUiAfterVaultImport()
+                } catch (e: Exception) {
+                    android.util.Log.e("PulsarNav", "Error refreshing UI after vault import", e)
+                }
+            }.onFailure { err ->
+                if (err is VaultPassphraseRequiredException) {
+                    showDecryptVaultPassphraseDialog(rawContent)
+                } else {
                     android.util.Log.e("PulsarNav", "Vault import failed", err)
                     showFeedback("Import failed: ${err.message ?: "Invalid vault file"}", isAlert = true)
                 }
-            } else {
-                showFeedback("Could not read backup file. Please select the file using 'Import File'.", isAlert = true)
             }
-        } catch (e: Exception) {
-            android.util.Log.e("PulsarNav", "Error importing vault", e)
-            showFeedback("Import error: ${e.message}", isAlert = true)
+        }
+    }
+
+    private fun importVaultFromUri(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                android.util.Log.i("PulsarNav", "Importing vault from URI: $uri")
+                val rawContent = readTextFromUriSafe(uri)
+                if (!rawContent.isNullOrBlank()) {
+                    executeVaultImport(rawContent, passphrase = null)
+                } else {
+                    showFeedback("Could not read backup file. Please select the file using 'Import File'.", isAlert = true)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PulsarNav", "Error importing vault", e)
+                showFeedback("Import error: ${e.message}", isAlert = true)
+            }
         }
     }
 
@@ -3718,7 +3633,7 @@ class MainActivity : AppCompatActivity() {
     private fun showNotificationAccessDialog(onContinueAnyway: (() -> Unit)? = null) {
         MaterialAlertDialogBuilder(this, R.style.ObsidianAlertDialog)
             .setTitle("Navigation Interceptor Access")
-            .setMessage("Android requires Notification Access for PulsarNav so it can intercept turn-by-turn navigation arrows from Google Maps, Waze, and Android Auto and stream them directly to your Pulsar NS200 cluster.\n\nPlease enable PulsarNav on the next screen.")
+            .setMessage("Android requires Notification Access for PulsarNav so it can intercept turn-by-turn navigation arrows from Google Maps, Waze, and Android Auto and stream them directly to your Pulsar motorcycle cluster.\n\nPlease enable PulsarNav on the next screen.")
             .setPositiveButton("Open Settings") { _, _ ->
                 openNotificationListenerSettings()
             }
@@ -3826,7 +3741,7 @@ class MainActivity : AppCompatActivity() {
         val current = maintenanceManager.status.value.totalOdometerKm
         val input = createThemedEditText(
             hintText = "Odometer in km",
-            initialText = "%.1f".format(current),
+            initialText = formatDecimal(current),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
         val container = FrameLayout(this).apply {
@@ -3838,11 +3753,11 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Edit Lifetime Odometer")
             .setView(container)
             .setPositiveButton("Save") { _, _ ->
-                val odo = input.text.toString().toDoubleOrNull()
+                val odo = parseDecimal(input.text)
                 if (odo != null && odo >= 0) {
                     maintenanceManager.setOdometer(odo)
                     recordSyncTime()
-                    showFeedback("Odometer updated to %.1f km".format(odo))
+                    showFeedback("Odometer updated to ${formatDecimal(odo)} km")
                 }
             }
             .setNegativeButton("Cancel", null)
@@ -3853,6 +3768,9 @@ class MainActivity : AppCompatActivity() {
         val currentOdo = maintenanceManager.status.value.totalOdometerKm
         val petrolRate = appSettings.petrolPricePerLiter
         val currSymbol = appSettings.currentCurrencySymbol
+        val model = appSettings.getActiveBikeProfile()
+        val tankMax = model.tankCapacityLiters.toDouble().coerceAtLeast(1.0)
+        val tankMaxFloat = tankMax.toFloat()
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -3860,8 +3778,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         val tvDesc = TextView(this).apply {
-            text = "Easy Refuel Wizard • Petrol Rate: %s%.2f/L\nTap a quick amount to auto-compute litres:".format(currSymbol, petrolRate)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            text = String.format(
+                Locale.US,
+                "Easy Refuel Wizard • Petrol Rate: %s%.2f/L\nTap a quick amount to auto-compute litres:",
+                currSymbol,
+                petrolRate
+            )
+            setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
             setPadding(0, 0, 0, 16)
         }
@@ -3874,7 +3797,7 @@ class MainActivity : AppCompatActivity() {
 
         val odoInput = createThemedEditText(
             hintText = "Current Odometer (km)",
-            initialText = "%.1f".format(currentOdo),
+            initialText = formatDecimal(currentOdo),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
         val costInput = createThemedEditText(
@@ -3884,16 +3807,16 @@ class MainActivity : AppCompatActivity() {
         )
         val litersInput = createThemedEditText(
             hintText = "Fuel Litres",
-            initialText = "%.2f".format(500.0 / petrolRate),
+            initialText = formatDecimal(500.0 / petrolRate, 2),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
 
         costInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
-                val amt = s?.toString()?.toDoubleOrNull()
+                val amt = parseDecimal(s)
                 if (amt != null && amt > 0) {
                     val lit = amt / petrolRate
-                    litersInput.setText("%.2f".format(lit))
+                    litersInput.setText(formatDecimal(lit, 2))
                 }
             }
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -3915,13 +3838,12 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
                     provideHapticFeedback()
                     if (isFull) {
-                        val estLiters = 10.0
-                        val estCost = estLiters * petrolRate
-                        costInput.setText("%.0f".format(estCost))
-                        litersInput.setText("%.2f".format(estLiters))
+                        val estCost = tankMax * petrolRate
+                        costInput.setText(String.format(Locale.US, "%.0f", estCost))
+                        litersInput.setText(formatDecimal(tankMax, 2))
                     } else {
-                        costInput.setText("%.0f".format(amount))
-                        litersInput.setText("%.2f".format(amount / petrolRate))
+                        costInput.setText(String.format(Locale.US, "%.0f", amount))
+                        litersInput.setText(formatDecimal(amount / petrolRate, 2))
                     }
                 }
             }
@@ -3938,7 +3860,7 @@ class MainActivity : AppCompatActivity() {
 
         val tvOdoLabel = TextView(this).apply {
             text = "Odometer (km):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+            setTextColor(currentTheme.textTertiaryColor)
             textSize = 11f
         }
         layout.addView(tvOdoLabel)
@@ -3946,7 +3868,7 @@ class MainActivity : AppCompatActivity() {
 
         val tvCostLabel = TextView(this).apply {
             text = "Total Cost ($currSymbol):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+            setTextColor(currentTheme.textTertiaryColor)
             textSize = 11f
         }
         layout.addView(tvCostLabel)
@@ -3954,7 +3876,7 @@ class MainActivity : AppCompatActivity() {
 
         val tvLitersLabel = TextView(this).apply {
             text = "Fuel Litres (Auto-calculated):"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+            setTextColor(currentTheme.textTertiaryColor)
             textSize = 11f
         }
         layout.addView(tvLitersLabel)
@@ -3963,6 +3885,7 @@ class MainActivity : AppCompatActivity() {
         val checkFullTank = com.google.android.material.checkbox.MaterialCheckBox(this).apply {
             text = "Full Tank refill (Calculates true mileage)"
             isChecked = true
+            setTextColor(currentTheme.textPrimaryColor)
             textSize = 12f
         }
         layout.addView(checkFullTank)
@@ -3971,18 +3894,18 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Log Refuel")
             .setView(layout)
             .setPositiveButton("Save Refill") { _, _ ->
-                val odo = odoInput.text.toString().toDoubleOrNull()
-                val liters = litersInput.text.toString().toDoubleOrNull()
-                val cost = costInput.text.toString().toDoubleOrNull()
+                val odo = parseDecimal(odoInput.text)
+                val liters = parseDecimal(litersInput.text)
+                val cost = parseDecimal(costInput.text)
 
                 if (odo != null && liters != null && cost != null && liters > 0) {
-                    val entry = fuelLogManager.addFuelEntry(odo, liters, cost)
+                    val isFull = checkFullTank.isChecked
+                    val entry = fuelLogManager.addFuelEntry(odo, liters, cost, isFullTank = isFull)
                     provideHapticFeedback()
 
-                    // DIRECTLY UPDATE HOME PAGE FUEL & RANGE METRICS
                     val currentLiters = appSettings.fuelLevelLiters
-                    val newLiters = if (checkFullTank.isChecked) 12.0f else (currentLiters + liters.toFloat()).coerceIn(0.0f, 12.0f)
-                    val newPercent = ((newLiters / 12.0f) * 100).toInt().coerceIn(0, 100)
+                    val newLiters = if (isFull) tankMaxFloat else (currentLiters + liters.toFloat()).coerceIn(0.0f, tankMaxFloat)
+                    val newPercent = ((newLiters / tankMaxFloat) * 100f).roundToInt().coerceIn(0, 100)
                     val avgMileage = fuelLogManager.stats.value.averageKmpl.coerceIn(25.0, 50.0)
                     val newDte = (newLiters * avgMileage).toInt()
 
@@ -3993,16 +3916,18 @@ class MainActivity : AppCompatActivity() {
                     updateHeroRangeDisplay()
 
                     val kmplMsg = if (entry.calculatedKmpl != null) {
-                        " • Mileage: %.1f km/l!".format(entry.calculatedKmpl)
+                        " • Mileage: ${formatDecimal(entry.calculatedKmpl)} km/l!"
+                    } else if (!isFull) {
+                        " (Partial fill recorded)"
                     } else {
                         " (Will compute mileage on next refill)"
                     }
-                    showFeedback("Logged %.2f L for %s%.0f%s".format(liters, currSymbol, cost, kmplMsg))
+                    showFeedback("Logged ${formatDecimal(liters, 2)} L for $currSymbol${String.format(Locale.US, "%.0f", cost)}$kmplMsg")
                 } else {
                     showFeedback("Please enter valid fuel details", isAlert = true)
                 }
             }
-            .setNeutralButton("Price: %s%.2f/L".format(currSymbol, petrolRate)) { _, _ ->
+            .setNeutralButton(String.format(Locale.US, "Price: %s%.2f/L", currSymbol, petrolRate)) { _, _ ->
                 showEditPetrolPriceDialog()
             }
             .setNegativeButton("Cancel", null)
@@ -4011,7 +3936,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateFuelPriceUi() {
         val currSymbol = appSettings.currentCurrencySymbol
-        binding.tvFuelPriceTitle.text = "Fuel Price: %s%.2f / L".format(currSymbol, appSettings.petrolPricePerLiter)
+        binding.tvFuelPriceTitle.text = String.format(Locale.US, "Fuel Price: %s%.2f / L", currSymbol, appSettings.petrolPricePerLiter)
         binding.tvFuelPriceCountrySubtitle.text = "Tap to update default ${appSettings.currentCurrencyCode} rate"
         binding.tvFuelPriceTitle.setTextColor(currentTheme.textPrimaryColor)
         binding.tvFuelPriceCountrySubtitle.setTextColor(currentTheme.textSecondaryColor)
@@ -4022,7 +3947,7 @@ class MainActivity : AppCompatActivity() {
         val currSymbol = appSettings.currentCurrencySymbol
         val input = createThemedEditText(
             hintText = "Price in $currSymbol",
-            initialText = "%.2f".format(appSettings.petrolPricePerLiter),
+            initialText = formatDecimal(appSettings.petrolPricePerLiter, 2),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
         val container = FrameLayout(this).apply {
@@ -4033,12 +3958,12 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Set Local Fuel Price ($currSymbol / Litre)")
             .setView(container)
             .setPositiveButton("Save") { _, _ ->
-                val p = input.text.toString().toDoubleOrNull()
+                val p = parseDecimal(input.text)
                 if (p != null && p > 0.0) {
                     appSettings.petrolPricePerLiter = p
                     updateFuelPriceUi()
                     updateHeroRangeDisplay()
-                    showFeedback("Fuel price set to %s%.2f/L".format(currSymbol, p))
+                    showFeedback("Fuel price set to $currSymbol${formatDecimal(p, 2)}/L")
                 }
             }
             .setNegativeButton("Cancel", null)
@@ -4053,7 +3978,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             required.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
-        required.add(Manifest.permission.ACCESS_FINE_LOCATION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             required.add(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -4071,12 +3995,13 @@ class MainActivity : AppCompatActivity() {
         } else {
             locManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
         }
+        val isGpsRequiredForBle = Build.VERSION.SDK_INT < Build.VERSION_CODES.S
 
         val missingPerms = getMissingPermissions()
         val hasPerms = missingPerms.isEmpty()
 
         binding.chipBtWarning.visibility = if (!isBtOn) View.VISIBLE else View.GONE
-        binding.chipGpsWarning.visibility = if (!isGpsOn) View.VISIBLE else View.GONE
+        binding.chipGpsWarning.visibility = if (isGpsRequiredForBle && !isGpsOn) View.VISIBLE else View.GONE
         binding.chipPermWarning.visibility = if (!hasPerms) View.VISIBLE else View.GONE
 
         val isConnected = bleManager.connectionState.value is BleConnectionState.Connected
@@ -4086,7 +4011,7 @@ class MainActivity : AppCompatActivity() {
                     binding.tvSubStatus.text = "Permissions needed: Tap PERMS NEEDED above"
                     binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
                 }
-                !isBtOn && !isGpsOn -> {
+                !isBtOn && isGpsRequiredForBle && !isGpsOn -> {
                     binding.tvSubStatus.text = "Turn ON Bluetooth & GPS in Quick Settings"
                     binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
                 }
@@ -4094,7 +4019,7 @@ class MainActivity : AppCompatActivity() {
                     binding.tvSubStatus.text = "Turn ON Bluetooth in Quick Settings"
                     binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
                 }
-                !isGpsOn -> {
+                isGpsRequiredForBle && !isGpsOn -> {
                     binding.tvSubStatus.text = "Turn ON Location (GPS) in Quick Settings"
                     binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
                 }
@@ -4104,7 +4029,7 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         "Auto-connect paused • tap Scan to connect"
                     }
-                    binding.tvSubStatus.setTextColor(ContextCompat.getColor(this, R.color.text_tertiary))
+                    binding.tvSubStatus.setTextColor(currentTheme.textTertiaryColor)
                 }
             }
         }
@@ -4119,6 +4044,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             locManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
         }
+        val isGpsRequiredForBle = Build.VERSION.SDK_INT < Build.VERSION_CODES.S
 
         updateHardwareReadinessUi()
 
@@ -4141,7 +4067,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (!isGpsOn) {
+        if (isGpsRequiredForBle && !isGpsOn) {
             if (!silent) {
                 showFeedback("Location (GPS) is OFF. Android requires Location to scan for Bluetooth devices.", isAlert = true)
                 try {
@@ -4287,7 +4213,6 @@ class MainActivity : AppCompatActivity() {
             bleManager.connectionState.collectLatest { state ->
                 when (state) {
                     is BleConnectionState.Disconnected -> {
-                        BikeBleForegroundService.stop(this@MainActivity)
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
                         binding.tvConnectionStatus.text = "Disconnected"
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
@@ -4304,7 +4229,7 @@ class MainActivity : AppCompatActivity() {
 
                         binding.viewTopConnectionDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_disconnected)
                         binding.tvTopConnectionStatus.text = "OFFLINE"
-                        binding.tvTopConnectionStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                        binding.tvTopConnectionStatus.setTextColor(currentTheme.textTertiaryColor)
                     }
                     is BleConnectionState.Scanning -> {
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_scanning)
@@ -4354,7 +4279,6 @@ class MainActivity : AppCompatActivity() {
                         recordSyncTime()
                     }
                     is BleConnectionState.Error -> {
-                        BikeBleForegroundService.stop(this@MainActivity)
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
                         binding.tvConnectionStatus.text = state.message
                         binding.btnScan.text = "Scan"
@@ -4363,7 +4287,7 @@ class MainActivity : AppCompatActivity() {
 
                         binding.viewTopConnectionDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_disconnected)
                         binding.tvTopConnectionStatus.text = "OFFLINE"
-                        binding.tvTopConnectionStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                        binding.tvTopConnectionStatus.setTextColor(currentTheme.textTertiaryColor)
                     }
                 }
             }
@@ -4497,7 +4421,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnStopSimulation.setTextColor(theme.accentColor)
         } else {
             binding.btnStopSimulation.strokeColor = defaultBorder
-            binding.btnStopSimulation.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            binding.btnStopSimulation.setTextColor(theme.textSecondaryColor)
         }
     }
 
@@ -4508,14 +4432,17 @@ class MainActivity : AppCompatActivity() {
                     CallState.INCOMING_CALL -> {
                         binding.tvCallerStatus.text = "Incoming Call: ${call.callerName ?: "Unknown"} (${call.callerNumber.orEmpty()})"
                         binding.tvCallerStatus.setTextColor(currentTheme.accentColor)
+                        binding.btnSimulateCall.text = "End Call"
                     }
                     CallState.ACTIVE_CALL -> {
                         binding.tvCallerStatus.text = "Active Call: ${call.callerName ?: "In Call"}"
                         binding.tvCallerStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
+                        binding.btnSimulateCall.text = "End Call"
                     }
                     else -> {
                         binding.tvCallerStatus.text = "Phone Idle • No incoming call"
-                        binding.tvCallerStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+                        binding.tvCallerStatus.setTextColor(currentTheme.textPrimaryColor)
+                        binding.btnSimulateCall.text = "Call"
                     }
                 }
                 binding.tvMissedCallBadge.text = "${call.missedCallCount} Missed"
@@ -4539,6 +4466,9 @@ class MainActivity : AppCompatActivity() {
                 if (alert != null) {
                     binding.tvWhatsAppAlertBanner.text = "WhatsApp Alert: ${alert.sender} (Showing on cluster)"
                     binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.accentColor)
+                } else {
+                    binding.tvWhatsAppAlertBanner.text = "WhatsApp Alerts: Listening (SMS excluded)"
+                    binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.textSecondaryColor)
                 }
             }
         }
@@ -4596,10 +4526,10 @@ class MainActivity : AppCompatActivity() {
                         showFeedback("Next service target set to 10,000 km (3rd Service)")
                     }
                     "Periodic (+5,000 km from current ODO)" -> {
-                        val target = currentOdo + 5000.0
+                        val target = currentOdo + MaintenanceManager.SERVICE_INTERVAL_KM
                         maintenanceManager.setNextServiceTargetOdo(target)
                         recordSyncTime()
-                        showFeedback("Next service target set to %.0f km".format(target))
+                        showFeedback(String.format(Locale.US, "Next service target set to %.0f km", target))
                     }
                     "Overdue Extension (+500 km)" -> {
                         maintenanceManager.rescheduleNextService(500.0)
@@ -4609,7 +4539,7 @@ class MainActivity : AppCompatActivity() {
                     "Mark Service Completed Today" -> {
                         maintenanceManager.markServiceDone()
                         recordSyncTime()
-                        showFeedback("Service marked completed. Next target: %.0f km".format(maintenanceManager.status.value.nextServiceTargetOdoKm))
+                        showFeedback(String.format(Locale.US, "Service marked completed. Next target: %.0f km", maintenanceManager.status.value.nextServiceTargetOdoKm))
                     }
                     "Custom Target Odometer..." -> {
                         showCustomServiceTargetDialog()
@@ -4623,7 +4553,7 @@ class MainActivity : AppCompatActivity() {
     private fun showCustomServiceTargetDialog() {
         val input = createThemedEditText(
             hintText = "Target Odometer in km",
-            initialText = "%.0f".format(maintenanceManager.status.value.nextServiceTargetOdoKm),
+            initialText = String.format(Locale.US, "%.0f", maintenanceManager.status.value.nextServiceTargetOdoKm),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
         val container = FrameLayout(this).apply {
@@ -4635,11 +4565,11 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Set Custom Service Target Odometer")
             .setView(container)
             .setPositiveButton("Save") { _, _ ->
-                val target = input.text.toString().toDoubleOrNull()
+                val target = parseDecimal(input.text?.toString())
                 if (target != null && target > 0) {
                     maintenanceManager.setNextServiceTargetOdo(target)
                     recordSyncTime()
-                    showFeedback("Next service target set to %.0f km".format(target))
+                    showFeedback(String.format(Locale.US, "Next service target set to %.0f km", target))
                 } else {
                     showFeedback("Invalid odometer value", isAlert = true)
                 }
@@ -4680,7 +4610,7 @@ class MainActivity : AppCompatActivity() {
         val subtitle = TextView(this).apply {
             text = "Track mechanical symptoms and parts needing attention before your next service."
             textSize = 12f
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+            setTextColor(currentTheme.textTertiaryColor)
             setPadding(0, 8, 0, 24)
         }
         root.addView(title)
@@ -4726,7 +4656,7 @@ class MainActivity : AppCompatActivity() {
                 val emptyTv = TextView(this).apply {
                     text = "No issues logged. Your bike is running in top condition."
                     textSize = 13f
-                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                    setTextColor(currentTheme.textTertiaryColor)
                     setPadding(0, 32, 0, 32)
                     gravity = Gravity.CENTER
                 }
@@ -4760,15 +4690,15 @@ class MainActivity : AppCompatActivity() {
                     textSize = 14f
                     if (issue.isResolved) {
                         paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
-                        setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                        setTextColor(currentTheme.textTertiaryColor)
                     } else {
-                        setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+                        setTextColor(currentTheme.textPrimaryColor)
                     }
                 }
                 val tvDate = TextView(this).apply {
                     text = if (issue.isResolved) "Resolved • ${issue.dateLogged}" else "Added • ${issue.dateLogged}"
                     textSize = 10f
-                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                    setTextColor(currentTheme.textTertiaryColor)
                 }
                 textLayout.addView(tvDesc)
                 textLayout.addView(tvDate)
@@ -4816,9 +4746,9 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             maintenanceManager.status.collectLatest { s ->
                 updateHeroRangeDisplay()
-                binding.tvChainRemaining.text = "%.0f km left".format(s.chainLubeRemainingKm)
+                binding.tvChainRemaining.text = String.format(Locale.US, "%.0f km left", s.chainLubeRemainingKm)
                 binding.progressChain.progress = s.chainLubePercent
-                binding.tvSupportChainRemaining.text = "Chain Lube: %.0f km left".format(s.chainLubeRemainingKm.coerceAtLeast(0.0))
+                binding.tvSupportChainRemaining.text = String.format(Locale.US, "Chain Lube: %.0f km left", s.chainLubeRemainingKm.coerceAtLeast(0.0))
 
                 if (s.isServiceOverdue) {
                     binding.tvSupportServiceRemaining.text = "OVERDUE"
@@ -4827,20 +4757,20 @@ class MainActivity : AppCompatActivity() {
                     binding.tvServiceHistorySummary.text = "Service Overdue • Immediate maintenance required"
                     binding.progressSupportService.progress = 100
                     binding.tvSupportHealthNote.text = "Schedule periodic service to maintain engine longevity"
-                    binding.tvServiceRemaining.text = "OVERDUE by %.0f km".format(s.serviceOverdueKm)
-                    binding.tvServiceRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.wine_red_light))
+                    binding.tvServiceRemaining.text = String.format(Locale.US, "OVERDUE by %.0f km", s.serviceOverdueKm)
+                    binding.tvServiceRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_disconnected))
                     binding.progressService.progress = 100
                 } else {
-                    binding.tvSupportServiceRemaining.text = "%.0f".format(s.serviceRemainingKm.coerceAtLeast(0.0))
+                    binding.tvSupportServiceRemaining.text = String.format(Locale.US, "%.0f", s.serviceRemainingKm.coerceAtLeast(0.0))
                     binding.tvSupportServiceRemainingUnit.visibility = View.VISIBLE
                     binding.tvSupportServiceRemaining.setTextColor(currentTheme.accentColor)
-                    val serviceInterval = 5000.0
+                    val serviceInterval = MaintenanceManager.SERVICE_INTERVAL_KM
                     val serviceElapsed = (serviceInterval - s.serviceRemainingKm.coerceIn(0.0, serviceInterval))
                     val serviceProgress = ((serviceElapsed / serviceInterval) * 100).toInt().coerceIn(0, 100)
                     binding.progressSupportService.progress = serviceProgress
                     binding.tvServiceHistorySummary.text = "Periodic Service • $serviceProgress% of cycle elapsed"
-                    binding.tvSupportHealthNote.text = "Next routine service due in %.0f km".format(s.serviceRemainingKm.coerceAtLeast(0.0))
-                    binding.tvServiceRemaining.text = "%.0f km left (Target: %.0f km)".format(s.serviceRemainingKm, s.nextServiceTargetOdoKm)
+                    binding.tvSupportHealthNote.text = String.format(Locale.US, "Next routine service due in %.0f km", s.serviceRemainingKm.coerceAtLeast(0.0))
+                    binding.tvServiceRemaining.text = String.format(Locale.US, "%.0f km left (Target: %.0f km)", s.serviceRemainingKm, s.nextServiceTargetOdoKm)
                     binding.tvServiceRemaining.setTextColor(if (s.isServiceDue) ContextCompat.getColor(this@MainActivity, R.color.amber_accent) else currentTheme.accentColor)
                     binding.progressService.progress = s.servicePercent
                 }
@@ -4861,14 +4791,14 @@ class MainActivity : AppCompatActivity() {
                 updateHeroRangeDisplay()
                 updateBikeInvestmentDisplay()
                 if (stats.averageKmpl > 0.0) {
-                    binding.tvAvgMileage.text = "%.1f".format(stats.averageKmpl)
+                    binding.tvAvgMileage.text = formatDecimal(stats.averageKmpl)
                     binding.tvAvgMileageUnit.visibility = View.VISIBLE
                 } else {
                     binding.tvAvgMileage.text = "--"
                     binding.tvAvgMileageUnit.visibility = View.VISIBLE
                 }
                 if (stats.costPerKm > 0.0) {
-                    binding.tvCostPerKm.text = "Cost: %s%.2f / km".format(appSettings.currentCurrencySymbol, stats.costPerKm)
+                    binding.tvCostPerKm.text = String.format(Locale.US, "Cost: %s%.2f / km", appSettings.currentCurrencySymbol, stats.costPerKm)
                 } else {
                     binding.tvCostPerKm.text = "Cost: -- / km"
                 }
@@ -4888,7 +4818,7 @@ class MainActivity : AppCompatActivity() {
         if (entries.isEmpty()) {
             val emptyView = TextView(this).apply {
                 text = "No refuel records yet. Tap 'Log Refueling' above to track fuel & economy."
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                setTextColor(currentTheme.textTertiaryColor)
                 textSize = 13f
                 setPadding(10, 20, 10, 20)
             }
@@ -4908,13 +4838,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             view.findViewById<TextView>(R.id.tvFuelDate).text = entry.formattedDate
-            view.findViewById<TextView>(R.id.tvFuelOdo).text = "Odo: %.1f km • %.1f L".format(entry.odometerKm, entry.liters)
+            view.findViewById<TextView>(R.id.tvFuelOdo).text = "Odo: ${formatDecimal(entry.odometerKm)} km • ${formatDecimal(entry.liters)} L"
             val tvCost = view.findViewById<TextView>(R.id.tvFuelCost)
-            tvCost.text = "%s%.0f".format(appSettings.currentCurrencySymbol, entry.totalCostInr)
+            tvCost.text = String.format(Locale.US, "%s%.0f", appSettings.currentCurrencySymbol, entry.totalCostInr)
             tvCost.setTextColor(currentTheme.accentColor)
             val mileageView = view.findViewById<TextView>(R.id.tvFuelMileage)
-            if (entry.calculatedKmpl != null) {
-                mileageView.text = "%.1f km/l".format(entry.calculatedKmpl)
+            val kmpl = entry.calculatedKmpl
+            if (kmpl != null) {
+                mileageView.text = "${formatDecimal(kmpl)} km/l"
                 mileageView.visibility = View.VISIBLE
             } else {
                 mileageView.visibility = View.GONE
@@ -4931,7 +4862,7 @@ class MainActivity : AppCompatActivity() {
 
         val tvInfo = TextView(this).apply {
             text = "Refuel recorded on ${entry.formattedDate}\nTap Save to recalculate running economy or Delete to remove:"
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
             setPadding(0, 0, 0, 16)
         }
@@ -4939,24 +4870,24 @@ class MainActivity : AppCompatActivity() {
 
         val odoInput = createThemedEditText(
             hintText = "Odometer (km)",
-            initialText = "%.1f".format(entry.odometerKm),
+            initialText = formatDecimal(entry.odometerKm),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
         val litersInput = createThemedEditText(
             hintText = "Fuel Litres",
-            initialText = "%.2f".format(entry.liters),
+            initialText = formatDecimal(entry.liters, 2),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
         val costInput = createThemedEditText(
-            hintText = "Total Cost (%s)".format(appSettings.currentCurrencySymbol),
-            initialText = "%.0f".format(entry.totalCostInr),
+            hintText = "Total Cost (${appSettings.currentCurrencySymbol})",
+            initialText = String.format(Locale.US, "%.0f", entry.totalCostInr),
             inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         )
 
         fun addField(label: String, field: View) {
             val tv = TextView(this).apply {
                 text = label
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                setTextColor(currentTheme.textTertiaryColor)
                 textSize = 11f
                 setPadding(0, 8, 0, 4)
             }
@@ -4966,21 +4897,32 @@ class MainActivity : AppCompatActivity() {
 
         addField("Odometer (km):", odoInput)
         addField("Fuel Litres:", litersInput)
-        addField("Total Amount Paid (%s):".format(appSettings.currentCurrencySymbol), costInput)
+        addField("Total Amount Paid (${appSettings.currentCurrencySymbol}):", costInput)
+
+        val checkFullTank = com.google.android.material.checkbox.MaterialCheckBox(this).apply {
+            text = "Full Tank refill (Calculates true mileage)"
+            isChecked = entry.isFullTank
+            setTextColor(currentTheme.textPrimaryColor)
+            buttonTintList = ColorStateList.valueOf(currentTheme.accentColor)
+            textSize = 12f
+        }
+        layout.addView(checkFullTank)
 
         MaterialAlertDialogBuilder(this)
             .setTitle("Edit Refuel Entry")
             .setView(layout)
             .setPositiveButton("Save Changes") { _, _ ->
-                val odo = odoInput.text.toString().toDoubleOrNull()
-                val lit = litersInput.text.toString().toDoubleOrNull()
-                val cost = costInput.text.toString().toDoubleOrNull()
-                if (odo != null && lit != null && cost != null && lit > 0) {
-                    fuelLogManager.updateFuelEntry(entry.id, odo, lit, cost)
+                val odo = parseDecimal(odoInput.text)
+                val lit = parseDecimal(litersInput.text)
+                val cost = parseDecimal(costInput.text)
+                if (odo != null && odo >= 0 && lit != null && lit > 0 && cost != null && cost >= 0) {
+                    fuelLogManager.updateFuelEntry(entry.id, odo, lit, cost, isFullTank = checkFullTank.isChecked)
                     recordSyncTime()
                     updateHeroRangeDisplay()
                     provideHapticFeedback()
                     showFeedback("Refuel entry updated!")
+                } else {
+                    showFeedback("Please enter valid fuel details", isAlert = true)
                 }
             }
             .setNeutralButton("Delete Entry") { _, _ ->
@@ -5056,7 +4998,7 @@ class MainActivity : AppCompatActivity() {
         fun addField(label: String, field: View) {
             val tv = TextView(this).apply {
                 text = label
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
+                setTextColor(currentTheme.textTertiaryColor)
                 textSize = 11f
                 setPadding(0, 8, 0, 4)
             }
@@ -5106,11 +5048,12 @@ class MainActivity : AppCompatActivity() {
     private fun getArrowForManeuver(m: Maneuver): String {
         return when (m) {
             Maneuver.TURN_LEFT, Maneuver.TURN_SHARP_LEFT, Maneuver.KEEP_LEFT, Maneuver.FORK_LEFT, Maneuver.RAMP_LEFT -> "⬅"
-            Maneuver.TURN_RIGHT, Maneuver.TURN_SHARP_RIGHT, Maneuver.KEEP_RIGHT, Maneuver.FORK_RIGHT, Maneuver.RAMP_RIGHT -> ""
+            Maneuver.TURN_RIGHT, Maneuver.TURN_SHARP_RIGHT, Maneuver.KEEP_RIGHT, Maneuver.FORK_RIGHT, Maneuver.RAMP_RIGHT -> "➡"
             Maneuver.TURN_SLIGHT_LEFT -> "↖"
             Maneuver.TURN_SLIGHT_RIGHT -> "↗"
             Maneuver.U_TURN_LEFT, Maneuver.U_TURN_RIGHT -> "↩"
-            Maneuver.ROUNDABOUT_LEFT, Maneuver.ROUNDABOUT_RIGHT -> "↺"
+            Maneuver.ROUNDABOUT_LEFT -> "↺"
+            Maneuver.ROUNDABOUT_RIGHT -> "↻"
             Maneuver.DESTINATION_REACHED -> "ARRIVED"
             else -> "⬆"
         }

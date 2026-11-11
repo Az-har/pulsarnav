@@ -18,7 +18,8 @@ data class FuelEntry(
     val odometerKm: Double,
     val liters: Double,
     val totalCostInr: Double,
-    val calculatedKmpl: Double?
+    val calculatedKmpl: Double?,
+    val isFullTank: Boolean = true
 ) {
     val formattedDate: String
         get() = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(timestampMs))
@@ -51,31 +52,43 @@ class FuelLogManager private constructor(private val context: Context) {
     private val _entries = MutableStateFlow<List<FuelEntry>>(loadEntries())
     val entries: StateFlow<List<FuelEntry>> = _entries.asStateFlow()
 
-    private val _stats = MutableStateFlow(computeStats(_entries.value))
+    private val _stats = MutableStateFlow(FuelEconomyCalculator.computeStats(_entries.value))
     val stats: StateFlow<FuelStats> = _stats.asStateFlow()
 
-    fun addFuelEntry(odometerKm: Double, liters: Double, totalCostInr: Double): FuelEntry {
+    fun addFuelEntry(
+        odometerKm: Double,
+        liters: Double,
+        totalCostInr: Double,
+        isFullTank: Boolean = true
+    ): FuelEntry {
         val entry = FuelEntry(
             id = UUID.randomUUID().toString(),
             timestampMs = System.currentTimeMillis(),
             odometerKm = odometerKm,
             liters = liters,
             totalCostInr = totalCostInr,
-            calculatedKmpl = null
+            calculatedKmpl = null,
+            isFullTank = isFullTank
         )
 
         val current = _entries.value.toMutableList()
         current.add(0, entry)
-        val recalculated = recalculateChainedStats(current)
+        val recalculated = FuelEconomyCalculator.recalculateChainedStats(current)
         _entries.value = recalculated
-        _stats.value = computeStats(recalculated)
+        _stats.value = FuelEconomyCalculator.computeStats(recalculated)
         saveEntries(recalculated)
 
         MaintenanceManager.getInstance(context).setOdometer(odometerKm)
         return recalculated.firstOrNull { it.id == entry.id } ?: entry
     }
 
-    fun updateFuelEntry(id: String, odometerKm: Double, liters: Double, totalCostInr: Double): FuelEntry? {
+    fun updateFuelEntry(
+        id: String,
+        odometerKm: Double,
+        liters: Double,
+        totalCostInr: Double,
+        isFullTank: Boolean? = null
+    ): FuelEntry? {
         val current = _entries.value.toMutableList()
         val index = current.indexOfFirst { it.id == id }
         if (index == -1) return null
@@ -84,24 +97,25 @@ class FuelLogManager private constructor(private val context: Context) {
         val updated = old.copy(
             odometerKm = odometerKm,
             liters = liters,
-            totalCostInr = totalCostInr
+            totalCostInr = totalCostInr,
+            isFullTank = isFullTank ?: old.isFullTank
         )
         current[index] = updated
-        val recalculated = recalculateChainedStats(current)
+        val recalculated = FuelEconomyCalculator.recalculateChainedStats(current)
         _entries.value = recalculated
-        _stats.value = computeStats(recalculated)
+        _stats.value = FuelEconomyCalculator.computeStats(recalculated)
         saveEntries(recalculated)
         MaintenanceManager.getInstance(context).setOdometer(odometerKm)
-        return updated
+        return recalculated.firstOrNull { it.id == id } ?: updated
     }
 
     fun deleteFuelEntry(id: String): Boolean {
         val current = _entries.value.toMutableList()
         val removed = current.removeAll { it.id == id }
         if (removed) {
-            val recalculated = recalculateChainedStats(current)
+            val recalculated = FuelEconomyCalculator.recalculateChainedStats(current)
             _entries.value = recalculated
-            _stats.value = computeStats(recalculated)
+            _stats.value = FuelEconomyCalculator.computeStats(recalculated)
             saveEntries(recalculated)
         }
         return removed
@@ -122,54 +136,12 @@ class FuelLogManager private constructor(private val context: Context) {
             }
         }
         if (addedCount > 0) {
-            val recalculated = recalculateChainedStats(current)
+            val recalculated = FuelEconomyCalculator.recalculateChainedStats(current)
             _entries.value = recalculated
-            _stats.value = computeStats(recalculated)
+            _stats.value = FuelEconomyCalculator.computeStats(recalculated)
             saveEntries(recalculated)
         }
         return addedCount
-    }
-
-    private fun recalculateChainedStats(list: List<FuelEntry>): List<FuelEntry> {
-        val sorted = list.sortedByDescending { it.timestampMs }
-        val result = mutableListOf<FuelEntry>()
-        for (i in sorted.indices) {
-            val item = sorted[i]
-            var kmpl: Double? = null
-            if (i < sorted.size - 1) {
-                val previous = sorted[i + 1]
-                val dist = (item.odometerKm - previous.odometerKm).coerceAtLeast(0.0)
-                if (item.liters > 0 && dist > 1.0) {
-                    kmpl = dist / item.liters
-                }
-            }
-            result.add(item.copy(calculatedKmpl = kmpl))
-        }
-        return result
-    }
-
-    private fun computeStats(list: List<FuelEntry>): FuelStats {
-        if (list.isEmpty()) return FuelStats(0.0, 0.0, 0.0)
-
-        var totalSpent = 0.0
-        var totalLiters = 0.0
-        var validKmplCount = 0
-        var kmplSum = 0.0
-
-        for (e in list) {
-            totalSpent += e.totalCostInr
-            totalLiters += e.liters
-            if (e.calculatedKmpl != null && e.calculatedKmpl > 5.0 && e.calculatedKmpl < 70.0) {
-                kmplSum += e.calculatedKmpl
-                validKmplCount++
-            }
-        }
-
-        val avgKmpl = if (validKmplCount > 0) kmplSum / validKmplCount else 0.0
-        val totalDistance = if (list.size > 1) (list.first().odometerKm - list.last().odometerKm).coerceAtLeast(1.0) else 0.0
-        val costPerKm = if (totalDistance > 0) totalSpent / totalDistance else 0.0
-
-        return FuelStats(avgKmpl, totalSpent, costPerKm)
     }
 
     private fun saveEntries(list: List<FuelEntry>) {
@@ -181,6 +153,7 @@ class FuelLogManager private constructor(private val context: Context) {
                 put("odometerKm", e.odometerKm)
                 put("liters", e.liters)
                 put("totalCostInr", e.totalCostInr)
+                put("isFullTank", e.isFullTank)
                 if (e.calculatedKmpl != null) put("calculatedKmpl", e.calculatedKmpl)
             }
             array.put(obj)
@@ -202,11 +175,16 @@ class FuelLogManager private constructor(private val context: Context) {
                         odometerKm = obj.getDouble("odometerKm"),
                         liters = obj.getDouble("liters"),
                         totalCostInr = obj.getDouble("totalCostInr"),
-                        calculatedKmpl = if (obj.has("calculatedKmpl")) obj.getDouble("calculatedKmpl") else null
+                        calculatedKmpl = if (obj.has("calculatedKmpl") && !obj.isNull("calculatedKmpl")) {
+                            obj.getDouble("calculatedKmpl")
+                        } else {
+                            null
+                        },
+                        isFullTank = obj.optBoolean("isFullTank", true)
                     )
                 )
             }
         } catch (_: Exception) {}
-        return list
+        return FuelEconomyCalculator.recalculateChainedStats(list)
     }
 }

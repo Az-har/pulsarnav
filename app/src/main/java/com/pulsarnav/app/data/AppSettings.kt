@@ -614,8 +614,16 @@ class AppSettings(context: Context) {
                     }
                     editor.putLong(k, longVal)
                 }
+                KEY_DOC_RC_PATH, KEY_DOC_INSURANCE_PATH, KEY_DOC_PUC_PATH -> {
+                    val path = v.toString()
+                    if (path.isNotBlank() && java.io.File(path).exists()) {
+                        editor.putString(k, path)
+                    } else {
+                        editor.remove(k)
+                    }
+                }
                 KEY_AUTO_PARK, KEY_RIDE_TRACKING, KEY_MEDIA_CONTROL, KEY_WHATSAPP_ALERTS,
-                KEY_MAINTENANCE_ALERTS, KEY_TELEMETRY_SYNC, KEY_TWO_WHEELER_MODE,
+                KEY_MAINTENANCE_ALERTS, KEY_TELEMETRY_SYNC, KEY_TWO_WHEELER_MODE, KEY_AUTO_CONNECT,
                 KEY_DARK_MODE, KEY_IS_SETUP_COMPLETED, KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT -> {
                     val boolVal = when (v) {
                         is Boolean -> v
@@ -647,5 +655,6 @@ class AppSettings(context: Context) {
         _maintenanceAlertsFlow.value = prefs.getBoolean(KEY_MAINTENANCE_ALERTS, true)
         _telemetrySyncFlow.value = prefs.getBoolean(KEY_TELEMETRY_SYNC, true)
         _twoWheelerModeFlow.value = prefs.getBoolean(KEY_TWO_WHEELER_MODE, true)
+        _autoConnectFlow.value = prefs.getBoolean(KEY_AUTO_CONNECT, true)
     }
 }

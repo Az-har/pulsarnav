@@ -1,5 +1,6 @@
 # Built application files
 *.apk
+*.xapk
 *.aar
 *.ap_
 *.aab
@@ -39,6 +40,7 @@ proguard/
 # Keystore files
 *.jks
 *.keystore
+keystore.properties
 !app/keystore/pulsarnav-release.jks
 
 # Reverse-engineering / proprietary OEM bundles and decompiled assets

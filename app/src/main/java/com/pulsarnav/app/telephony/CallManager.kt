@@ -50,19 +50,32 @@ class CallManager private constructor(private val context: Context) {
     private val _callInfo = MutableStateFlow(ActiveCallInfo(CallState.NO_CALL, null, null, 0))
     val callInfo: StateFlow<ActiveCallInfo> = _callInfo
 
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val lookupExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    @Volatile
     private var wasRinging = false
+    @Volatile
     private var lastIncomingNumber: String? = null
+    @Volatile
     private var lastIncomingName: String? = null
     private var missedCount = 0
 
     private var buttonPressStartTime = 0L
 
     private var isInitialized = false
+    private var isReceiverRegistered = false
+    private var registeredTelephonyCallback: Any? = null
+    @Suppress("DEPRECATION")
+    private var registeredPhoneStateListener: PhoneStateListener? = null
+    private var lastDispatchedCallState: CallState? = null
+    private var lastDispatchedCallerName: String? = null
 
     private val phoneStateBroadcastReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: android.content.Intent?) {
             if (intent?.action == TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
                 val stateStr = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+                @Suppress("DEPRECATION")
                 val incomingNum = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
                 when (stateStr) {
                     TelephonyManager.EXTRA_STATE_RINGING -> {
@@ -95,36 +108,32 @@ class CallManager private constructor(private val context: Context) {
 
         try {
             val filter = android.content.IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(phoneStateBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
-            } else {
-                context.registerReceiver(phoneStateBroadcastReceiver, filter)
-            }
+            ContextCompat.registerReceiver(context, phoneStateBroadcastReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
+            isReceiverRegistered = true
         } catch (e: Exception) {
             Log.w(TAG, "Dynamic receiver registration for PHONE_STATE: ${e.message}")
         }
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                telephonyManager?.registerTelephonyCallback(
-                    context.mainExecutor,
-                    object : TelephonyCallback(), TelephonyCallback.CallStateListener {
-                        override fun onCallStateChanged(state: Int) {
-                            handleCallState(state, null)
-                        }
+                val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                    override fun onCallStateChanged(state: Int) {
+                        handleCallState(state, null)
                     }
-                )
+                }
+                telephonyManager?.registerTelephonyCallback(context.mainExecutor, callback)
+                registeredTelephonyCallback = callback
             } else {
                 @Suppress("DEPRECATION")
-                telephonyManager?.listen(
-                    object : PhoneStateListener() {
-                        @Deprecated("Deprecated in Java")
-                        override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                            handleCallState(state, phoneNumber)
-                        }
-                    },
-                    PhoneStateListener.LISTEN_CALL_STATE
-                )
+                val listener = object : PhoneStateListener() {
+                    @Deprecated("Deprecated in Java")
+                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                        handleCallState(state, phoneNumber)
+                    }
+                }
+                @Suppress("DEPRECATION")
+                telephonyManager?.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+                registeredPhoneStateListener = listener
             }
             Log.i(TAG, "Telephony listener registered successfully")
         } catch (e: SecurityException) {
@@ -132,25 +141,53 @@ class CallManager private constructor(private val context: Context) {
         }
     }
 
-    fun onIncomingNumberDetected(number: String) {
-        lastIncomingNumber = number
-        lastIncomingName = resolveContactName(number)
-        Log.i(TAG, "Incoming call from $lastIncomingName ($number)")
-
-        _callInfo.value = ActiveCallInfo(
-            state = CallState.INCOMING_CALL,
-            callerName = lastIncomingName,
-            callerNumber = lastIncomingNumber,
-            missedCallCount = missedCount
-        )
-
-        bleManager.updateCallState(
-            callState = CallState.INCOMING_CALL,
-            callerName = lastIncomingName,
-            callerNumber = lastIncomingNumber
-        )
+    fun release() {
+        if (isReceiverRegistered) {
+            try {
+                context.unregisterReceiver(phoneStateBroadcastReceiver)
+            } catch (_: Exception) {}
+            isReceiverRegistered = false
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (registeredTelephonyCallback as? TelephonyCallback)?.let {
+                    telephonyManager?.unregisterTelephonyCallback(it)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                registeredPhoneStateListener?.let {
+                    telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE)
+                }
+            }
+        } catch (_: Exception) {}
+        registeredTelephonyCallback = null
+        registeredPhoneStateListener = null
+        isInitialized = false
     }
 
+    @Synchronized
+    fun onIncomingNumberDetected(number: String) {
+        wasRinging = true
+        val prevName = lastIncomingName
+        lastIncomingNumber = number
+        val fallbackName = if (lastIncomingNumber == number && !prevName.isNullOrBlank()) prevName else number
+        lastIncomingName = fallbackName
+        Log.i(TAG, "Incoming call from $fallbackName ($number)")
+
+        dispatchCallUpdate(CallState.INCOMING_CALL, fallbackName, number)
+
+        lookupExecutor.execute {
+            val resolved = resolveContactName(number)
+            mainHandler.post {
+                if (wasRinging && lastIncomingNumber == number && resolved != lastIncomingName) {
+                    lastIncomingName = resolved
+                    dispatchCallUpdate(CallState.INCOMING_CALL, resolved, number)
+                }
+            }
+        }
+    }
+
+    @Synchronized
     private fun handleCallState(state: Int, incomingNumber: String?) {
         val number = incomingNumber ?: lastIncomingNumber
         when (state) {
@@ -159,19 +196,16 @@ class CallManager private constructor(private val context: Context) {
                 if (!number.isNullOrBlank()) {
                     onIncomingNumberDetected(number)
                 } else {
-                    _callInfo.value = ActiveCallInfo(CallState.INCOMING_CALL, "Incoming Call", null, missedCount)
-                    bleManager.updateCallState(CallState.INCOMING_CALL, "Incoming Call", null)
+                    dispatchCallUpdate(CallState.INCOMING_CALL, "Incoming Call", null)
                 }
             }
             TelephonyManager.CALL_STATE_OFFHOOK -> {
                 val name = lastIncomingName ?: "Active Call"
                 wasRinging = false
-                _callInfo.value = ActiveCallInfo(CallState.ACTIVE_CALL, name, number, missedCount)
-                bleManager.updateCallState(CallState.ACTIVE_CALL, name, number)
+                dispatchCallUpdate(CallState.ACTIVE_CALL, name, number)
             }
             TelephonyManager.CALL_STATE_IDLE -> {
                 if (wasRinging) {
-                    // Call was missed
                     missedCount++
                     val name = lastIncomingName ?: "Unknown"
                     val phone = lastIncomingNumber ?: ""
@@ -181,10 +215,29 @@ class CallManager private constructor(private val context: Context) {
                 wasRinging = false
                 lastIncomingNumber = null
                 lastIncomingName = null
-                _callInfo.value = ActiveCallInfo(CallState.NO_CALL, null, null, missedCount)
-                bleManager.updateCallState(CallState.NO_CALL, null, null, missedCallCount = missedCount)
+                dispatchCallUpdate(CallState.NO_CALL, null, null)
             }
         }
+    }
+
+    private fun dispatchCallUpdate(state: CallState, callerName: String?, callerNumber: String?) {
+        if (lastDispatchedCallState == state && lastDispatchedCallerName == callerName) {
+            return
+        }
+        lastDispatchedCallState = state
+        lastDispatchedCallerName = callerName
+        _callInfo.value = ActiveCallInfo(
+            state = state,
+            callerName = callerName,
+            callerNumber = callerNumber,
+            missedCallCount = missedCount
+        )
+        bleManager.updateCallState(
+            callState = state,
+            callerName = callerName,
+            callerNumber = callerNumber,
+            missedCallCount = missedCount
+        )
     }
 
     /**
@@ -273,6 +326,9 @@ class CallManager private constructor(private val context: Context) {
     }
 
     private fun resolveContactName(phoneNumber: String): String {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            return phoneNumber
+        }
         try {
             val uri = Uri.withAppendedPath(
                 ContactsContract.PhoneLookup.CONTENT_FILTER_URI,

@@ -12,4 +12,16 @@
     <color name="text_primary">#F7F7F8</color>
     <color name="text_secondary">#A5A4AF</color>
     <color name="text_tertiary">#72707D</color>
+
+    <!-- Status Accents (Dark Mode) -->
+    <color name="status_connected">#22C55E</color>
+    <color name="status_connected_subtle">#132B1C</color>
+    <color name="status_connected_border">#1D4A2B</color>
+
+    <color name="status_scanning">#F59E0B</color>
+    <color name="status_scanning_subtle">#2D2012</color>
+    <color name="status_scanning_border">#4E3517</color>
+
+    <color name="status_disconnected">#9E1B32</color>
+    <color name="status_disconnected_subtle">#2C1218</color>
 </resources>

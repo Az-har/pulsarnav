@@ -2,7 +2,7 @@
 
 Turn-by-turn navigation bridge and companion app for Bajaj Pulsar and Dominar motorcycles.
 
-[![Download Latest APK](https://img.shields.io/github/v/release/nikhilmaity00/pulsarnav?label=Download%20APK&logo=android)](https://github.com/nikhilmaity00/pulsarnav/releases/latest)
+[![Download Latest APK](https://img.shields.io/github/v/release/Az-har/pulsarnav?label=Download%20APK&logo=android)](https://github.com/Az-har/pulsarnav/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Note**: This is a vibe-coded project built by a rider to solve real annoyances with the stock motorcycle cluster. Expect bugs, quirks, and rough edges. If something breaks or you want to improve it, feel free to open an issue or submit a pull request!
@@ -24,6 +24,7 @@ It runs locally on your phone. No logins, no cloud servers, no analytics tracker
 Compatible with Bajaj and Rouser models equipped with the OTC Engineering digital Bluetooth cluster:
 
 - Bajaj Pulsar NS200 (2024+ digital cluster)
+- Bajaj Pulsar NS400Z (5" TFT cluster — BLE TBT, telemetry, calls, music metadata & switchgear)
 - Bajaj Pulsar N250 / F250
 - Bajaj Pulsar NS160 / NS125
 - Bajaj Dominar 400 / Dominar 250
@@ -40,8 +41,8 @@ Compatible with Bajaj and Rouser models equipped with the OTC Engineering digita
 - **Bike Repair Checklist**: A simple todo list to write down mechanical issues, strange vibrations, or parts to fix at the next service.
 - **Fuel Logging & Range**: Log refuels with your local currency and custom fuel rates to calculate real km/l mileage and distance-to-empty.
 - **Digital Glovebox**: Store copies of your RC, insurance, and PUC locally so they are easily accessible on your phone without network coverage.
-- **Backup & Restore**: Export your full history to a `.pnav.json` file or transfer settings to a new phone via QR code.
-- **Dark & Light Mode**: Includes dark and light themes with multiple accent colors (Wine Red, AMOLED Black, Slate, Amber, Mint, Blue).
+- **Backup & Restore**: Export your full history to an AES-256-GCM encrypted `.pnav` file (or `.pnav.json`) or transfer settings to a new phone via QR code.
+- **Dark & Light Mode**: Includes dark and light themes with multiple accent colors (Wine Red, AMOLED Black, Stealth, Amber, Mint, Blue, Custom RGB).
 
 ---
 
@@ -80,22 +81,27 @@ For anyone interested in the telematics or contributing:
 - **Service UUID**: `0010676e-6972-6565-6e69-676e4543544f`
 - **TBT Navigation Characteristic**: `0110676e-6972-6565-6e69-676e4543544f` (Write)
 - **Status / Heartbeat Characteristic**: `0210676e-6972-6565-6e69-676e4543544f` (Write)
-- **Call Alerts Characteristic**: `0310676e-6972-6565-6e69-676e4543544f` (Write)
-- **Handlebar Button Characteristic**: `0a10676e-6972-6565-6e69-676e4543544f` (Notify)
+- **Missed Call Characteristic**: `0310676e-6972-6565-6e69-676e4543544f` (Write)
+- **Alerts Characteristic**: `0410676e-6972-6565-6e69-676e4543544f` (Write)
+- **Music Info Characteristic**: `0610676e-6972-6565-6e69-676e4543544f` (Write — 111-byte TFT track metadata)
+- **Handlebar Button Characteristic**: `0a10676e-6972-6565-6e69-676e4543544f` (Notify / Read)
 
 ### 48-Byte Navigation Frame
 
 | Bytes | Purpose | Description |
 | :--- | :--- | :--- |
-| `0x00` | Header | Fixed sequence byte (`0x01`) |
-| `0x01` - `0x06` | Reserved | Zero padding (`0x00`) |
-| `0x07` | Maneuver Opcode | Turn arrow ID (`'I'` Left, `'J'` Right, `'G'` Straight, etc.) |
-| `0x08` - `0x0B` | Distance | 32-bit Big-Endian unsigned integer in meters |
-| `0x0C` - `0x0D` | ETA | 16-bit Big-Endian unsigned integer in minutes |
-| `0x0E` | Street Length | String length ($N \le 31$) |
-| `0x0F` - `...` | Street Name | ASCII string |
-| `...` - `0x2E` | Padding | Zero padding up to byte 46 |
-| `0x2F` | Checksum | Sum of bytes 0 to 46 modulo 256 |
+| `0x00` | Flags | `bit0`=type (`1` active, `0` stop), `bit4`=step-unit (`1` m, `0` km), `bit7`=ETA PM |
+| `0x01` | Maneuver Opcode | Turn arrow ID (`66..90`, `+32` blink variant when `< 100m`) |
+| `0x02` - `0x05` | Step Distance | Little-endian decimal hundredths & integer (`fLow, fHigh, iLow, iHigh`) |
+| `0x06` | ETA Minute | Minutes (`0..59`) |
+| `0x07` | ETA Hour / Exit | `bits 0..3` ETA Hour (`1..12`), `bits 4..7` roundabout exit (`0..8`) |
+| `0x08` - `0x0B` | Total Distance | Little-endian decimal hundredths & integer (`fLow, fHigh, iLow, iHigh`) |
+| `0x0C` | Total Flags | `bit0`=total-unit (`1` m, `0` km), `bits 2..3`=GPS active (`1`) |
+| `0x0D` | Reserved Ack | `takeMeHome` ack (`0x00`) |
+| `0x0E` | Street Length | ASCII string length ($N \le 31$) |
+| `0x0F` - `0x2D` | Street Name | ASCII street / instruction text (up to 31 bytes) |
+| `0x2E` | Unused | Zero padding (`0x00`) |
+| `0x2F` | Checksum | Sum of bytes `0..46` modulo 256 |
 
 ---
 
@@ -131,7 +137,7 @@ The compiled APK will be at `app/build/outputs/apk/release/app-release.apk`.
 Contributions from fellow riders are welcome! Whether you are adding support for another Bajaj/Rouser model, improving navigation heuristics, or fixing a bug:
 
 1. Fork the repository and create your feature branch (`git checkout -b feature/my-feature`).
-2. Verify local builds pass with `./gradlew assembleRelease test`.
+2. Verify local builds and tests pass with `./gradlew assembleRelease testDebugUnitTest lintDebug`.
 3. Submit a Pull Request.
 
 Direct pushes to `master` are protected. All contributions are reviewed and merged via PRs by [@nikhilmaity00](https://github.com/nikhilmaity00). See [CONTRIBUTING.md](CONTRIBUTING.md) for complete details.

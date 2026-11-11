@@ -3,6 +3,4 @@
     <files-path name="documents" path="documents" />
     <cache-path name="vault_cache" path="vault" />
     <files-path name="vault_files" path="vault" />
-    <cache-path name="cache" path="." />
-    <files-path name="files" path="." />
 </paths>

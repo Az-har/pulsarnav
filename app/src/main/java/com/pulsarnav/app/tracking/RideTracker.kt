@@ -9,11 +9,12 @@ import android.location.LocationManager
 import android.os.Bundle
 import com.pulsarnav.app.data.AppSettings
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.Executors
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -52,7 +53,8 @@ class RideTracker private constructor(private val context: Context) {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("pulsarnav_trips", Context.MODE_PRIVATE)
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val persistenceDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    private val scope = CoroutineScope(persistenceDispatcher)
 
     companion object {
         private const val KEY_TRIP_LIST = "saved_trip_list"
@@ -284,9 +286,10 @@ class RideTracker private constructor(private val context: Context) {
     }
 
     private fun saveTrips(trips: List<Trip>) {
+        val snapshot = trips.toList()
         scope.launch {
             val jsonArray = JSONArray()
-            for (t in trips) {
+            for (t in snapshot) {
                 val obj = JSONObject().apply {
                     put("id", t.id)
                     put("startTimeMs", t.startTimeMs)

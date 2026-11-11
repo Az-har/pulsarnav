@@ -42,16 +42,21 @@ class BluetoothIgnitionReceiver : BroadcastReceiver() {
         when (action) {
             BluetoothDevice.ACTION_ACL_CONNECTED -> {
                 if (isBike) {
-                    Log.i(TAG, "Pulsar NS200 Ignition ON! Starting Keep-Alive BLE Service...")
+                    Log.i(TAG, "Cluster Ignition ON ($deviceName)! Starting Keep-Alive BLE Service & Auto-Connect...")
                     BikeBleForegroundService.start(context)
+                    com.pulsarnav.app.ble.BajajBleManager.getInstance(context).startAutoConnect(force = true)
                 }
             }
 
             BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
                 if (isBike) {
-                    Log.i(TAG, "Pulsar NS200 Ignition OFF! Auto-saving parking location and closing trip...")
+                    Log.i(TAG, "Cluster Ignition OFF ($deviceName)! Auto-saving parking location and closing trip...")
                     ParkingManager.getInstance(context).onBikeDisconnected()
-                    RideTracker.getInstance(context).onBikeDisconnected()
+                    val finishedTrip = RideTracker.getInstance(context).onBikeDisconnected()
+                    if (finishedTrip != null && finishedTrip.distanceKm > 0.0) {
+                        com.pulsarnav.app.maintenance.MaintenanceManager.getInstance(context)
+                            .addDistance(finishedTrip.distanceKm)
+                    }
                 }
             }
         }
@@ -59,7 +64,7 @@ class BluetoothIgnitionReceiver : BroadcastReceiver() {
 
     private fun isBikeDevice(name: String, address: String, context: Context): Boolean {
         val lower = name.lowercase()
-        if (lower.contains("bajaj") || lower.contains("pulsar") || lower.contains("ns200") || lower.contains("cluster")) {
+        if (lower.contains("bajaj") || lower.contains("pulsar") || lower.contains("ns400") || lower.contains("ns200") || lower.contains("cluster")) {
             return true
         }
         val savedMac = AppSettings.getInstance(context).lastConnectedBikeMac

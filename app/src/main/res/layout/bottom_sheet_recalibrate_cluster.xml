@@ -30,7 +30,8 @@
             android:background="@drawable/circle_dot"
             android:backgroundTint="@color/surface_elevated"
             android:gravity="center"
-            android:text=""
+            android:text="⟳"
+            android:textColor="@color/text_primary"
             android:textSize="22sp" />
 
         <LinearLayout
@@ -49,10 +50,11 @@
                 android:textStyle="bold" />
 
             <TextView
+                android:id="@+id/tvRecalibrateSubtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Check your Pulsar NS200 cluster and sync readings"
+                android:text="Check your instrument cluster and sync readings"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -138,11 +140,12 @@
         android:textStyle="bold" />
 
     <TextView
+        android:id="@+id/tvRecalibrateFuelSubtitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:layout_marginBottom="8dp"
-        android:text="Quick select from cluster fuel bars or enter liters (Total 12.0L)"
+        android:text="Quick select from cluster fuel bars or enter liters"
         android:textColor="@color/text_tertiary"
         android:textSize="11sp" />
 
@@ -242,7 +245,7 @@
             android:layout_marginStart="8dp"
             android:layout_weight="1"
             android:background="@drawable/bg_obsidian_input"
-            android:hint="0.0 - 12.0 L"
+            android:hint="Enter liters"
             android:inputType="numberDecimal"
             android:paddingHorizontal="14dp"
             android:textColor="@color/text_primary"

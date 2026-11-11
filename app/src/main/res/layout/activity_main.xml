@@ -408,10 +408,11 @@
                             app:trackCornerRadius="4dp" />
 
                         <TextView
+                            android:id="@+id/tvTankReserveNote"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="6dp"
-                            android:text="Reserve triggers below 2.4L (~90 km range)"
+                            android:text="Reserve triggers below 2.4L"
                             android:textColor="@color/text_tertiary"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -552,7 +553,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="2dp"
-                                    android:text="PulsarNav needs Android Notification Access to mirror Google Maps, Waze &amp; Android Auto navigation arrows onto your NS200 cluster."
+                                    android:text="PulsarNav needs Android Notification Access to mirror Google Maps, Waze &amp; Android Auto navigation arrows onto your bike cluster."
                                     android:textColor="@color/text_secondary"
                                     android:textSize="12sp" />
                             </LinearLayout>
@@ -1573,7 +1574,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="6dp"
-                            android:text="NS200 recommended maintenance cycle: 5,000 km or 120 days"
+                            android:text="Recommended maintenance cycle: 5,000 km or 120 days"
                             android:textColor="@color/text_tertiary"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -2092,7 +2093,7 @@
                                     android:id="@+id/tvBikeName"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="Pulsar NS200"
+                                    android:text="Bajaj Cluster"
                                     android:textColor="@color/text_primary"
                                     android:textSize="15sp"
                                     android:textStyle="bold" />
@@ -4194,7 +4195,7 @@
                         android:layout_marginStart="4dp"
                         android:layout_weight="1"
                         android:backgroundTint="@color/surface_card"
-                        android:text="End"
+                        android:text="Missed"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp"
                         android:textStyle="bold"
