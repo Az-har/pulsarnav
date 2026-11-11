@@ -45,6 +45,18 @@ Compatible with Bajaj and Rouser models equipped with the OTC Engineering digita
 
 ---
 
+## Screenshots
+
+| Bike Setup | Home & Navigation | Fuel & Range Analytics |
+| :---: | :---: | :---: |
+| <img src="screenshots/01_setup.png" width="240" alt="Bike Setup" /> | <img src="screenshots/02_home.png" width="240" alt="Home Dashboard" /> | <img src="screenshots/03_fuel.png" width="240" alt="Fuel Log" /> |
+
+| Chain Lube & Service | Vehicle & Data Vault | Emergency SOS & ICE |
+| :---: | :---: | :---: |
+| <img src="screenshots/04_support.png" width="240" alt="Maintenance" /> | <img src="screenshots/05_account.png" width="240" alt="Account and Vault" /> | <img src="screenshots/06_emergency.png" width="240" alt="Emergency Speed Dial" /> |
+
+---
+
 ## How it works
 
 The app does not use any private APIs or cloud integrations:
