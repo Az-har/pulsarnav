@@ -10,45 +10,23 @@
 
     <!-- Pulsar Glossy Wine Red Color System -->
     <color name="wine_red">#9E1B32</color>
-    <color name="wine_red_dark">#650F1E</color>
     <color name="wine_red_light">#C92A45</color>
-    <color name="wine_red_vibrant">#E03352</color>
     <color name="wine_red_subtle">#2C1218</color>
     <color name="wine_red_border">#541B26</color>
 
     <!-- Theme 2: Stealth Carbon Mono -->
     <color name="stealth_primary">#475569</color>
-    <color name="stealth_accent">#94A3B8</color>
-    <color name="stealth_subtle">#1E293B</color>
-    <color name="stealth_border">#334155</color>
 
     <!-- Theme 3: Racing Amber / Cocktail Neon -->
     <color name="amber_primary">#D97706</color>
     <color name="amber_accent">#F59E0B</color>
-    <color name="amber_subtle">#2E1E08</color>
-    <color name="amber_border">#5C3D10</color>
 
     <!-- Theme 4: Hyper Mint (Ather Electric) -->
     <color name="mint_primary">#059669</color>
     <color name="mint_accent">#10B981</color>
-    <color name="mint_subtle">#0D2E21</color>
-    <color name="mint_border">#134E35</color>
 
     <!-- Theme 5: DTS-i Liquid Blue -->
     <color name="blue_primary">#0284C7</color>
-    <color name="blue_accent">#38BDF8</color>
-    <color name="blue_subtle">#0C253B</color>
-    <color name="blue_border">#144566</color>
-
-    <!-- Theme 6: AMOLED Pure Black -->
-    <color name="amoled_background">#000000</color>
-    <color name="amoled_surface">#000000</color>
-    <color name="amoled_card">#0A0A0C</color>
-    <color name="amoled_border">#24242C</color>
-    <color name="amoled_primary">#F8FAFC</color>
-    <color name="amoled_accent">#FFFFFF</color>
-    <color name="amoled_subtle">#141418</color>
-    <color name="amoled_btn_border">#383844</color>
 
     <!-- Typography Hierarchy (Default / Light Mode) -->
     <color name="text_primary">#0F172A</color>
@@ -58,17 +36,14 @@
     <!-- Status Accents (Light Mode Defaults; Dark Mode in values-night) -->
     <color name="status_connected">#16A34A</color>
     <color name="status_connected_subtle">#DCFCE7</color>
-    <color name="status_connected_border">#86EFAC</color>
 
     <color name="status_scanning">#D97706</color>
     <color name="status_scanning_subtle">#FEF3C7</color>
-    <color name="status_scanning_border">#FCD34D</color>
 
     <color name="status_disconnected">#9E1B32</color>
     <color name="status_disconnected_subtle">#FEE2E2</color>
 
     <!-- Material Design 3 Mapping -->
     <color name="primary">#9E1B32</color>
-    <color name="primary_variant">#650F1E</color>
     <color name="on_primary">#FFFFFF</color>
 </resources>

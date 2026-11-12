@@ -97,4 +97,16 @@ class GoogleMapsNotificationParserTest {
         assertEquals(true, street.etaIsAm)
         assertEquals(31, street.streetName.length)
     }
+
+    @Test
+    fun parse_transliteratesAccentedStreetNamesInsteadOfDroppingLetters() {
+        val parsed = GoogleMapsNotificationParser.parse(
+            title = "250 m Turn right",
+            text = "onto Av. São José & Müller",
+            subtext = "4 km • 8 min"
+        )
+        assertNotNull(parsed)
+        assertEquals(Maneuver.TURN_RIGHT, parsed!!.maneuver)
+        assertEquals("Av. Sao Jose Muller", parsed.streetName)
+    }
 }

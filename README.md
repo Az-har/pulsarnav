@@ -24,7 +24,7 @@ It runs locally on your phone. No logins, no cloud servers, no analytics tracker
 Compatible with Bajaj and Rouser models equipped with the OTC Engineering digital Bluetooth cluster:
 
 - Bajaj Pulsar NS200 (2024+ digital cluster)
-- Bajaj Pulsar NS400Z (5" TFT cluster — BLE TBT, telemetry, calls, music metadata & switchgear)
+- Bajaj Pulsar NS400Z (5" TFT cluster — BLE TBT, telemetry, calls, music metadata, switchgear & Wi-Fi 800×480 map/HUD mirroring)
 - Bajaj Pulsar N250 / F250
 - Bajaj Pulsar NS160 / NS125
 - Bajaj Dominar 400 / Dominar 250
@@ -34,9 +34,11 @@ Compatible with Bajaj and Rouser models equipped with the OTC Engineering digita
 
 ## What it can do
 
-- **Turn-by-Turn Navigation**: Works with Google Maps (two-wheeler mode) or Waze. Turn arrows and distance countdowns appear on the cluster as you ride.
+- **Turn-by-Turn Navigation**: Works with Google Maps (two-wheeler mode) or Waze. Turn arrows, distance countdowns, and TFT **Take Me Home** shortcuts work right from the bike.
+- **Full-Screen TFT Wi-Fi Mirroring & Interactive Menus (NS400Z)**: Streams an `800×480` offline-first turn-by-turn Cockpit HUD (works even with your phone screen off) or live Google Maps / Waze screen cast (`MediaProjection`) over SoftAP Wi-Fi (`TCP 5558` / `UDP 5556` AES-CBC) while keeping cellular data intact. Also handles full **NAV_V2** cluster navigation menus (`0x07..0x0F`): nearby POIs (Fuel, Food, Hospital, Bike Service, Parking, ATM via OpenStreetMap Overpass), Favorites (Home/Work/Favorite), Recent Trips, Route Preview, Route Preferences, and Start Navigation.
+- **PulsarNav Labs TFT Debugger & Protocol Log Console**: Includes an offline/live `800×480` virtual TFT bench renderer with tap-to-touch `(x, y)` coordinate testing, fullscreen inspect dialog, `30 KB` JPEG budget gauge, handlebar recenter/Day-Night/Park-Ride toggles, `NAV_V2` loopback self-tests, decoded BLE packet inspection (`0110..0b10`), and a filterable `.txt`-exportable protocol log console.
+- **Caller ID, Call Logs, Dialback & Handlebar Controls**: Shows active, incoming, and outgoing calls on the cluster; syncs your top 5 **Starred Contacts (`0910`)** and **Recent/Missed Calls (`0b10`)** to the TFT for direct switchgear dialback; supports single-press answer, reject/end, **Reject-with-SMS** auto-reply (configurable template), music playback (`0610`), and track playlist browsing (`0510`).
 - **Android Auto & Open Headunit Support**: If you use a secondary phone on your handlebar running Android Auto (via Open Headunit or Headunit Reloaded), you can toggle "Skip Cluster Nav with Headunit" in settings so the bike cluster stays quiet while your screen handles the map.
-- **Caller ID & Handlebar Controls**: Shows who is calling on the cluster. Single-press the handlebar button to answer, or long-press to reject/end calls. When not in a call, the button controls music (play/pause and next track).
 - **Service & Maintenance Tracking**: Keeps track of your odometer, 500 km chain cleaning reminders, and first/periodic oil services with custom target ODOs.
 - **Bike Repair Checklist**: A simple todo list to write down mechanical issues, strange vibrations, or parts to fix at the next service.
 - **Fuel Logging & Range**: Log refuels with your local currency and custom fuel rates to calculate real km/l mileage and distance-to-empty.
@@ -83,25 +85,34 @@ For anyone interested in the telematics or contributing:
 - **Status / Heartbeat Characteristic**: `0210676e-6972-6565-6e69-676e4543544f` (Write)
 - **Missed Call Characteristic**: `0310676e-6972-6565-6e69-676e4543544f` (Write)
 - **Alerts Characteristic**: `0410676e-6972-6565-6e69-676e4543544f` (Write)
-- **Music Info Characteristic**: `0610676e-6972-6565-6e69-676e4543544f` (Write — 111-byte TFT track metadata)
-- **Handlebar Button Characteristic**: `0a10676e-6972-6565-6e69-676e4543544f` (Notify / Read)
+- **Playlist Info Characteristic**: `0510676e-6972-6565-6e69-676e4543544f` (Write — 177-byte TFT track list, 5 tracks/page)
+- **Music Info Characteristic**: `0610676e-6972-6565-6e69-676e4543544f` (Write — 111-byte TFT track metadata & volume)
+- **Favorite Contacts Characteristic**: `0910676e-6972-6565-6e69-676e4543544f` (Write — 151-byte top 5 starred contacts for dialback)
+- **Handlebar Button Characteristic**: `0a10676e-6972-6565-6e69-676e4543544f` (Notify / Read — dialback, SMS reject, Take Me Home, playlist & media controls)
+- **Recent Calls Characteristic**: `0b10676e-6972-6565-6e69-676e4543544f` (Write — 151-byte top 5 recent/missed calls)
 
 ### 48-Byte Navigation Frame
 
 | Bytes | Purpose | Description |
 | :--- | :--- | :--- |
-| `0x00` | Flags | `bit0`=type (`1` active, `0` stop), `bit4`=step-unit (`1` m, `0` km), `bit7`=ETA PM |
+| `0x00` | Flags | `bit0`=type (`1` active, `0` stop), `bits 1..3`=reserved (`0`), `bit4`=step-unit (`1` m, `0` km), `bits 5..6`=reserved (`0`), `bit7`=ETA PM |
 | `0x01` | Maneuver Opcode | Turn arrow ID (`66..90`, `+32` blink variant when `< 100m`) |
 | `0x02` - `0x05` | Step Distance | Little-endian decimal hundredths & integer (`fLow, fHigh, iLow, iHigh`) |
 | `0x06` | ETA Minute | Minutes (`0..59`) |
 | `0x07` | ETA Hour / Exit | `bits 0..3` ETA Hour (`1..12`), `bits 4..7` roundabout exit (`0..8`) |
 | `0x08` - `0x0B` | Total Distance | Little-endian decimal hundredths & integer (`fLow, fHigh, iLow, iHigh`) |
 | `0x0C` | Total Flags | `bit0`=total-unit (`1` m, `0` km), `bits 2..3`=GPS active (`1`) |
-| `0x0D` | Reserved Ack | `takeMeHome` ack (`0x00`) |
+| `0x0D` | Take Me Home Ack | `takeMeHome` acknowledgement counter echoed back to TFT |
 | `0x0E` | Street Length | ASCII string length ($N \le 31$) |
 | `0x0F` - `0x2D` | Street Name | ASCII street / instruction text (up to 31 bytes) |
 | `0x2E` | Unused | Zero padding (`0x00`) |
 | `0x2F` | Checksum | Sum of bytes `0..46` modulo 256 |
+
+### Setup & Permissions Notes
+
+- **BLE & Notification Access**: Required for connecting to the cluster and mirroring turn-by-turn cues.
+- **Call Log, Contacts, Dial & SMS (Optional for TFT)**: Grant under **Settings -> Call Log, Contacts, Dial & SMS** (or **PulsarNav Labs -> Call / SMS Access**) to sync Favorites (`0910`), Recent Calls (`0b10`), enable cluster switchgear dialback (`CALL_PHONE`), and send Reject-with-SMS auto-replies (`SEND_SMS`).
+- **Wi-Fi SoftAP Mirroring & NAV_V2**: Connects directly to the bike's `192.168.4.1` SoftAP (`TCP 5558` / `UDP 5556`) while keeping cellular data intact for POI lookups when browsing cluster navigation menus.
 
 ---
 
@@ -124,7 +135,7 @@ For anyone interested in the telematics or contributing:
 
 ### Build APK
 ```bash
-git clone https://github.com/nikhilmaity00/pulsarnav.git
+git clone https://github.com/Az-har/pulsarnav.git
 cd pulsarnav
 ./gradlew assembleRelease
 ```
@@ -140,7 +151,7 @@ Contributions from fellow riders are welcome! Whether you are adding support for
 2. Verify local builds and tests pass with `./gradlew assembleRelease testDebugUnitTest lintDebug`.
 3. Submit a Pull Request.
 
-Direct pushes to `master` are protected. All contributions are reviewed and merged via PRs by [@nikhilmaity00](https://github.com/nikhilmaity00). See [CONTRIBUTING.md](CONTRIBUTING.md) for complete details.
+Direct pushes to `master` are protected. All contributions are reviewed and merged via PRs in [Az-har/pulsarnav](https://github.com/Az-har/pulsarnav) (originally forked from [@nikhilmaity00/pulsarnav](https://github.com/nikhilmaity00/pulsarnav)). See [CONTRIBUTING.md](CONTRIBUTING.md) for complete details.
 
 ---
 

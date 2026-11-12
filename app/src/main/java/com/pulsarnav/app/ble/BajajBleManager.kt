@@ -6,18 +6,26 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import androidx.core.content.ContextCompat
+import com.pulsarnav.app.debug.DebugLogRepository
 import com.pulsarnav.app.media.MediaControlManager
 import com.pulsarnav.app.model.Maneuver
+import com.pulsarnav.app.navigation.NavigationIntentLauncher
 import com.pulsarnav.app.parser.ParsedNavigationStep
+import com.pulsarnav.app.protocol.AlertType
 import com.pulsarnav.app.protocol.CallState
 import com.pulsarnav.app.protocol.OtcPacketBuilder
 import com.pulsarnav.app.telephony.CallManager
+import com.pulsarnav.app.telephony.ClusterPhonebookManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.ArrayDeque
@@ -39,7 +47,14 @@ data class DiscoveredBike(
     val rssi: Int
 )
 
+data class SimulatedAlertInfo(
+    val sender: String,
+    val alertType: AlertType,
+    val timestampMs: Long
+)
+
 private sealed class QueuedGattOp(
+    val sessionId: Long,
     var attempts: Int = 0,
     val priority: Boolean = false
 ) {
@@ -47,14 +62,16 @@ private sealed class QueuedGattOp(
         val characteristic: BluetoothGattCharacteristic,
         val data: ByteArray,
         val writeType: Int,
+        sessionId: Long,
         priority: Boolean = false
-    ) : QueuedGattOp(priority = priority)
+    ) : QueuedGattOp(sessionId = sessionId, priority = priority)
 
     class WriteDescriptor(
         val descriptor: BluetoothGattDescriptor,
         val value: ByteArray,
+        sessionId: Long,
         priority: Boolean = false
-    ) : QueuedGattOp(priority = priority)
+    ) : QueuedGattOp(sessionId = sessionId, priority = priority)
 }
 
 @SuppressLint("MissingPermission")
@@ -72,18 +89,31 @@ class BajajBleManager private constructor(private val context: Context) {
         val GENERAL_CHAR_UUID: UUID = UUID.fromString("0210676e-6972-6565-6e69-676e4543544f")
         val MISSED_CALL_CHAR_UUID: UUID = UUID.fromString("0310676e-6972-6565-6e69-676e4543544f")
         val ALERTS_CHAR_UUID: UUID = UUID.fromString("0410676e-6972-6565-6e69-676e4543544f")
+        val PLAYLIST_INFO_CHAR_UUID: UUID = UUID.fromString("0510676e-6972-6565-6e69-676e4543544f")
         val MEDIA_INFO_CHAR_UUID: UUID = UUID.fromString("0610676e-6972-6565-6e69-676e4543544f")
+        val FAV_CONTACTS_CHAR_UUID: UUID = UUID.fromString("0910676e-6972-6565-6e69-676e4543544f")
         val BUTTON_CONTROL_CHAR_UUID: UUID = UUID.fromString("0a10676e-6972-6565-6e69-676e4543544f")
+        val RECENT_CALLS_CHAR_UUID: UUID = UUID.fromString("0b10676e-6972-6565-6e69-676e4543544f")
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         private const val TBT_STREAM_CADENCE_MS = 500L
         private const val GEN_HEARTBEAT_PERIOD_MS = 5000L
         private const val CTL_POLL_MS = 700L
+        private const val CTL_READ_TIMEOUT_MS = 1500L
+        private const val WRITE_NO_RESPONSE_TIMEOUT_MS = 350L
+        private const val DISCONNECT_FLUSH_TIMEOUT_MS = 250L
+        private const val GATT_RECONNECT_SETTLE_MS = 200L
+        private const val MTU_RETRY_DELAY_MS = 350L
+        private const val MTU_CALLBACK_TIMEOUT_MS = 2500L
+        private const val MAX_MTU_RETRIES = 2
+        private const val MAX_CONSECUTIVE_AUTH_ERRORS = 3
+        private const val BOND_WAIT_TIMEOUT_MS = 12000L
 
         // Timeout-based auto-connect & Android 7+ scan throttle protection constants
         private const val AUTO_CONNECT_SCAN_DURATION_MS = 10000L  // 10s active scanning
         private const val AUTO_CONNECT_RETRY_INTERVAL_MS = 15000L // 15s pause between scans
         private const val DISCONNECT_RECONNECT_DELAY_MS = 4000L   // 4s backoff before scanning on bike disconnect
+        private const val ACL_DISCONNECT_GRACE_MS = 15000L        // Grace window before finalizing trip/parking on ACL drop
         private const val SCAN_THROTTLE_WINDOW_MS = 30000L
         private const val MAX_SCANS_PER_WINDOW = 4
 
@@ -158,23 +188,155 @@ class BajajBleManager private constructor(private val context: Context) {
     private var generalCharacteristic: BluetoothGattCharacteristic? = null
     private var missedCallCharacteristic: BluetoothGattCharacteristic? = null
     private var alertsCharacteristic: BluetoothGattCharacteristic? = null
+    private var playlistInfoCharacteristic: BluetoothGattCharacteristic? = null
     private var mediaInfoCharacteristic: BluetoothGattCharacteristic? = null
+    private var favContactsCharacteristic: BluetoothGattCharacteristic? = null
     private var buttonCharacteristic: BluetoothGattCharacteristic? = null
+    private var recentCallsCharacteristic: BluetoothGattCharacteristic? = null
 
     private var isManualScan = false
     private var connectedDeviceName = ""
+    private var connectedDeviceAddress = ""
+    private var activeGattSessionId = 0L
+    private var hasStartedRideSession = false
+    private var isDisconnecting = false
 
     private val writeQueue = ArrayDeque<QueuedGattOp>()
+    private val pendingRetryRunnables = ArrayList<Runnable>()
+    private var pendingConnectRunnable: Runnable? = null
     private var ctlReadPending = false
+    private var negotiatedMtu = BleProtocolSafety.DEFAULT_ATT_MTU
+    private var mtuRetryCount = 0
+    private var consecutiveAuthWriteErrors = 0
+    private var isWaitingForBondCompletion = false
+    private var bondFailedForSession = false
+    private var isBondReceiverRegistered = false
+
+    private val initialTftSyncRunnable = Runnable {
+        if (isLinkReady && !isDisconnecting) {
+            syncPhonebookAndCalls()
+            dispatchPlaylistInfoOnBle(page = pagePlaylistAck, newPlaylistAckVal = newPlaylistAck)
+        }
+    }
+
+    private val pendingDisconnectRunnable = Runnable {
+        if (isDisconnecting) {
+            Log.w(TAG, "Disconnect flush timeout reached — closing GATT")
+            finishDisconnectCleanup()
+        }
+    }
+
+    private val pendingAclDisconnectRunnable = Runnable {
+        if (!isLinkReady && _connectionState.value !is BleConnectionState.Connected && _connectionState.value !is BleConnectionState.Connecting) {
+            Log.i(TAG, "ACL disconnect grace period elapsed without reconnect — saving parking spot and closing trip")
+            if (hasStartedRideSession) {
+                endRideSessionIfActive()
+            } else {
+                com.pulsarnav.app.location.ParkingManager.getInstance(context).onBikeDisconnected()
+            }
+        }
+    }
 
     private val discoverServicesRunnable = Runnable {
         bluetoothGatt?.discoverServices()
     }
 
+    private val mtuRetryRunnable = Runnable {
+        val gatt = bluetoothGatt ?: return@Runnable
+        if (!isLinkReady) {
+            startMtuNegotiation(gatt, resetRetries = false)
+        }
+    }
+
     private val mtuFallbackRunnable = Runnable {
-        if (!isLinkReady && bluetoothGatt != null) {
-            Log.w(TAG, "MTU callback timed out — marking link ready via fallback")
-            onLinkReady("mtu-fallback")
+        val gatt = bluetoothGatt ?: return@Runnable
+        if (!isLinkReady) {
+            val tft = isTftCluster()
+            val bondState = try { gatt.device.bondState } catch (_: SecurityException) { BluetoothDevice.BOND_NONE }
+            if (BleProtocolSafety.canActivateLink(tft, negotiatedMtu, bondState, bondFailedForSession)) {
+                if (tft) {
+                    onLinkReady("mtu=$negotiatedMtu")
+                } else {
+                    Log.w(TAG, "MTU callback timed out on legacy cluster (mtu=$negotiatedMtu) — marking link ready via fallback")
+                    if (negotiatedMtu <= BleProtocolSafety.DEFAULT_ATT_MTU) {
+                        Log.w(TAG, "Legacy cluster settled at default ATT MTU ($negotiatedMtu); >20B Default writes will be guarded")
+                    }
+                    onLinkReady("mtu-fallback")
+                }
+            } else if (tft && isWaitingForBondCompletion && bondState == BluetoothDevice.BOND_BONDING) {
+                Log.i(TAG, "MTU callback waiting on active TFT bonding")
+            } else if (tft && bondFailedForSession) {
+                abortHandshakeAndReconnect("TFT bonding failed before MTU completion", allowReconnect = false)
+            } else if (mtuRetryCount < MAX_MTU_RETRIES) {
+                mtuRetryCount++
+                Log.w(TAG, "MTU callback timed out (mtu=$negotiatedMtu); retrying requestMtu ($mtuRetryCount/$MAX_MTU_RETRIES)")
+                startMtuNegotiation(gatt, resetRetries = false)
+            } else {
+                abortHandshakeAndReconnect(
+                    "TFT MTU negotiation timed out after $MAX_MTU_RETRIES retries (mtu=$negotiatedMtu)"
+                )
+            }
+        }
+    }
+
+    private val bondTimeoutRunnable = Runnable {
+        val gatt = bluetoothGatt ?: return@Runnable
+        if (!isWaitingForBondCompletion) return@Runnable
+        isWaitingForBondCompletion = false
+        val bondState = try { gatt.device.bondState } catch (_: SecurityException) { BluetoothDevice.BOND_NONE }
+        val tft = isTftCluster()
+        if (bondState == BluetoothDevice.BOND_BONDED) {
+            Log.i(TAG, "Bond wait timeout resolved: device already BOND_BONDED")
+            proceedAfterBondSettled(gatt)
+        } else if (tft) {
+            bondFailedForSession = true
+            abortHandshakeAndReconnect("TFT bonding timed out (bondState=$bondState)")
+        } else {
+            proceedAfterBondSettled(gatt)
+        }
+    }
+
+    private val bondStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, intent: Intent?) {
+            if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+            val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            }
+            val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+            runOnBle {
+                val gatt = bluetoothGatt ?: return@runOnBle
+                if (device != null && device.address != gatt.device.address) return@runOnBle
+                when (bondState) {
+                    BluetoothDevice.BOND_BONDED -> {
+                        Log.i(TAG, "BLE bonding completed (BOND_BONDED) for ${device?.address ?: gatt.device.address}")
+                        bleHandler.removeCallbacks(bondTimeoutRunnable)
+                        bondFailedForSession = false
+                        val wasWaiting = isWaitingForBondCompletion
+                        isWaitingForBondCompletion = false
+                        if (wasWaiting) {
+                            proceedAfterBondSettled(gatt)
+                        }
+                    }
+                    BluetoothDevice.BOND_NONE -> {
+                        val prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
+                        if (prevState == BluetoothDevice.BOND_BONDING || isWaitingForBondCompletion) {
+                            Log.w(TAG, "Bonding ended without pairing (BOND_NONE from $prevState)")
+                            bleHandler.removeCallbacks(bondTimeoutRunnable)
+                            val wasWaiting = isWaitingForBondCompletion
+                            isWaitingForBondCompletion = false
+                            if (isTftCluster()) {
+                                bondFailedForSession = true
+                                abortHandshakeAndReconnect("TFT bonding failed (BOND_NONE from $prevState)", allowReconnect = false)
+                            } else if (wasWaiting) {
+                                proceedAfterBondSettled(gatt)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -185,9 +347,6 @@ class BajajBleManager private constructor(private val context: Context) {
     private val _discoveredBikes = MutableStateFlow<List<DiscoveredBike>>(emptyList())
     val discoveredBikes: StateFlow<List<DiscoveredBike>> = _discoveredBikes
 
-    private val _lastSentPacketHex = MutableStateFlow<String?>(null)
-    val lastSentPacketHex: StateFlow<String?> = _lastSentPacketHex
-
     private val _lastSentPacket = MutableStateFlow<ByteArray?>(null)
     val lastSentPacket: StateFlow<ByteArray?> = _lastSentPacket
 
@@ -196,6 +355,12 @@ class BajajBleManager private constructor(private val context: Context) {
 
     private val _currentActiveManeuver = MutableStateFlow<Maneuver?>(null)
     val currentActiveManeuver: StateFlow<Maneuver?> = _currentActiveManeuver
+
+    private val _simulatedNavStep = MutableStateFlow<ParsedNavigationStep?>(null)
+    val simulatedNavStep: StateFlow<ParsedNavigationStep?> = _simulatedNavStep
+
+    private val _simulatedAlert = MutableStateFlow<SimulatedAlertInfo?>(null)
+    val simulatedAlert: StateFlow<SimulatedAlertInfo?> = _simulatedAlert
 
     // Telemetry cache
     private var currentBattery = 85
@@ -208,8 +373,22 @@ class BajajBleManager private constructor(private val context: Context) {
     // Control button edge tracking (Pulsar LCD & NS400Z TFT switchgear)
     private var lastControlBytes: ByteArray? = null
     private var bootstrappedControls = false
+    private var controlFrameCount = 0
+    private var dialEdgesArmed = false
+    private var lastDialSource = 0
+    private var lastDialTxn = 0
     private var callAcceptCount = 0
     private var callRejectCount = 0
+    private var callRejectWithSmsCount = 0
+    private var callAcceptAckCount = 0
+    private var callRejectAckCount = 0
+    private var callRejectSmsAckCount = 0
+    private var takeMeHomeCount = 0
+    private var takeMeHomeAckCount = 0
+    private var missedCallGetCount = 0
+    private var missedCallGetAckCount = 0
+    private var alertGetCount = 0
+    private var alertGetAckCount = 0
     private var resumeSongCount = 0
     private var pauseSongCount = 0
     private var skipToNextCount = 0
@@ -218,13 +397,29 @@ class BajajBleManager private constructor(private val context: Context) {
     private var launchMediaPlayerCount = 0
     private var resumeSongAckCount = 0
     private var pauseSongAckCount = 0
+    private var skipToNextAckCount = 0
+    private var skipToPrevAckCount = 0
+    private var stopSongAckCount = 0
+    private var launchMediaPlayerAckCount = 0
+    private var lastPagePlaylist = 0
+    private var pagePlaylistAck = 1
+    private var lastNewPlaylistReq = 0
+    private var newPlaylistAck = 0
+    private var lastSelectPlaylistSongReq = 0
+    private var selectPlaylistSongAckCount = 0
     private var lastClusterVolumeNibble = -1
+    private var lastAlertSenderName: String? = null
+    private var lastAlertType: AlertType = AlertType.WHATSAPP
     private var lastMusicSnapshot: MediaControlManager.MediaMetadataSnapshot? = null
+    private val phonebookExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    private val _lastClusterAction = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val lastClusterAction: kotlinx.coroutines.flow.StateFlow<String?> = _lastClusterAction
 
     private val delayedMediaSyncRunnable = Runnable {
         if (isLinkReady && isTftCluster()) {
-            dispatchGeneralPacketOnBle()
             dispatchMusicInfoOnBle(force = true)
+            dispatchPlaylistInfoOnBle(page = pagePlaylistAck, newPlaylistAckVal = newPlaylistAck)
         }
     }
 
@@ -252,10 +447,10 @@ class BajajBleManager private constructor(private val context: Context) {
                             etaHour = step.etaHour,
                             etaMinute = step.etaMinute,
                             roundaboutExit = step.roundaboutExit,
-                            streetText = step.streetName
+                            streetText = step.streetName,
+                            takeMeHomeAck = takeMeHomeAckCount
                         )
                         _lastSentPacket.value = frame
-                        _lastSentPacketHex.value = OtcPacketBuilder.toHex(frame)
                         if (isLinkReady) {
                             tbtCharacteristic?.let { enqueueWrite(it, frame, priority = true) }
                         }
@@ -285,15 +480,29 @@ class BajajBleManager private constructor(private val context: Context) {
         bleHandler.postDelayed(heartbeatRunnable, GEN_HEARTBEAT_PERIOD_MS)
     }
 
+    private val ctlReadTimeoutRunnable = Runnable {
+        if (ctlReadPending) {
+            Log.w(TAG, "Control characteristic read timeout watchdog triggered. Clearing ctlReadPending.")
+            ctlReadPending = false
+            processNextWrite()
+        }
+    }
+
     private val ctlPollRunnable = object : Runnable {
         override fun run() {
             if (isLinkReady && buttonCharacteristic != null && bluetoothGatt != null) {
-                // Read control characteristic only when write queue is idle to avoid GATT collision
-                if (!isWriting && writeQueue.isEmpty() && !ctlReadPending) {
+                // Poll 0a10 only when write queue is idle and negotiated ATT MTU avoids Read Blob (0x0c)
+                val mtuAllowsPoll = BleProtocolSafety.canPollControlCharacteristic(isTftCluster(), negotiatedMtu)
+                if (mtuAllowsPoll && !isWriting && writeQueue.isEmpty() && !ctlReadPending) {
                     ctlReadPending = true
+                    bleHandler.removeCallbacks(ctlReadTimeoutRunnable)
                     try {
                         val ok = bluetoothGatt?.readCharacteristic(buttonCharacteristic) ?: false
-                        if (!ok) ctlReadPending = false
+                        if (ok) {
+                            bleHandler.postDelayed(ctlReadTimeoutRunnable, CTL_READ_TIMEOUT_MS)
+                        } else {
+                            ctlReadPending = false
+                        }
                     } catch (e: Exception) {
                         ctlReadPending = false
                     }
@@ -307,7 +516,7 @@ class BajajBleManager private constructor(private val context: Context) {
         if (isWriting) {
             Log.w(TAG, "GATT write timeout watchdog triggered. Resetting lock.")
             isWriting = false
-            processNextWrite()
+            advanceWriteQueueOrFinishDisconnect()
         }
     }
 
@@ -317,21 +526,25 @@ class BajajBleManager private constructor(private val context: Context) {
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
-            result?.let { handleScanResult(it) }
+            val scanResult = result ?: return
+            runOnBle { handleScanResult(scanResult) }
         }
 
         override fun onBatchScanResults(results: MutableList<ScanResult>?) {
-            results?.forEach { handleScanResult(it) }
+            val batch = results?.toList() ?: return
+            runOnBle { batch.forEach { handleScanResult(it) } }
         }
 
         override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "BLE Scan failed: code $errorCode")
-            isScanningInternal = false
-            if (_connectionState.value is BleConnectionState.Scanning) {
-                _connectionState.value = BleConnectionState.Disconnected
-            }
-            if (isAutoConnectLoopRunning && !userRequestedDisconnect && bluetoothAdapter?.isEnabled == true) {
-                scheduleNextAutoConnect(AUTO_CONNECT_RETRY_INTERVAL_MS)
+            runOnBle {
+                Log.e(TAG, "BLE Scan failed: code $errorCode")
+                isScanningInternal = false
+                if (_connectionState.value is BleConnectionState.Scanning) {
+                    _connectionState.value = BleConnectionState.Disconnected
+                }
+                if (isAutoConnectLoopRunning && !userRequestedDisconnect && bluetoothAdapter?.isEnabled == true) {
+                    scheduleNextAutoConnect(AUTO_CONNECT_RETRY_INTERVAL_MS)
+                }
             }
         }
     }
@@ -550,9 +763,11 @@ class BajajBleManager private constructor(private val context: Context) {
     fun connect(device: BluetoothDevice) = runOnBle {
         bleHandler.removeCallbacks(scanTimeoutRunnable)
         bleHandler.removeCallbacks(nextAutoConnectRunnable)
+        bleHandler.removeCallbacks(pendingDisconnectRunnable)
         stopScanInternal()
         isManualScan = false
         userRequestedDisconnect = false
+        isDisconnecting = false
         val deviceName = sanitizeBleName(device.name).ifEmpty { "Bajaj Cluster" }
 
         prefs.edit()
@@ -563,9 +778,24 @@ class BajajBleManager private constructor(private val context: Context) {
 
         _connectionState.value = BleConnectionState.Connecting(deviceName)
 
+        val hadActiveGatt = bluetoothGatt != null
+        endRideSessionIfActive()
         closeGatt(callDisconnect = true)
         connectedDeviceName = deviceName
-        bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        connectedDeviceAddress = device.address
+        if (!hadActiveGatt) {
+            bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        } else {
+            val connectSession = activeGattSessionId
+            val runnable = Runnable {
+                pendingConnectRunnable = null
+                if (activeGattSessionId == connectSession && bluetoothGatt == null && !userRequestedDisconnect) {
+                    bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                }
+            }
+            pendingConnectRunnable = runnable
+            bleHandler.postDelayed(runnable, GATT_RECONNECT_SETTLE_MS)
+        }
     }
 
     fun disconnect() = runOnBle {
@@ -574,31 +804,180 @@ class BajajBleManager private constructor(private val context: Context) {
         isAutoConnectLoopRunning = false
         bleHandler.removeCallbacks(nextAutoConnectRunnable)
         bleHandler.removeCallbacks(scanTimeoutRunnable)
+        bleHandler.removeCallbacks(pendingDisconnectRunnable)
         stopScanInternal()
-        stopNavigation()
-        stopSimulation()
+
+        val hadReadyLink = isLinkReady && bluetoothGatt != null
+        if (hadReadyLink) {
+            // Queue TBT stop frames while isLinkReady is still true before tearing down GATT
+            stopNavigation()
+            stopSimulation()
+        } else {
+            isNavigationActive = false
+            activeNavStep = null
+            _currentActiveManeuver.value = null
+            _isSimulationRunning.value = false
+            _simulatedNavStep.value = null
+            bleHandler.removeCallbacks(tbtStreamRunnable)
+        }
+
         bleHandler.removeCallbacks(heartbeatRunnable)
         bleHandler.removeCallbacks(ctlPollRunnable)
-        bleHandler.removeCallbacks(writeTimeoutWatchdog)
+        bleHandler.removeCallbacks(delayedMediaSyncRunnable)
+        bleHandler.removeCallbacks(initialTftSyncRunnable)
+        pendingConnectRunnable?.let { bleHandler.removeCallbacks(it) }
+        pendingConnectRunnable = null
+
+        if (hadReadyLink && (isWriting || writeQueue.isNotEmpty())) {
+            isDisconnecting = true
+            bleHandler.postDelayed(pendingDisconnectRunnable, DISCONNECT_FLUSH_TIMEOUT_MS)
+        } else {
+            finishDisconnectCleanup()
+        }
+    }
+
+    private fun endRideSessionIfActive() {
+        bleHandler.removeCallbacks(pendingAclDisconnectRunnable)
+        if (!hasStartedRideSession) return
+        hasStartedRideSession = false
+        val trip = com.pulsarnav.app.tracking.RideTracker.getInstance(context).onBikeDisconnected()
+        if (trip != null && trip.distanceKm > 0.0) {
+            com.pulsarnav.app.maintenance.MaintenanceManager.getInstance(context).addDistance(trip.distanceKm)
+        }
+        com.pulsarnav.app.location.ParkingManager.getInstance(context).onBikeDisconnected()
+    }
+
+    fun onSystemAclConnected() = runOnBle {
+        bleHandler.removeCallbacks(pendingAclDisconnectRunnable)
+    }
+
+    fun onSystemAclDisconnected() = runOnBle {
+        if (_connectionState.value is BleConnectionState.Connected && isLinkReady) {
+            Log.d(TAG, "Ignoring ACL_DISCONNECTED while GATT link is still ready")
+            return@runOnBle
+        }
+        bleHandler.removeCallbacks(pendingAclDisconnectRunnable)
+        bleHandler.postDelayed(pendingAclDisconnectRunnable, ACL_DISCONNECT_GRACE_MS)
+    }
+
+    private fun finishDisconnectCleanup() {
+        bleHandler.removeCallbacks(pendingDisconnectRunnable)
+        isDisconnecting = false
+        endRideSessionIfActive()
         closeGatt(callDisconnect = true)
         _connectionState.value = BleConnectionState.Disconnected
     }
 
-    private fun closeGatt(callDisconnect: Boolean = true) {
-        bleHandler.removeCallbacks(discoverServicesRunnable)
+    private fun abortHandshakeAndReconnect(reason: String, allowReconnect: Boolean = true) {
+        Log.e(TAG, "Aborting cluster handshake ($reason)")
+        DebugLogRepository.error("BLE_HANDSHAKE", "Handshake aborted: $reason", "allowReconnect=$allowReconnect")
+        bleHandler.removeCallbacks(pendingDisconnectRunnable)
+        isDisconnecting = false
+        endRideSessionIfActive()
+        closeGatt(callDisconnect = true)
+        _connectionState.value = BleConnectionState.Disconnected
+        if (allowReconnect && !userRequestedDisconnect && isAutoConnectEnabled) {
+            isAutoConnectLoopRunning = true
+            scheduleNextAutoConnect(DISCONNECT_RECONNECT_DELAY_MS)
+        }
+    }
+
+    private fun ensureBondReceiverRegistered() {
+        if (isBondReceiverRegistered) return
+        try {
+            val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            ContextCompat.registerReceiver(context, bondStateReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
+            isBondReceiverRegistered = true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register ACTION_BOND_STATE_CHANGED receiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterBondReceiver() {
+        if (!isBondReceiverRegistered) return
+        try {
+            context.unregisterReceiver(bondStateReceiver)
+        } catch (_: Exception) {}
+        isBondReceiverRegistered = false
+    }
+
+    private fun proceedAfterBondSettled(gatt: BluetoothGatt) {
+        if (gatt.services.isNullOrEmpty()) {
+            bleHandler.removeCallbacks(discoverServicesRunnable)
+            bleHandler.postDelayed(discoverServicesRunnable, 250)
+        } else if (!isLinkReady) {
+            startMtuNegotiation(gatt, resetRetries = true)
+        } else if (isTftCluster()) {
+            bleHandler.removeCallbacks(delayedMediaSyncRunnable)
+            bleHandler.postDelayed(delayedMediaSyncRunnable, 350)
+        }
+    }
+
+    private fun startMtuNegotiation(gatt: BluetoothGatt, resetRetries: Boolean) {
+        if (resetRetries) {
+            mtuRetryCount = 0
+        }
+        bleHandler.removeCallbacks(mtuRetryRunnable)
         bleHandler.removeCallbacks(mtuFallbackRunnable)
+        try {
+            val requested = gatt.requestMtu(256)
+            Log.i(TAG, "requestMtu(256) returned: $requested (attempt=${mtuRetryCount + 1})")
+        } catch (e: Exception) {
+            Log.w(TAG, "requestMtu exception: ${e.message}")
+        }
+        bleHandler.postDelayed(mtuFallbackRunnable, MTU_CALLBACK_TIMEOUT_MS)
+    }
+
+    private fun closeGatt(callDisconnect: Boolean = true) {
+        activeGattSessionId++
+        bleHandler.removeCallbacks(discoverServicesRunnable)
+        bleHandler.removeCallbacks(mtuRetryRunnable)
+        bleHandler.removeCallbacks(mtuFallbackRunnable)
+        bleHandler.removeCallbacks(bondTimeoutRunnable)
+        bleHandler.removeCallbacks(ctlReadTimeoutRunnable)
+        bleHandler.removeCallbacks(pendingDisconnectRunnable)
         bleHandler.removeCallbacks(heartbeatRunnable)
         bleHandler.removeCallbacks(ctlPollRunnable)
         bleHandler.removeCallbacks(writeTimeoutWatchdog)
         bleHandler.removeCallbacks(delayedMediaSyncRunnable)
+        bleHandler.removeCallbacks(initialTftSyncRunnable)
+        pendingConnectRunnable?.let { bleHandler.removeCallbacks(it) }
+        pendingConnectRunnable = null
+        pendingRetryRunnables.forEach { bleHandler.removeCallbacks(it) }
+        pendingRetryRunnables.clear()
 
         isLinkReady = false
+        isDisconnecting = false
+        hasStartedRideSession = false
         isWriting = false
         ctlReadPending = false
+        negotiatedMtu = BleProtocolSafety.DEFAULT_ATT_MTU
+        mtuRetryCount = 0
+        consecutiveAuthWriteErrors = 0
+        isWaitingForBondCompletion = false
+        bondFailedForSession = false
+        unregisterBondReceiver()
         writeQueue.clear()
         bootstrappedControls = false
+        controlFrameCount = 0
+        dialEdgesArmed = false
+        lastDialSource = 0
+        lastDialTxn = 0
         lastControlBytes = null
         connectedDeviceName = ""
+        connectedDeviceAddress = ""
+        callAcceptCount = 0
+        callRejectCount = 0
+        callRejectWithSmsCount = 0
+        callAcceptAckCount = 0
+        callRejectAckCount = 0
+        callRejectSmsAckCount = 0
+        takeMeHomeCount = 0
+        takeMeHomeAckCount = 0
+        missedCallGetCount = 0
+        missedCallGetAckCount = 0
+        alertGetCount = 0
+        alertGetAckCount = 0
         resumeSongCount = 0
         pauseSongCount = 0
         skipToNextCount = 0
@@ -607,15 +986,30 @@ class BajajBleManager private constructor(private val context: Context) {
         launchMediaPlayerCount = 0
         resumeSongAckCount = 0
         pauseSongAckCount = 0
+        skipToNextAckCount = 0
+        skipToPrevAckCount = 0
+        stopSongAckCount = 0
+        launchMediaPlayerAckCount = 0
+        lastPagePlaylist = 0
+        pagePlaylistAck = 1
+        lastNewPlaylistReq = 0
+        newPlaylistAck = 0
+        lastSelectPlaylistSongReq = 0
+        selectPlaylistSongAckCount = 0
         lastClusterVolumeNibble = -1
+        lastAlertSenderName = null
+        lastAlertType = AlertType.WHATSAPP
         lastMusicSnapshot = null
 
         tbtCharacteristic = null
         generalCharacteristic = null
         missedCallCharacteristic = null
         alertsCharacteristic = null
+        playlistInfoCharacteristic = null
         mediaInfoCharacteristic = null
+        favContactsCharacteristic = null
         buttonCharacteristic = null
+        recentCallsCharacteristic = null
 
         bluetoothGatt?.let { g ->
             if (callDisconnect) {
@@ -633,17 +1027,24 @@ class BajajBleManager private constructor(private val context: Context) {
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             runOnBle {
+                if (gatt !== bluetoothGatt) {
+                    Log.d(TAG, "Ignoring stale onConnectionStateChange callback for old GATT instance")
+                    return@runOnBle
+                }
                 val device = gatt.device
                 val name = sanitizeBleName(device.name).ifEmpty {
                     sanitizeBleName(prefs.getString(PREF_LAST_BIKE_NAME, null)).ifEmpty { "Bajaj Cluster" }
                 }
 
                 if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
-                    Log.i(TAG, "Connected to $name (${device.address}), requesting priority & discovering services...")
+                    Log.i(TAG, "Connected to $name (${device.address}), starting BLE handshake...")
+                    DebugLogRepository.bleEvent("GATT connected to $name (${device.address})")
                     connectedDeviceName = name
+                    connectedDeviceAddress = device.address
                     bleHandler.removeCallbacks(nextAutoConnectRunnable)
                     bleHandler.removeCallbacks(scanTimeoutRunnable)
-                    _connectionState.value = BleConnectionState.Connected(name, device.address)
+                    // Remain in Connecting state until discovery, bonding, and ATT MTU settle
+                    _connectionState.value = BleConnectionState.Connecting(name)
                     com.pulsarnav.app.data.AppSettings.getInstance(context).lastConnectedBikeMac = device.address
                     prefs.edit()
                         .putString(PREF_LAST_BIKE_ADDR, device.address)
@@ -654,28 +1055,54 @@ class BajajBleManager private constructor(private val context: Context) {
                         gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                     } catch (_: Exception) {}
 
-                    if (isTftCluster(name) && device.bondState == BluetoothDevice.BOND_NONE) {
-                        try {
-                            val bondStarted = device.createBond()
-                            Log.i(TAG, "Initiated Just-Works SMP bonding for TFT cluster ($name): $bondStarted")
-                        } catch (se: SecurityException) {
-                            Log.w(TAG, "createBond skipped due to missing BT permission: ${se.message}")
+                    negotiatedMtu = BleProtocolSafety.DEFAULT_ATT_MTU
+                    mtuRetryCount = 0
+                    isWaitingForBondCompletion = false
+                    bondFailedForSession = false
+                    ensureBondReceiverRegistered()
+
+                    var deferDiscoveryForBond = false
+                    if (isTftCluster(name)) {
+                        when (device.bondState) {
+                            BluetoothDevice.BOND_NONE -> {
+                                try {
+                                    val bondStarted = device.createBond()
+                                    Log.i(TAG, "Initiated Just-Works SMP bonding for TFT cluster ($name): $bondStarted")
+                                    if (bondStarted || device.bondState == BluetoothDevice.BOND_BONDING) {
+                                        deferDiscoveryForBond = true
+                                    }
+                                } catch (se: SecurityException) {
+                                    Log.w(TAG, "createBond skipped due to missing BT permission: ${se.message}")
+                                    bondFailedForSession = true
+                                    abortHandshakeAndReconnect("TFT createBond permission error", allowReconnect = false)
+                                    return@runOnBle
+                                }
+                            }
+                            BluetoothDevice.BOND_BONDING -> {
+                                Log.i(TAG, "TFT cluster ($name) already bonding; deferring service discovery until BOND_BONDED")
+                                deferDiscoveryForBond = true
+                            }
                         }
                     }
 
                     bleHandler.removeCallbacks(discoverServicesRunnable)
-                    bleHandler.postDelayed(discoverServicesRunnable, 350)
-                    com.pulsarnav.app.tracking.RideTracker.getInstance(context).onBikeConnected()
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.w(TAG, "Disconnected from $name (status=$status)")
+                    bleHandler.removeCallbacks(bondTimeoutRunnable)
+                    if (deferDiscoveryForBond) {
+                        isWaitingForBondCompletion = true
+                        bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
+                    } else {
+                        bleHandler.postDelayed(discoverServicesRunnable, 350)
+                    }
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
+                    Log.w(TAG, "Disconnected / connect failure on $name (status=$status, newState=$newState)")
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        DebugLogRepository.error("BLE_GATT", "Disconnect/error on $name (status=$status, newState=$newState)")
+                    } else {
+                        DebugLogRepository.bleEvent("GATT disconnected from $name")
+                    }
+                    endRideSessionIfActive()
                     closeGatt(callDisconnect = false)
                     _connectionState.value = BleConnectionState.Disconnected
-
-                    val trip = com.pulsarnav.app.tracking.RideTracker.getInstance(context).onBikeDisconnected()
-                    if (trip != null) {
-                        com.pulsarnav.app.maintenance.MaintenanceManager.getInstance(context).addDistance(trip.distanceKm)
-                    }
-                    com.pulsarnav.app.location.ParkingManager.getInstance(context).onBikeDisconnected()
 
                     // Auto-reconnect if not manual disconnect
                     if (!userRequestedDisconnect && isAutoConnectEnabled) {
@@ -689,8 +1116,9 @@ class BajajBleManager private constructor(private val context: Context) {
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             runOnBle {
+                if (gatt !== bluetoothGatt) return@runOnBle
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    Log.w(TAG, "onServicesDiscovered error status=$status")
+                    abortHandshakeAndReconnect("onServicesDiscovered error status=$status")
                     return@runOnBle
                 }
 
@@ -698,55 +1126,117 @@ class BajajBleManager private constructor(private val context: Context) {
                 if (service != null) {
                     tbtCharacteristic = service.getCharacteristic(TBT_NAV_CHAR_UUID)
                     generalCharacteristic = service.getCharacteristic(GENERAL_CHAR_UUID)
-                    mediaInfoCharacteristic = service.getCharacteristic(MEDIA_INFO_CHAR_UUID)
                     missedCallCharacteristic = service.getCharacteristic(MISSED_CALL_CHAR_UUID)
                     alertsCharacteristic = service.getCharacteristic(ALERTS_CHAR_UUID)
+                    playlistInfoCharacteristic = service.getCharacteristic(PLAYLIST_INFO_CHAR_UUID)
+                    mediaInfoCharacteristic = service.getCharacteristic(MEDIA_INFO_CHAR_UUID)
+                    favContactsCharacteristic = service.getCharacteristic(FAV_CONTACTS_CHAR_UUID)
                     buttonCharacteristic = service.getCharacteristic(BUTTON_CONTROL_CHAR_UUID)
+                    recentCallsCharacteristic = service.getCharacteristic(RECENT_CALLS_CHAR_UUID)
 
                     if (isTftCluster()) {
+                        ensureBondReceiverRegistered()
                         when (gatt.device.bondState) {
                             BluetoothDevice.BOND_NONE -> {
                                 Log.i(TAG, "TFT cluster not bonded during discovery; initiating Just-Works bonding")
-                                try {
+                                val bondStarted = try {
                                     gatt.device.createBond()
                                 } catch (e: Exception) {
                                     Log.w(TAG, "createBond failed: ${e.message}")
+                                    false
                                 }
-                                bleHandler.removeCallbacks(delayedMediaSyncRunnable)
-                                bleHandler.postDelayed(delayedMediaSyncRunnable, 1800)
+                                val currentBondState = try { gatt.device.bondState } catch (_: SecurityException) { BluetoothDevice.BOND_NONE }
+                                if (bondStarted || currentBondState == BluetoothDevice.BOND_BONDING) {
+                                    isWaitingForBondCompletion = true
+                                    bleHandler.removeCallbacks(bondTimeoutRunnable)
+                                    bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
+                                    return@runOnBle
+                                } else if (currentBondState != BluetoothDevice.BOND_BONDED) {
+                                    bondFailedForSession = true
+                                    abortHandshakeAndReconnect("TFT Just-Works createBond() unavailable/rejected", allowReconnect = false)
+                                    return@runOnBle
+                                }
                             }
                             BluetoothDevice.BOND_BONDING -> {
-                                Log.i(TAG, "TFT cluster bonding in progress; scheduling delayed media sync")
-                                bleHandler.removeCallbacks(delayedMediaSyncRunnable)
-                                bleHandler.postDelayed(delayedMediaSyncRunnable, 1800)
+                                Log.i(TAG, "TFT cluster bonding in progress; deferring MTU & writes until BOND_BONDED")
+                                isWaitingForBondCompletion = true
+                                bleHandler.removeCallbacks(bondTimeoutRunnable)
+                                bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
+                                return@runOnBle
                             }
                         }
                     }
 
                     Log.i(TAG, "Discovered Bajaj GATT Services. Negotiating MTU 256...")
-
-                    // Critical: Request MTU 256 for 48B TBT frames and 89B General status frames
-                    try {
-                        val requested = gatt.requestMtu(256)
-                        Log.i(TAG, "requestMtu(256) returned: $requested")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "requestMtu exception: ${e.message}")
-                    }
-
-                    // Fallback timer in case onMtuChanged callback is not emitted by cluster
-                    bleHandler.removeCallbacks(mtuFallbackRunnable)
-                    bleHandler.postDelayed(mtuFallbackRunnable, 2500)
+                    // Critical: Request MTU 256 for 48B TBT, 89B General, and 111B Media frames
+                    startMtuNegotiation(gatt, resetRetries = true)
                 } else {
-                    Log.e(TAG, "Bajaj Service UUID $OTC_SERVICE_UUID not found!")
+                    abortHandshakeAndReconnect("Bajaj Service UUID $OTC_SERVICE_UUID not found")
                 }
             }
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
             runOnBle {
+                if (gatt !== bluetoothGatt) return@runOnBle
                 bleHandler.removeCallbacks(mtuFallbackRunnable)
+                bleHandler.removeCallbacks(mtuRetryRunnable)
                 Log.i(TAG, "onMtuChanged: mtu=$mtu status=$status")
-                onLinkReady("mtu=$mtu status=$status")
+                DebugLogRepository.bleEvent("MTU changed -> mtu=$mtu, status=$status")
+                if (status == BluetoothGatt.GATT_SUCCESS && mtu > BleProtocolSafety.DEFAULT_ATT_MTU) {
+                    negotiatedMtu = mtu
+                }
+
+                val tft = isTftCluster()
+                val bondState = try { gatt.device.bondState } catch (_: SecurityException) { BluetoothDevice.BOND_NONE }
+                val recommendedTftMtu = if (tft) {
+                    BleProtocolSafety.recommendedTftMtu(
+                        hasMediaInfo = mediaInfoCharacteristic != null,
+                        hasFavRecent = favContactsCharacteristic != null || recentCallsCharacteristic != null,
+                        hasPlaylist = playlistInfoCharacteristic != null
+                    )
+                } else {
+                    BleProtocolSafety.DEFAULT_ATT_MTU
+                }
+                when {
+                    tft && bondState == BluetoothDevice.BOND_BONDING -> {
+                        Log.i(TAG, "MTU=$negotiatedMtu negotiated, waiting for TFT bonding to complete before activating link")
+                        isWaitingForBondCompletion = true
+                        bleHandler.removeCallbacks(bondTimeoutRunnable)
+                        bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
+                    }
+                    tft && (bondFailedForSession || bondState != BluetoothDevice.BOND_BONDED) -> {
+                        bondFailedForSession = true
+                        abortHandshakeAndReconnect("TFT not bonded during MTU settlement (bondState=$bondState)", allowReconnect = false)
+                    }
+                    tft && negotiatedMtu < recommendedTftMtu && mtuRetryCount < MAX_MTU_RETRIES -> {
+                        mtuRetryCount++
+                        Log.w(
+                            TAG,
+                            "TFT MTU $negotiatedMtu < target $recommendedTftMtu; retrying requestMtu ($mtuRetryCount/$MAX_MTU_RETRIES)"
+                        )
+                        bleHandler.postDelayed(mtuRetryRunnable, MTU_RETRY_DELAY_MS)
+                    }
+                    BleProtocolSafety.canActivateLink(tft, negotiatedMtu, bondState, bondFailedForSession) -> {
+                        if (tft && negotiatedMtu < recommendedTftMtu) {
+                            Log.w(TAG, "Activating TFT link at partial MTU=$negotiatedMtu (target=$recommendedTftMtu); oversized characteristics will stay disabled")
+                        }
+                        onLinkReady("mtu=$negotiatedMtu status=$status")
+                    }
+                    mtuRetryCount < MAX_MTU_RETRIES -> {
+                        mtuRetryCount++
+                        Log.w(TAG, "MTU insufficient (mtu=$mtu status=$status, negotiated=$negotiatedMtu); retrying requestMtu ($mtuRetryCount/$MAX_MTU_RETRIES)")
+                        bleHandler.postDelayed(mtuRetryRunnable, MTU_RETRY_DELAY_MS)
+                    }
+                    !tft -> {
+                        onLinkReady("mtu=$mtu status=$status")
+                    }
+                    else -> {
+                        abortHandshakeAndReconnect(
+                            "TFT MTU negotiation failed after $MAX_MTU_RETRIES retries (mtu=$mtu status=$status)"
+                        )
+                    }
+                }
             }
         }
 
@@ -757,10 +1247,13 @@ class BajajBleManager private constructor(private val context: Context) {
             status: Int
         ) {
             runOnBle {
+                if (gatt !== bluetoothGatt) return@runOnBle
+                bleHandler.removeCallbacks(ctlReadTimeoutRunnable)
                 ctlReadPending = false
                 if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == BUTTON_CONTROL_CHAR_UUID) {
                     handleControlBytes(value)
                 }
+                processNextWrite()
             }
         }
 
@@ -770,10 +1263,13 @@ class BajajBleManager private constructor(private val context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
             val data = characteristic.value
             runOnBle {
+                if (gatt !== bluetoothGatt) return@runOnBle
+                bleHandler.removeCallbacks(ctlReadTimeoutRunnable)
                 ctlReadPending = false
                 if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == BUTTON_CONTROL_CHAR_UUID && data != null) {
                     handleControlBytes(data)
                 }
+                processNextWrite()
             }
         }
 
@@ -783,6 +1279,7 @@ class BajajBleManager private constructor(private val context: Context) {
             value: ByteArray
         ) {
             runOnBle {
+                if (gatt !== bluetoothGatt) return@runOnBle
                 if (characteristic.uuid == BUTTON_CONTROL_CHAR_UUID) {
                     handleControlBytes(value)
                 }
@@ -795,6 +1292,7 @@ class BajajBleManager private constructor(private val context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
             val data = characteristic.value ?: return
             runOnBle {
+                if (gatt !== bluetoothGatt) return@runOnBle
                 if (characteristic.uuid == BUTTON_CONTROL_CHAR_UUID) {
                     handleControlBytes(data)
                 }
@@ -803,31 +1301,80 @@ class BajajBleManager private constructor(private val context: Context) {
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             runOnBle {
+                if (gatt !== bluetoothGatt) return@runOnBle
                 bleHandler.removeCallbacks(writeTimeoutWatchdog)
                 isWriting = false
-                if (status != BluetoothGatt.GATT_SUCCESS) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    consecutiveAuthWriteErrors = 0
+                } else {
                     Log.w(TAG, "Write error status=$status on ${characteristic.uuid}")
+                    DebugLogRepository.error("BLE_GATT", "Write failed (${charShortUuid(characteristic.uuid)}) status=$status")
+                    if (BleProtocolSafety.isAuthOrEncryptionError(status)) {
+                        consecutiveAuthWriteErrors++
+                        if (consecutiveAuthWriteErrors >= MAX_CONSECUTIVE_AUTH_ERRORS) {
+                            handleStaleBondAuthFailure(status)
+                            return@runOnBle
+                        }
+                    }
                 }
-                processNextWrite()
+                advanceWriteQueueOrFinishDisconnect()
             }
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             runOnBle {
+                if (gatt !== bluetoothGatt) return@runOnBle
                 bleHandler.removeCallbacks(writeTimeoutWatchdog)
                 isWriting = false
-                if (status != BluetoothGatt.GATT_SUCCESS) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    consecutiveAuthWriteErrors = 0
+                } else {
                     Log.w(TAG, "Descriptor write error status=$status on ${descriptor.uuid}")
+                    if (BleProtocolSafety.isAuthOrEncryptionError(status)) {
+                        consecutiveAuthWriteErrors++
+                        if (consecutiveAuthWriteErrors >= MAX_CONSECUTIVE_AUTH_ERRORS) {
+                            handleStaleBondAuthFailure(status)
+                            return@runOnBle
+                        }
+                    }
                 }
-                processNextWrite()
+                advanceWriteQueueOrFinishDisconnect()
             }
         }
     }
 
     private fun onLinkReady(reason: String) {
         if (isLinkReady) return
+        val gatt = bluetoothGatt ?: return
+        val bondState = try {
+            gatt.device.bondState
+        } catch (_: SecurityException) {
+            BluetoothDevice.BOND_NONE
+        }
+        if (!BleProtocolSafety.canActivateLink(isTftCluster(), negotiatedMtu, bondState, bondFailedForSession)) {
+            Log.w(
+                TAG,
+                "Blocked onLinkReady($reason): TFT link requires MTU >= ${BleProtocolSafety.MIN_TFT_READY_MTU} and BOND_BONDED (mtu=$negotiatedMtu, bondState=$bondState, bondFailed=$bondFailedForSession)"
+            )
+            DebugLogRepository.error(
+                "BLE_SAFETY",
+                "Link activation gated ($reason): mtu=$negotiatedMtu, bond=$bondState, bondFailed=$bondFailedForSession"
+            )
+            return
+        }
         isLinkReady = true
+        bleHandler.removeCallbacks(pendingAclDisconnectRunnable)
+        val address = connectedDeviceAddress.ifEmpty { gatt.device.address }
+        _connectionState.value = BleConnectionState.Connected(connectedDeviceName, address)
+        if (!hasStartedRideSession) {
+            hasStartedRideSession = true
+            com.pulsarnav.app.tracking.RideTracker.getInstance(context).onBikeConnected()
+        }
         Log.i(TAG, "Pulsar Cluster Link READY ($reason)")
+        DebugLogRepository.bleEvent(
+            "Cluster link READY ($connectedDeviceName)",
+            "reason=$reason, tft=${isTftCluster()}, mtu=$negotiatedMtu, bond=$bondState"
+        )
 
         // Keep foreground service active to protect BLE link and background streaming
         try {
@@ -847,7 +1394,7 @@ class BajajBleManager private constructor(private val context: Context) {
                         } else {
                             BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                         }
-                        enqueueOp(QueuedGattOp.WriteDescriptor(cccd, enableVal, priority = true))
+                        enqueueOp(QueuedGattOp.WriteDescriptor(cccd, enableVal, sessionId = activeGattSessionId, priority = true))
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "CCCD setup skipped: ${e.message}")
@@ -862,9 +1409,11 @@ class BajajBleManager private constructor(private val context: Context) {
         // Send initial general status packet immediately
         dispatchGeneralPacketOnBle()
 
-        // Send initial track metadata frame for TFT clusters
+        // Send initial track metadata, phonebook/call logs & playlist for TFT clusters
         if (isTftCluster()) {
             dispatchMusicInfoOnBle(force = true)
+            bleHandler.removeCallbacks(initialTftSyncRunnable)
+            bleHandler.postDelayed(initialTftSyncRunnable, 250L)
         }
 
         // Start 5-second general status heartbeat
@@ -885,10 +1434,16 @@ class BajajBleManager private constructor(private val context: Context) {
         if (prev != null && prev.contentEquals(b)) return
         lastControlBytes = b.clone()
 
-        if (!bootstrappedControls) {
+        controlFrameCount++
+        DebugLogRepository.bleRx("0a10", b)
+        if (!bootstrappedControls || controlFrameCount == 1) {
             bootstrappedControls = true
             callAcceptCount = frame.callAccept
             callRejectCount = frame.callReject
+            callRejectWithSmsCount = frame.callRejectWithSms
+            takeMeHomeCount = frame.takeMeHome
+            missedCallGetCount = frame.missedCallGet
+            alertGetCount = frame.alertGet
             resumeSongCount = frame.resumeSong
             pauseSongCount = frame.pauseSong
             skipToNextCount = frame.skipToNext
@@ -896,34 +1451,53 @@ class BajajBleManager private constructor(private val context: Context) {
             stopSongCount = frame.stopSong
             launchMediaPlayerCount = frame.launchMediaPlayer
             lastClusterVolumeNibble = frame.volumeToSet
+            lastDialSource = frame.dialSource
+            lastDialTxn = frame.dialTxn
+            dialEdgesArmed = (frame.dialSource == 0)
+            lastPagePlaylist = frame.pagePlaylist
+            lastNewPlaylistReq = frame.newPlaylistReq
+            lastSelectPlaylistSongReq = frame.selectPlaylistSongReq
             return
         }
 
         val tftMode = isTftCluster()
         var needsGeneralRefresh = false
         var needsMediaRefresh = false
+        var needsTbtRefresh = false
         val mediaManager = MediaControlManager.getInstance(context)
+        val phonebookManager = ClusterPhonebookManager.getInstance(context)
 
         if (frame.callAccept != callAcceptCount) {
             callAcceptCount = frame.callAccept
             needsGeneralRefresh = true
             if (currentCallState == CallState.INCOMING_CALL) {
                 Log.i(TAG, "Handlebar button: CALL ACCEPT pressed (${frame.callAccept})")
+                // acceptIncomingCall() calls acknowledgeCallAction(accept = true) to bump callAcceptAckCount once
                 CallManager.getInstance(context).acceptIncomingCall()
             } else if (!tftMode) {
+                callAcceptAckCount = (callAcceptAckCount + 1) and 0xFF
                 Log.i(TAG, "Handlebar button: MEDIA PLAY/PAUSE pressed")
                 mediaManager.handleHandlebarButton(isLongPress = false)
+            } else {
+                callAcceptAckCount = (callAcceptAckCount + 1) and 0xFF
             }
         }
         if (frame.callReject != callRejectCount) {
             callRejectCount = frame.callReject
             needsGeneralRefresh = true
-            if (currentCallState == CallState.INCOMING_CALL || currentCallState == CallState.ACTIVE_CALL) {
+            if (currentCallState == CallState.INCOMING_CALL ||
+                currentCallState == CallState.ACTIVE_CALL ||
+                currentCallState == CallState.OUTGOING_CALL
+            ) {
                 Log.i(TAG, "Handlebar button: CALL REJECT pressed (${frame.callReject})")
+                // rejectIncomingCall() calls acknowledgeCallAction(reject = true) to bump callRejectAckCount once
                 CallManager.getInstance(context).rejectIncomingCall()
             } else if (!tftMode) {
+                callRejectAckCount = (callRejectAckCount + 1) and 0xFF
                 Log.i(TAG, "Handlebar button: MEDIA NEXT TRACK pressed")
                 mediaManager.handleHandlebarButton(isLongPress = true)
+            } else {
+                callRejectAckCount = (callRejectAckCount + 1) and 0xFF
             }
         }
 
@@ -946,32 +1520,34 @@ class BajajBleManager private constructor(private val context: Context) {
             }
             if (frame.skipToNext != skipToNextCount) {
                 skipToNextCount = frame.skipToNext
-                Log.i(TAG, "TFT switchgear: NEXT TRACK (${frame.skipToNext})")
+                skipToNextAckCount = (skipToNextAckCount + 1) and 0xFF
+                Log.i(TAG, "TFT switchgear: NEXT TRACK (${frame.skipToNext}) -> ack=$skipToNextAckCount")
                 mediaManager.dispatchNext()
                 bleHandler.removeCallbacks(delayedMediaSyncRunnable)
                 bleHandler.postDelayed(delayedMediaSyncRunnable, 350)
                 needsGeneralRefresh = true
-                needsMediaRefresh = true
             }
             if (frame.skipToPrev != skipToPrevCount) {
                 skipToPrevCount = frame.skipToPrev
-                Log.i(TAG, "TFT switchgear: PREVIOUS TRACK (${frame.skipToPrev})")
+                skipToPrevAckCount = (skipToPrevAckCount + 1) and 0xFF
+                Log.i(TAG, "TFT switchgear: PREVIOUS TRACK (${frame.skipToPrev}) -> ack=$skipToPrevAckCount")
                 mediaManager.dispatchPrevious()
                 bleHandler.removeCallbacks(delayedMediaSyncRunnable)
                 bleHandler.postDelayed(delayedMediaSyncRunnable, 350)
                 needsGeneralRefresh = true
-                needsMediaRefresh = true
             }
             if (frame.stopSong != stopSongCount) {
                 stopSongCount = frame.stopSong
-                Log.i(TAG, "TFT switchgear: STOP SONG (${frame.stopSong})")
+                stopSongAckCount = (stopSongAckCount + 1) and 0xFF
+                Log.i(TAG, "TFT switchgear: STOP SONG (${frame.stopSong}) -> ack=$stopSongAckCount")
                 mediaManager.dispatchStop()
                 needsGeneralRefresh = true
                 needsMediaRefresh = true
             }
             if (frame.launchMediaPlayer != launchMediaPlayerCount) {
                 launchMediaPlayerCount = frame.launchMediaPlayer
-                Log.i(TAG, "TFT switchgear: LAUNCH MEDIA PLAYER (${frame.launchMediaPlayer})")
+                launchMediaPlayerAckCount = (launchMediaPlayerAckCount + 1) and 0xFF
+                Log.i(TAG, "TFT switchgear: LAUNCH MEDIA PLAYER (${frame.launchMediaPlayer}) -> ack=$launchMediaPlayerAckCount")
                 mediaManager.dispatchPlay()
                 needsGeneralRefresh = true
                 needsMediaRefresh = true
@@ -987,6 +1563,122 @@ class BajajBleManager private constructor(private val context: Context) {
                     needsGeneralRefresh = true
                 }
             }
+
+            if (frame.callRejectWithSms != callRejectWithSmsCount) {
+                callRejectWithSmsCount = frame.callRejectWithSms
+                Log.i(TAG, "TFT switchgear: CALL REJECT WITH SMS (${frame.callRejectWithSms})")
+                _lastClusterAction.value = "Call Reject + SMS"
+                if (currentCallState == CallState.INCOMING_CALL) {
+                    CallManager.getInstance(context).rejectIncomingCallWithSms()
+                } else {
+                    callRejectSmsAckCount = (callRejectSmsAckCount + 1) and 0xFF
+                    needsGeneralRefresh = true
+                }
+            }
+
+            if (frame.takeMeHome != takeMeHomeCount) {
+                takeMeHomeCount = frame.takeMeHome
+                takeMeHomeAckCount = (takeMeHomeAckCount + 1) and 0xFF
+                Log.i(TAG, "TFT switchgear: TAKE ME HOME (${frame.takeMeHome}) -> ack=$takeMeHomeAckCount")
+                val launched = NavigationIntentLauncher.launchHomeNavigation(context)
+                _lastClusterAction.value = if (launched) {
+                    "Take Me Home launched"
+                } else {
+                    "Take Me Home: set Home in Settings"
+                }
+                needsTbtRefresh = true
+            }
+
+            if (frame.missedCallGet != missedCallGetCount) {
+                missedCallGetCount = frame.missedCallGet
+                missedCallGetAckCount = (missedCallGetAckCount + 1) and 0xFF
+                Log.i(TAG, "TFT switchgear: MISSED CALL GET (${frame.missedCallGet}) -> ack=$missedCallGetAckCount")
+                _lastClusterAction.value = "Missed Call sync"
+                CallManager.getInstance(context).pushLatestMissedCallToCluster()
+                needsGeneralRefresh = true
+            }
+
+            if (frame.alertGet != alertGetCount) {
+                alertGetCount = frame.alertGet
+                alertGetAckCount = (alertGetAckCount + 1) and 0xFF
+                Log.i(TAG, "TFT switchgear: ALERT GET (${frame.alertGet}) -> ack=$alertGetAckCount")
+                _lastClusterAction.value = "Alert sync"
+                val cachedSender = lastAlertSenderName
+                if (!cachedSender.isNullOrBlank()) {
+                    sendWhatsAppAlert(cachedSender, lastAlertType)
+                }
+                needsGeneralRefresh = true
+            }
+
+            val dialTxnChanged = frame.dialTxn != lastDialTxn
+            if (!dialEdgesArmed && !dialTxnChanged) {
+                if (frame.dialSource == 0 || controlFrameCount >= 3) {
+                    dialEdgesArmed = true
+                }
+                lastDialSource = frame.dialSource
+                lastDialTxn = frame.dialTxn
+            } else {
+                dialEdgesArmed = true
+                val shouldDial = frame.dialSource != 0 && ((lastDialSource == 0) || dialTxnChanged)
+                lastDialSource = frame.dialSource
+                lastDialTxn = frame.dialTxn
+                if (shouldDial) {
+                    val sourceSnapshot = frame.dialSource
+                    val indexSnapshot = frame.dialIndex
+                    if (indexSnapshot !in 0 until ClusterPhonebookManager.MAX_CLUSTER_ENTRIES) {
+                        Log.w(TAG, "Ignoring out-of-range cluster dialIndex=$indexSnapshot (source=$sourceSnapshot)")
+                    } else if (currentCallState == CallState.NO_CALL) {
+                        phonebookExecutor.execute {
+                            val target = phonebookManager.resolveDialTarget(sourceSnapshot, indexSnapshot)
+                            if (target != null) {
+                                val (name, number) = target
+                                val placed = phonebookManager.placeClusterCall(name, number)
+                                runOnBle {
+                                    if (placed) {
+                                        CallManager.getInstance(context).notifyOutgoingDialFromCluster(name, number)
+                                        _lastClusterAction.value = "Dialing $name"
+                                    } else {
+                                        _lastClusterAction.value = "Dial failed (allow CALL_PHONE)"
+                                    }
+                                }
+                            } else {
+                                runOnBle {
+                                    _lastClusterAction.value = "No contact in slot ${indexSnapshot + 1}"
+                                }
+                            }
+                        }
+                    } else {
+                        Log.i(TAG, "Ignoring cluster dialback while callState=$currentCallState")
+                    }
+                }
+            }
+
+            val playlistPageChanged = frame.pagePlaylist != lastPagePlaylist
+            val newPlaylistRequested = frame.newPlaylistReq != lastNewPlaylistReq
+            if (playlistPageChanged || newPlaylistRequested) {
+                lastPagePlaylist = frame.pagePlaylist
+                lastNewPlaylistReq = frame.newPlaylistReq
+                val requestedPage = frame.pagePlaylist.takeIf { it > 0 } ?: 1
+                Log.i(TAG, "TFT switchgear: PLAYLIST page=$requestedPage, newReq=${frame.newPlaylistReq}")
+                dispatchPlaylistInfoOnBle(
+                    page = requestedPage,
+                    newPlaylistAckVal = frame.newPlaylistReq and 0x03
+                )
+            }
+
+            if (frame.selectPlaylistSongReq != lastSelectPlaylistSongReq) {
+                lastSelectPlaylistSongReq = frame.selectPlaylistSongReq
+                selectPlaylistSongAckCount = (selectPlaylistSongAckCount + 1) and 0xFF
+                val activePage = frame.pagePlaylist.takeIf { it > 0 } ?: pagePlaylistAck
+                mediaManager.selectPlaylistTrack(activePage, frame.selectedPlaylistSong)
+                Log.i(
+                    TAG,
+                    "TFT switchgear: SELECT PLAYLIST SONG slot=${frame.selectedPlaylistSong} page=$activePage -> ack=$selectPlaylistSongAckCount"
+                )
+                _lastClusterAction.value = "Playlist track #${frame.selectedPlaylistSong + 1}"
+                needsGeneralRefresh = true
+                needsMediaRefresh = true
+            }
         }
 
         if (needsGeneralRefresh) {
@@ -994,6 +1686,20 @@ class BajajBleManager private constructor(private val context: Context) {
         }
         if (needsMediaRefresh) {
             dispatchMusicInfoOnBle(force = true)
+        }
+        if (needsTbtRefresh && isLinkReady) {
+            if (isNavigationActive || _isSimulationRunning.value) {
+                bleHandler.removeCallbacks(tbtStreamRunnable)
+                bleHandler.post(tbtStreamRunnable)
+            } else {
+                tbtCharacteristic?.let { target ->
+                    enqueueWrite(
+                        target,
+                        OtcPacketBuilder.buildTbtStopFrame(takeMeHomeAck = takeMeHomeAckCount),
+                        priority = true
+                    )
+                }
+            }
         }
     }
 
@@ -1008,6 +1714,7 @@ class BajajBleManager private constructor(private val context: Context) {
     fun updateNavigationStep(step: ParsedNavigationStep) = runOnBle {
         activeNavStep = step
         isNavigationActive = true
+        _simulatedNavStep.value = null
         _currentActiveManeuver.value = step.maneuver
 
         bleHandler.removeCallbacks(tbtStreamRunnable)
@@ -1021,17 +1728,18 @@ class BajajBleManager private constructor(private val context: Context) {
     fun stopNavigation() = runOnBle {
         isNavigationActive = false
         activeNavStep = null
+        _simulatedNavStep.value = null
         _currentActiveManeuver.value = null
         bleHandler.removeCallbacks(tbtStreamRunnable)
 
         val stopFrame = OtcPacketBuilder.buildTbtStopFrame()
         if (isLinkReady) {
             _lastSentPacket.value = stopFrame
-            _lastSentPacketHex.value = OtcPacketBuilder.toHex(stopFrame)
             tbtCharacteristic?.let { char ->
                 enqueueWrite(char, stopFrame, priority = true)
             }
         }
+        DebugLogRepository.bleEvent("Navigation stopped (0110 TBT_STOP)")
     }
 
     /**
@@ -1062,8 +1770,13 @@ class BajajBleManager private constructor(private val context: Context) {
             roundaboutExit = roundaboutExit
         )
         activeNavStep = simStep
+        _simulatedNavStep.value = simStep
 
         Log.i(TAG, "▶Started Cluster Simulation for ${maneuver.description} ($distanceMeters m)")
+        DebugLogRepository.bleEvent(
+            "Simulation started: ${maneuver.description} (${distanceMeters}m)",
+            streetText
+        )
         bleHandler.removeCallbacks(tbtStreamRunnable)
         bleHandler.post(tbtStreamRunnable)
     }
@@ -1076,12 +1789,13 @@ class BajajBleManager private constructor(private val context: Context) {
             _isSimulationRunning.value = false
             _currentActiveManeuver.value = null
             activeNavStep = null
+            _simulatedNavStep.value = null
             bleHandler.removeCallbacks(tbtStreamRunnable)
 
             Log.i(TAG, "⏹Stopped Cluster Simulation -> Sending Stop Frame")
+            DebugLogRepository.bleEvent("Simulation stopped -> 0110 TBT_STOP")
             val stopFrame = OtcPacketBuilder.buildTbtStopFrame()
             _lastSentPacket.value = stopFrame
-            _lastSentPacketHex.value = OtcPacketBuilder.toHex(stopFrame)
             tbtCharacteristic?.let { char ->
                 if (isLinkReady) enqueueWrite(char, stopFrame, priority = true)
             }
@@ -1098,6 +1812,9 @@ class BajajBleManager private constructor(private val context: Context) {
         signalBars: Int = currentSignal,
         volume: Int = currentVolume
     ) = runOnBle {
+        if (batteryPercent == currentBattery && volume == currentVolume && signalBars == currentSignal) {
+            return@runOnBle
+        }
         currentBattery = batteryPercent
         currentVolume = volume
         currentSignal = signalBars
@@ -1122,7 +1839,6 @@ class BajajBleManager private constructor(private val context: Context) {
         currentMissedCount = missedCount
         val pkt = OtcPacketBuilder.buildMissedCallPacket(callerName, callerNumber)
         _lastSentPacket.value = pkt
-        _lastSentPacketHex.value = OtcPacketBuilder.toHex(pkt)
         missedCallCharacteristic?.let { target ->
             if (isLinkReady) enqueueWrite(target, pkt, priority = true)
         }
@@ -1132,31 +1848,29 @@ class BajajBleManager private constructor(private val context: Context) {
     fun acknowledgeCallAction(
         accept: Boolean = false,
         reject: Boolean = false,
-        @Suppress("UNUSED_PARAMETER") rejectSms: Boolean = false
+        rejectSms: Boolean = false
     ) = runOnBle {
-        if (accept) callAcceptCount = (callAcceptCount + 1) and 0xFF
-        if (reject) callRejectCount = (callRejectCount + 1) and 0xFF
+        if (accept) callAcceptAckCount = (callAcceptAckCount + 1) and 0xFF
+        if (reject) callRejectAckCount = (callRejectAckCount + 1) and 0xFF
+        if (rejectSms) callRejectSmsAckCount = (callRejectSmsAckCount + 1) and 0xFF
         if (isLinkReady) {
             dispatchGeneralPacketOnBle()
         }
     }
 
-    private val tftNameRegex = Regex("^pulsar\\d{4,}$")
+    private fun sanitizeBleName(raw: String?): String =
+        BleProtocolSafety.normalizeBleName(raw)
 
-    private fun sanitizeBleName(raw: String?): String {
-        return raw
-            ?.substringBefore('\u0000')
-            ?.trim()
-            .orEmpty()
-    }
+    private fun isTftCluster(deviceName: String = connectedDeviceName): Boolean =
+        BleProtocolSafety.isTftCluster(
+            deviceName = deviceName,
+            selectedModelId = com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId,
+            hasMediaInfoCharacteristic = mediaInfoCharacteristic != null
+        )
 
-    private fun isTftCluster(deviceName: String = connectedDeviceName): Boolean {
-        if (com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId == "ns400z") {
-            return true
-        }
-        val normalized = sanitizeBleName(deviceName).lowercase()
-        return normalized.contains("ns400") || tftNameRegex.matches(normalized)
-    }
+    fun isConnectedToTftCluster(): Boolean = isTftCluster()
+
+    fun getConnectedClusterName(): String = connectedDeviceName
 
     private fun dispatchGeneralPacketOnBle(allowInspectorPreviewWhenDisconnected: Boolean = false) {
         if (!isLinkReady && !allowInspectorPreviewWhenDisconnected) {
@@ -1168,19 +1882,22 @@ class BajajBleManager private constructor(private val context: Context) {
             signalBars = currentSignal,
             callState = currentCallState,
             callerName = currentCallerName,
-            callAcceptAck = callAcceptCount,
-            callRejectAck = callRejectCount,
+            callAcceptAck = callAcceptAckCount,
+            callRejectAck = callRejectAckCount,
+            callRejectSmsAck = callRejectSmsAckCount,
             missedCallCount = currentMissedCount,
+            missedCallGetAck = missedCallGetAckCount,
             resumeSongAck = resumeSongAckCount,
             pauseSongAck = pauseSongAckCount,
-            skipToNextAck = skipToNextCount,
-            skipToPrevAck = skipToPrevCount,
-            stopSongAck = stopSongCount,
-            launchMediaPlayerAck = launchMediaPlayerCount
+            skipToNextAck = skipToNextAckCount,
+            skipToPrevAck = skipToPrevAckCount,
+            stopSongAck = stopSongAckCount,
+            launchMediaPlayerAck = launchMediaPlayerAckCount,
+            alertsGetAck = alertGetAckCount,
+            selectPlaylistSongAck = selectPlaylistSongAckCount
         )
         if (isLinkReady || allowInspectorPreviewWhenDisconnected) {
             _lastSentPacket.value = pkt
-            _lastSentPacketHex.value = OtcPacketBuilder.toHex(pkt)
         }
         generalCharacteristic?.let { target ->
             if (isLinkReady) {
@@ -1194,7 +1911,7 @@ class BajajBleManager private constructor(private val context: Context) {
                         volumeLevel = currentVolume,
                         callState = currentCallState,
                         callerName = currentCallerName,
-                        callRejectAck = callRejectCount,
+                        callRejectAck = callRejectAckCount,
                         callRejectSmsAck = 0,
                         missedCallCount = currentMissedCount
                     )
@@ -1205,8 +1922,12 @@ class BajajBleManager private constructor(private val context: Context) {
     }
 
     private fun dispatchMusicInfoOnBle(force: Boolean = false) {
-        if (!isLinkReady) return
+        if (!isLinkReady || isDisconnecting) return
         val target = mediaInfoCharacteristic ?: return
+        if (!BleProtocolSafety.supportsMediaInfoWrites(negotiatedMtu)) {
+            Log.w(TAG, "Skipping 0610 Media Info sync: MTU=$negotiatedMtu < 114 required for 111B frame")
+            return
+        }
         val snapshot = MediaControlManager.getInstance(context).getActiveMediaSnapshot()
         if (!force && snapshot == lastMusicSnapshot) {
             return
@@ -1223,10 +1944,23 @@ class BajajBleManager private constructor(private val context: Context) {
         enqueueWrite(target, pkt, priority = force)
     }
 
-    fun sendWhatsAppAlert(senderName: String) = runOnBle {
-        val pkt = OtcPacketBuilder.buildWhatsAppAlertPacket(senderName)
+    fun sendWhatsAppAlert(
+        senderName: String,
+        alertType: AlertType = AlertType.WHATSAPP
+    ) = runOnBle {
+        lastAlertSenderName = senderName
+        lastAlertType = alertType
+        val ts = System.currentTimeMillis()
+        val alertSnapshot = SimulatedAlertInfo(senderName, alertType, ts)
+        _simulatedAlert.value = alertSnapshot
+        bleHandler.postDelayed({
+            if (_simulatedAlert.value?.timestampMs == ts) {
+                _simulatedAlert.value = null
+            }
+        }, 6000L)
+        val pkt = OtcPacketBuilder.buildWhatsAppAlertPacket(senderName, alertType)
         _lastSentPacket.value = pkt
-        _lastSentPacketHex.value = OtcPacketBuilder.toHex(pkt)
+        DebugLogRepository.bleTx("0410", pkt)
         alertsCharacteristic?.let { target ->
             if (isLinkReady) {
                 // Pause turn-by-turn stream for 6 seconds so the cluster doesn't immediately overwrite the alert
@@ -1236,19 +1970,101 @@ class BajajBleManager private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Queries starred contacts (0910) and recent/missed calls (0b10) off the BLE thread
+     * and dispatches them as single-PDU writes on TFT clusters.
+     */
+    fun syncPhonebookAndCalls() {
+        val gatt = bluetoothGatt
+        if (!isLinkReady || gatt == null || !isTftCluster()) return
+        if (!BleProtocolSafety.supportsFavRecentWrites(negotiatedMtu)) {
+            Log.d(
+                TAG,
+                "Skipping 0910/0b10 phonebook sync: MTU $negotiatedMtu < ${BleProtocolSafety.FAV_RECENT_PACKET_BYTES + BleProtocolSafety.ATT_HEADER_BYTES}"
+            )
+            return
+        }
+        val favChar = favContactsCharacteristic
+        val recentChar = recentCallsCharacteristic
+        if (favChar == null && recentChar == null) return
+
+        val phonebook = ClusterPhonebookManager.getInstance(context)
+        val callManager = CallManager.getInstance(context)
+        phonebookExecutor.execute {
+            val favs = phonebook.queryFavoriteContacts()
+            val recents = phonebook.queryRecentCalls()
+            val latestMissed = phonebook.getLatestMissedCall()
+            runOnBle {
+                if (!isLinkReady || !isTftCluster()) return@runOnBle
+                if (!BleProtocolSafety.supportsFavRecentWrites(negotiatedMtu)) return@runOnBle
+
+                favContactsCharacteristic?.let { target ->
+                    val favPkt = OtcPacketBuilder.buildFavContactsFrame(favs)
+                    enqueueWrite(target, favPkt, priority = false)
+                }
+                recentCallsCharacteristic?.let { target ->
+                    val recentPkt = OtcPacketBuilder.buildRecentCallsFrame(recents)
+                    enqueueWrite(target, recentPkt, priority = false)
+                }
+                _lastClusterAction.value = "Synced ${favs.size} favs, ${recents.size} recents"
+                Log.i(TAG, "Queued TFT phonebook sync: favs=${favs.size}, recents=${recents.size}")
+                DebugLogRepository.telephony("Phonebook", "Synced ${favs.size} favs & ${recents.size} recents to cluster")
+                if (latestMissed != null && missedCallGetCount > 0) {
+                    callManager.pushLatestMissedCallToCluster()
+                }
+            }
+        }
+    }
+
+    /**
+     * Encodes the current media queue / recent track page onto TFT characteristic 0510 (177B).
+     */
+    fun dispatchPlaylistInfoOnBle(
+        page: Int = pagePlaylistAck,
+        newPlaylistAckVal: Int = newPlaylistAck
+    ) = runOnBle {
+        if (!isLinkReady || !isTftCluster()) return@runOnBle
+        if (!BleProtocolSafety.supportsPlaylistWrites(negotiatedMtu)) {
+            Log.d(
+                TAG,
+                "Skipping 0510 playlist write: MTU $negotiatedMtu < ${BleProtocolSafety.PLAYLIST_PACKET_BYTES + BleProtocolSafety.ATT_HEADER_BYTES}"
+            )
+            return@runOnBle
+        }
+        val target = playlistInfoCharacteristic ?: return@runOnBle
+        val mediaManager = MediaControlManager.getInstance(context)
+        val playlistPage = mediaManager.buildClusterPlaylistPage(
+            requestedPage = page,
+            newPlaylistAck = newPlaylistAckVal
+        )
+        pagePlaylistAck = playlistPage.pagePlaylistAck
+        newPlaylistAck = playlistPage.newPlaylistAck
+        val pkt = OtcPacketBuilder.buildPlaylistFrame(
+            trackTitles = playlistPage.trackTitles,
+            totalSongs = playlistPage.totalSongs,
+            totalPages = playlistPage.totalPages,
+            currentTrackNumber = playlistPage.currentTrackNumber,
+            pagePlaylistAck = playlistPage.pagePlaylistAck,
+            newPlaylistAck = playlistPage.newPlaylistAck,
+            userChangePlaylistCounter = playlistPage.userChangePlaylistCounter
+        )
+        enqueueWrite(target, pkt, priority = false)
+    }
+
     // =========================================================================
     // Serialized GATT Write Queue (runs exclusively on bleHandler)
     // =========================================================================
 
     private fun enqueueWrite(char: BluetoothGattCharacteristic, packet: ByteArray, priority: Boolean = false) {
-        if (!isLinkReady && char.uuid == TBT_NAV_CHAR_UUID) {
-            Log.w(TAG, "Write skipped: link not ready")
+        if (!isLinkReady || isDisconnecting) {
+            Log.w(TAG, "Write skipped (${char.uuid}): link not ready or disconnecting")
             return
         }
 
+        val tft = isTftCluster()
         // TFT clusters (NS400Z / PULSAR1854) and 0610 media info require WRITE_TYPE_DEFAULT (ATT Write Request),
         // while legacy LCD clusters (NS200) use WRITE_TYPE_NO_RESPONSE for real-time telemetry/alerts.
-        val useWriteDefault = (char.uuid == MEDIA_INFO_CHAR_UUID || isTftCluster()) &&
+        val useWriteDefault = (char.uuid == MEDIA_INFO_CHAR_UUID || tft) &&
             (char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
         val writeType = if (useWriteDefault) {
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
@@ -1258,6 +2074,19 @@ class BajajBleManager private constructor(private val context: Context) {
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         } else {
             BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        }
+
+        val isDefaultWriteType = writeType == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        if (!BleProtocolSafety.fitsSingleAttWrite(tft, isDefaultWriteType, packet.size, negotiatedMtu)) {
+            Log.w(
+                TAG,
+                "Blocked ATT Long Write to ${char.uuid}: packet ${packet.size}B > max single-PDU payload ${BleProtocolSafety.maxSingleWritePayload(negotiatedMtu)}B (mtu=$negotiatedMtu)"
+            )
+            DebugLogRepository.error(
+                "BLE_SAFETY",
+                "Blocked Long Write (${charShortUuid(char.uuid)}): ${packet.size}B > ${BleProtocolSafety.maxSingleWritePayload(negotiatedMtu)}B (mtu=$negotiatedMtu)"
+            )
+            return
         }
 
         // TBT frames are time-sensitive: drop stale TBT writes from the queue before inserting
@@ -1272,10 +2101,13 @@ class BajajBleManager private constructor(private val context: Context) {
             }
         }
 
-        enqueueOp(QueuedGattOp.WriteCharacteristic(char, packet, writeType, priority = priority))
+        enqueueOp(QueuedGattOp.WriteCharacteristic(char, packet, writeType, sessionId = activeGattSessionId, priority = priority))
     }
 
     private fun enqueueOp(op: QueuedGattOp) {
+        if (op.sessionId != activeGattSessionId) {
+            return
+        }
         if (op.priority) {
             // Priority frames jump ahead of normal heartbeat frames while preserving relative order
             val snapshot = ArrayList(writeQueue)
@@ -1303,20 +2135,35 @@ class BajajBleManager private constructor(private val context: Context) {
     }
 
     private fun processNextWrite() {
-        if (isWriting) return
+        if (isWriting || ctlReadPending) return
         val gatt = bluetoothGatt ?: return
         val item = writeQueue.pollFirst() ?: return
 
         isWriting = true
         if (item is QueuedGattOp.WriteCharacteristic) {
             _lastSentPacket.value = item.data
-            _lastSentPacketHex.value = OtcPacketBuilder.toHex(item.data)
+            val shortId = charShortUuid(item.characteristic.uuid)
+            when (shortId) {
+                "0110" -> {
+                    val typeBits = if (item.data.isNotEmpty()) item.data[0].toInt() and 0xFF else 0
+                    val iconByte = if (item.data.size > 1) item.data[1].toInt() and 0xFF else 0
+                    val decodedKey = "0110:$typeBits:$iconByte:${item.data.size}"
+                    DebugLogRepository.bleTx("0110", item.data, rateLimitKey = decodedKey, minIntervalMs = 4_000L)
+                }
+                "0210" -> {
+                    val callByte = if (item.data.size > 18) item.data[18].toInt() and 0xFF else 0
+                    val batByte = if (item.data.size > 14) item.data[14].toInt() and 0xFF else 0
+                    val rateKey = "0210:${item.data.size}:$callByte:$batByte"
+                    DebugLogRepository.bleTx("0210", item.data, rateLimitKey = rateKey, minIntervalMs = 15_000L)
+                }
+                else -> DebugLogRepository.bleTx(shortId, item.data)
+            }
         }
 
         bleHandler.removeCallbacks(writeTimeoutWatchdog)
         val timeout = when (item) {
             is QueuedGattOp.WriteCharacteristic ->
-                if (item.writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) 100L else 1200L
+                if (item.writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) WRITE_NO_RESPONSE_TIMEOUT_MS else 1200L
             is QueuedGattOp.WriteDescriptor -> 1200L
         }
         bleHandler.postDelayed(writeTimeoutWatchdog, timeout)
@@ -1350,19 +2197,69 @@ class BajajBleManager private constructor(private val context: Context) {
             if (!ok) {
                 bleHandler.removeCallbacks(writeTimeoutWatchdog)
                 isWriting = false
-                if (item.attempts < 2) {
+                if (item.attempts < 2 && item.sessionId == activeGattSessionId) {
                     item.attempts++
-                    bleHandler.postDelayed({
-                        enqueueOp(item)
-                    }, 100L)
+                    val retryRunnable = object : Runnable {
+                        override fun run() {
+                            pendingRetryRunnables.remove(this)
+                            if (item.sessionId == activeGattSessionId && !isDisconnecting) {
+                                enqueueOp(item)
+                            } else {
+                                advanceWriteQueueOrFinishDisconnect()
+                            }
+                        }
+                    }
+                    pendingRetryRunnables.add(retryRunnable)
+                    bleHandler.postDelayed(retryRunnable, 100L)
+                    if (writeQueue.isNotEmpty()) {
+                        advanceWriteQueueOrFinishDisconnect()
+                    }
                 } else {
-                    processNextWrite()
+                    advanceWriteQueueOrFinishDisconnect()
                 }
             }
         } catch (e: Exception) {
             bleHandler.removeCallbacks(writeTimeoutWatchdog)
             Log.w(TAG, "Exception during GATT write: ${e.message}")
             isWriting = false
+            advanceWriteQueueOrFinishDisconnect()
+        }
+    }
+
+    private fun charShortUuid(uuid: UUID): String {
+        return uuid.toString().substring(0, 4).lowercase(java.util.Locale.US)
+    }
+
+    fun getDebugDiagnosticsSummary(): String {
+        val gatt = bluetoothGatt
+        val bondState = try {
+            gatt?.device?.bondState ?: -1
+        } catch (_: SecurityException) {
+            -1
+        }
+        val bondLabel = when (bondState) {
+            BluetoothDevice.BOND_BONDED -> "BONDED"
+            BluetoothDevice.BOND_BONDING -> "BONDING"
+            BluetoothDevice.BOND_NONE -> "NONE"
+            else -> "N/A"
+        }
+        return "BLE ready=$isLinkReady • tft=${isTftCluster()} • mtu=$negotiatedMtu • bond=$bondLabel • call=$currentCallState"
+    }
+
+    private fun handleStaleBondAuthFailure(status: Int) {
+        val msg = "Cluster pairing key mismatch (GATT $status) — forget bike in Bluetooth Settings and re-pair"
+        Log.e(TAG, msg)
+        DebugLogRepository.error("BLE_AUTH", msg)
+        bondFailedForSession = true
+        endRideSessionIfActive()
+        closeGatt(callDisconnect = true)
+        _connectionState.value = BleConnectionState.Error(msg)
+    }
+
+    private fun advanceWriteQueueOrFinishDisconnect() {
+        if (isDisconnecting && writeQueue.isEmpty()) {
+            finishDisconnectCleanup()
+        } else {
             processNextWrite()
         }
     }

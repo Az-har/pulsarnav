@@ -8,6 +8,8 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
 import android.util.Log
 import com.pulsarnav.app.model.Maneuver
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Identifies the turn maneuver from Google Maps notification icons by shape-matching against
@@ -82,31 +84,36 @@ object ManeuverMatcher {
     @Volatile
     private var templateBank: TemplateBank? = null
     @Volatile
-    private var isBuilding = false
-    @Volatile
     private var lastBuildAttemptMs = 0L
     @Volatile
     private var appContext: Context? = null
+    private val primeScheduled = AtomicBoolean(false)
+    private val primeExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "maneuver-matcher-prime").apply { isDaemon = true }
+    }
 
     fun prime(context: Context) {
         if (appContext == null) {
             appContext = context.applicationContext
         }
-        if (templateBank == null && !isBuilding) {
-            Thread({
-                ensureBuilt()
-            }, "maneuver-matcher-prime").start()
+        if (templateBank == null && primeScheduled.compareAndSet(false, true)) {
+            primeExecutor.execute {
+                try {
+                    ensureBuilt()
+                } finally {
+                    primeScheduled.set(false)
+                }
+            }
         }
     }
 
     @Synchronized
     private fun ensureBuilt() {
-        if (templateBank != null || isBuilding) return
+        if (templateBank != null) return
         val ctx = appContext ?: return
         val now = System.currentTimeMillis()
         if (now - lastBuildAttemptMs < 60_000L) return
         lastBuildAttemptMs = now
-        isBuilding = true
 
         val startMs = System.currentTimeMillis()
         val builtTemplates = mutableListOf<BooleanArray>()
@@ -149,8 +156,6 @@ object ManeuverMatcher {
             Log.i(TAG, "Maneuver templates built: ${builtTemplates.size} in ${System.currentTimeMillis() - startMs}ms")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to build Google Maps maneuver templates: ${e.message}")
-        } finally {
-            isBuilding = false
         }
     }
 
@@ -222,12 +227,24 @@ object ManeuverMatcher {
     }
 
     private fun normalize(b: Bitmap): BooleanArray? {
+        if (b.isRecycled) return null
         val w = b.width
         val h = b.height
         if (w <= 0 || h <= 0) return null
 
+        val swBitmap: Bitmap = if (b.config == Bitmap.Config.HARDWARE) {
+            b.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+        } else {
+            b
+        }
         val pixels = IntArray(w * h)
-        b.getPixels(pixels, 0, w, 0, 0, w, h)
+        try {
+            swBitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        } finally {
+            if (swBitmap !== b) {
+                swBitmap.recycle()
+            }
+        }
 
         var hasAlpha = false
         for (p in pixels) {

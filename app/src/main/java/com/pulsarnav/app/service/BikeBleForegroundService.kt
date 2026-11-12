@@ -1,5 +1,6 @@
 package com.pulsarnav.app.service
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,11 +8,19 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
+import com.pulsarnav.app.ble.BajajBleManager
+import com.pulsarnav.app.ble.BleConnectionState
 import com.pulsarnav.app.ui.MainActivity
+import com.pulsarnav.app.wifi.TftWifiMirrorManager
 
 class BikeBleForegroundService : Service {
 
@@ -22,8 +31,22 @@ class BikeBleForegroundService : Service {
         const val CHANNEL_ID = "pulsar_nav_channel"
         const val NOTIFICATION_ID = 1001
 
+        const val ACTION_START_TFT_COCKPIT_MIRROR = "com.pulsarnav.action.START_TFT_COCKPIT_MIRROR"
+        const val ACTION_START_TFT_LIVE_CAST = "com.pulsarnav.action.START_TFT_LIVE_CAST"
+        const val ACTION_STOP_TFT_MIRROR = "com.pulsarnav.action.STOP_TFT_MIRROR"
+        const val ACTION_DROP_MEDIA_PROJECTION = "com.pulsarnav.action.DROP_MEDIA_PROJECTION"
+        const val EXTRA_PROJECTION_RESULT_CODE = "extra_projection_result_code"
+        const val EXTRA_PROJECTION_DATA = "extra_projection_data"
+        const val EXTRA_KEEP_WIFI_MIRROR = "extra_keep_wifi_mirror"
+
         @Volatile
         private var isRunning = false
+
+        @Volatile
+        private var isWifiMirrorActive = false
+
+        @Volatile
+        private var isMediaProjectionActive = false
 
         fun isRunning(): Boolean = isRunning
 
@@ -33,24 +56,84 @@ class BikeBleForegroundService : Service {
                 return
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val hasBtConnect = androidx.core.content.ContextCompat.checkSelfPermission(
+                val hasBtConnect = ContextCompat.checkSelfPermission(
                     context,
                     android.Manifest.permission.BLUETOOTH_CONNECT
-                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) == PackageManager.PERMISSION_GRANTED
                 if (!hasBtConnect) {
                     Log.w(TAG, "Cannot start BikeBleForegroundService: BLUETOOTH_CONNECT permission not granted.")
                     return
                 }
             }
+            launchServiceIntent(context, Intent(context, BikeBleForegroundService::class.java))
+        }
+
+        fun startForTftCockpitMirror(context: Context) {
+            val intent = Intent(context, BikeBleForegroundService::class.java).apply {
+                action = ACTION_START_TFT_COCKPIT_MIRROR
+            }
+            launchServiceIntent(context, intent)
+        }
+
+        fun startForTftLiveCast(context: Context, resultCode: Int, data: Intent) {
+            val intent = Intent(context, BikeBleForegroundService::class.java).apply {
+                action = ACTION_START_TFT_LIVE_CAST
+                putExtra(EXTRA_PROJECTION_RESULT_CODE, resultCode)
+                putExtra(EXTRA_PROJECTION_DATA, data)
+            }
+            launchServiceIntent(context, intent)
+        }
+
+        fun stopTftMirror(context: Context) {
+            if (!isRunning) {
+                isWifiMirrorActive = false
+                isMediaProjectionActive = false
+                TftWifiMirrorManager.getInstance(context).stopMirroring()
+                return
+            }
+            val intent = Intent(context, BikeBleForegroundService::class.java).apply {
+                action = ACTION_STOP_TFT_MIRROR
+            }
             try {
-                val intent = Intent(context, BikeBleForegroundService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
+                context.startService(intent)
+            } catch (_: Exception) {
+                isWifiMirrorActive = false
+                isMediaProjectionActive = false
+                TftWifiMirrorManager.getInstance(context).stopMirroring()
+            }
+        }
+
+        fun dropMediaProjection(context: Context, keepWifiMirror: Boolean = true) {
+            if (!isRunning) {
+                isMediaProjectionActive = false
+                if (!keepWifiMirror) {
+                    isWifiMirrorActive = false
                 }
+                return
+            }
+            val intent = Intent(context, BikeBleForegroundService::class.java).apply {
+                action = ACTION_DROP_MEDIA_PROJECTION
+                putExtra(EXTRA_KEEP_WIFI_MIRROR, keepWifiMirror)
+            }
+            try {
+                context.startService(intent)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start BikeBleForegroundService: ${e.message}", e)
+                Log.w(TAG, "Failed to update FGS MediaProjection state: ${e.message}")
+            }
+        }
+
+        private fun launchServiceIntent(context: Context, intent: Intent) {
+            try {
+                context.startForegroundService(intent)
+            } catch (e: Exception) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e is ForegroundServiceStartNotAllowedException) {
+                    Log.w(
+                        TAG,
+                        "Skipped starting BikeBleForegroundService from background (Android 12+ restriction): ${e.message}"
+                    )
+                } else {
+                    Log.e(TAG, "Failed to start BikeBleForegroundService: ${e.message}", e)
+                }
             }
         }
 
@@ -70,7 +153,9 @@ class BikeBleForegroundService : Service {
         super.onCreate()
         acquireWakeLock()
         initCallManagerIfPermitted()
-        promoteToForeground()
+        // Foreground promotion intentionally happens inside onStartCommand() once the Intent action
+        // (BLE vs TFT Wi-Fi Mirror vs MediaProjection) is known, preventing premature BLUETOOTH_CONNECT
+        // rejections or ForegroundServiceDidNotStartInTimeException during Wi-Fi-only launches.
     }
 
     private fun acquireWakeLock() {
@@ -103,51 +188,204 @@ class BikeBleForegroundService : Service {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         acquireWakeLock()
         initCallManagerIfPermitted()
-        promoteToForeground()
+
+        when (intent?.action) {
+            ACTION_START_TFT_COCKPIT_MIRROR -> {
+                isWifiMirrorActive = true
+                isMediaProjectionActive = false
+                promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = true)
+                TftWifiMirrorManager.getInstance(this).startCockpitHudMirroring()
+            }
+            ACTION_START_TFT_LIVE_CAST -> {
+                val resultCode = intent.getIntExtra(EXTRA_PROJECTION_RESULT_CODE, android.app.Activity.RESULT_CANCELED)
+                val data = IntentCompat.getParcelableExtra(intent, EXTRA_PROJECTION_DATA, Intent::class.java)
+                if (data != null) {
+                    isWifiMirrorActive = true
+                    isMediaProjectionActive = true
+                    // Android 14+ requires startForeground with MEDIA_PROJECTION BEFORE getMediaProjection().
+                    promoteToForeground(includeMediaProjection = true, allowWifiWithoutBt = true)
+                    val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+                    val projection = mpm?.getMediaProjection(resultCode, data)
+                    if (projection != null) {
+                        val started = TftWifiMirrorManager.getInstance(this).startLiveScreenMirroring(projection)
+                        if (!started) {
+                            Log.w(TAG, "Live screen cast failed to start; dropping MediaProjection FGS type")
+                            isMediaProjectionActive = false
+                            isWifiMirrorActive = false
+                            if (isBleIdleForService()) {
+                                isRunning = false
+                                stopSelf()
+                                return START_NOT_STICKY
+                            } else {
+                                promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = false)
+                            }
+                        }
+                    } else {
+                        Log.w(TAG, "MediaProjection handle was null; falling back to Cockpit HUD")
+                        isMediaProjectionActive = false
+                        promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = true)
+                        TftWifiMirrorManager.getInstance(this).startCockpitHudMirroring()
+                    }
+                } else {
+                    isWifiMirrorActive = true
+                    isMediaProjectionActive = false
+                    promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = true)
+                    TftWifiMirrorManager.getInstance(this).startCockpitHudMirroring()
+                }
+            }
+            ACTION_DROP_MEDIA_PROJECTION -> {
+                val keepWifi = intent.getBooleanExtra(EXTRA_KEEP_WIFI_MIRROR, true)
+                isMediaProjectionActive = false
+                isWifiMirrorActive = keepWifi
+                if (!keepWifi && isBleIdleForService()) {
+                    promoteMinimalBeforeAbort()
+                    isRunning = false
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = keepWifi)
+            }
+            ACTION_STOP_TFT_MIRROR -> {
+                isWifiMirrorActive = false
+                isMediaProjectionActive = false
+                TftWifiMirrorManager.getInstance(this).stopMirroring()
+                if (isBleIdleForService()) {
+                    promoteMinimalBeforeAbort()
+                    isRunning = false
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = false)
+            }
+            else -> {
+                val started = promoteToForeground(
+                    includeMediaProjection = isMediaProjectionActive,
+                    allowWifiWithoutBt = isWifiMirrorActive
+                )
+                if (!started) {
+                    return START_NOT_STICKY
+                }
+            }
+        }
         return START_STICKY
     }
 
-    private fun promoteToForeground() {
+    private fun isBleIdleForService(): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val hasBtConnect = androidx.core.content.ContextCompat.checkSelfPermission(
+            val hasBtConnect = ContextCompat.checkSelfPermission(
                 this,
                 android.Manifest.permission.BLUETOOTH_CONNECT
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (!hasBtConnect) {
-                Log.w(TAG, "Aborting promoteToForeground: BLUETOOTH_CONNECT permission not granted.")
-                isRunning = false
-                stopSelf()
-                return
-            }
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasBtConnect) return true
         }
+        val state = BajajBleManager.getInstance(this).connectionState.value
+        return state is BleConnectionState.Disconnected || state is BleConnectionState.Error
+    }
+
+    private fun promoteMinimalBeforeAbort() {
+        if (isRunning) return
         try {
             createNotificationChannel()
             val notification = buildNotification(
-                "Pulsar Navigation Active",
-                "Maintaining Bluetooth link with bike cluster"
+                "Pulsar Navigation",
+                "Stopping background service"
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+        } catch (_: Exception) {
+            // Best-effort foreground promotion before immediate stopSelf().
+        }
+    }
+
+    private fun promoteToForeground(
+        includeMediaProjection: Boolean = false,
+        allowWifiWithoutBt: Boolean = false
+    ): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !allowWifiWithoutBt && !includeMediaProjection) {
+            val hasBtConnect = ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasBtConnect) {
+                Log.w(TAG, "Aborting promoteToForeground: BLUETOOTH_CONNECT permission not granted.")
+                promoteMinimalBeforeAbort()
+                isRunning = false
+                stopSelf()
+                return false
+            }
+        }
+        try {
+            createNotificationChannel()
+            val notifContent = if (includeMediaProjection) {
+                "Casting live screen & navigation over TFT Wi-Fi"
+            } else {
+                "Maintaining cluster Bluetooth & TFT Wi-Fi link"
+            }
+            val notification = buildNotification(
+                "Pulsar Navigation Active",
+                notifContent
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val hasFineLocation = ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                val hasCoarseLocation = ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                var desiredTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                if (hasFineLocation || hasCoarseLocation) {
+                    desiredTypes = desiredTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                }
+                if (includeMediaProjection) {
+                    desiredTypes = desiredTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                }
+                try {
+                    startForeground(NOTIFICATION_ID, notification, desiredTypes)
+                } catch (sec: SecurityException) {
+                    val fallbackTypes = if (includeMediaProjection) {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                    } else {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                    }
+                    if (desiredTypes != fallbackTypes) {
+                        Log.w(TAG, "Optional FGS type unavailable; falling back to $fallbackTypes: ${sec.message}")
+                        startForeground(NOTIFICATION_ID, notification, fallbackTypes)
+                    } else {
+                        throw sec
+                    }
+                }
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
             isRunning = true
-            Log.d(TAG, "BikeBleForegroundService successfully promoted to foreground")
+            Log.d(TAG, "BikeBleForegroundService promoted to foreground (mediaProjection=$includeMediaProjection, wifi=$allowWifiWithoutBt)")
+            return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to promote service to foreground: ${e.message}", e)
             isRunning = false
             // CRITICAL: If startForeground fails on Android 12+, stopSelf immediately
             // to fulfill OS contract and avoid ForegroundServiceDidNotStartInTimeException
             stopSelf()
+            return false
         }
     }
 
     override fun onDestroy() {
         isRunning = false
+        isWifiMirrorActive = false
+        isMediaProjectionActive = false
+        try {
+            TftWifiMirrorManager.getInstance(this).stopMirroring()
+        } catch (_: Exception) {}
         try {
             wakeLock?.let {
                 if (it.isHeld) it.release()
@@ -161,17 +399,15 @@ class BikeBleForegroundService : Service {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Pulsar Navigation Service",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Keeps Bluetooth connection active with Bajaj Pulsar cluster"
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Pulsar Navigation Service",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Keeps Bluetooth connection active with Bajaj Pulsar cluster"
         }
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(channel)
     }
 
     private fun buildNotification(title: String, content: String): Notification {

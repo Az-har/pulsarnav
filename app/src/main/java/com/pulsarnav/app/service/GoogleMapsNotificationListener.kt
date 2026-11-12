@@ -1,7 +1,6 @@
 package com.pulsarnav.app.service
 
 import android.app.Notification
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -9,6 +8,8 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.pulsarnav.app.ble.BajajBleManager
+import com.pulsarnav.app.debug.DebugCategory
+import com.pulsarnav.app.debug.DebugLogRepository
 import com.pulsarnav.app.parser.GoogleMapsNotificationParser
 import com.pulsarnav.app.parser.ManeuverMatcher
 import com.pulsarnav.app.parser.ParsedNavigationStep
@@ -44,9 +45,6 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
 
         private val _lastWhatsAppAlert = MutableStateFlow<WhatsAppAlertInfo?>(null)
         val lastWhatsAppAlert: StateFlow<WhatsAppAlertInfo?> = _lastWhatsAppAlert
-
-        private val _isServiceActive = MutableStateFlow(false)
-        val isServiceActive: StateFlow<Boolean> = _isServiceActive
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -72,15 +70,14 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        _isServiceActive.value = true
         ManeuverMatcher.prime(this)
         Log.i(TAG, "Notification Listener connected (Google Maps TBT + WhatsApp Alerts)")
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
-        _isServiceActive.value = false
         Log.w(TAG, "Notification Listener disconnected")
+        DebugLogRepository.error("NotifListener", "Notification Listener service disconnected")
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -150,7 +147,15 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         activeNavPackage = sbn.packageName
         _currentNavStep.value = parsedStep
 
-        Log.d(TAG, "[$sourceName] TBT: ${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m on ${parsedStep.streetName} (ETA: ${parsedStep.etaHour}:${parsedStep.etaMinute})")
+        Log.d(TAG, "[$sourceName] TBT: ${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m (ETA: ${parsedStep.etaHour}:${parsedStep.etaMinute})")
+        DebugLogRepository.logRateLimited(
+            key = "maps_${parsedStep.maneuver.name}_${parsedStep.distanceMeters}",
+            minIntervalMs = 2_500L,
+            category = DebugCategory.MAPS,
+            tag = sourceName,
+            summary = "${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m",
+            detail = parsedStep.streetName
+        )
 
         // Ensure background persistent service is running while navigating without spamming startForegroundService
         if (!BikeBleForegroundService.isRunning()) {
@@ -194,7 +199,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         // Waze stores the maneuver turn arrow in notification.smallIcon (not in extras).
         // Fall back to it so the ManeuverMatcher icon-based classifier gets a chance to run.
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) notification.smallIcon else null
+            notification.smallIcon
         } catch (_: Exception) {
             null
         }
@@ -202,7 +207,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
 
     private fun handleWhatsAppNotification(sbn: StatusBarNotification) {
         val notification = sbn.notification ?: return
-        if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
+        if ((notification.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_GROUP_SUMMARY)) != 0) return
 
         val extras = notification.extras ?: return
 
@@ -226,7 +231,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
 
         val senderTitle = rawTitle.trim()
 
-        Log.i(TAG, "WhatsApp message alert intercepted from: $senderTitle")
+        Log.i(TAG, "WhatsApp message alert intercepted from: ${DebugLogRepository.maskPersonName(senderTitle)}")
         _lastWhatsAppAlert.value = WhatsAppAlertInfo(senderTitle)
 
         val bleManager = BajajBleManager.getInstance(applicationContext)

@@ -2,9 +2,6 @@ package com.pulsarnav.app.data
 
 import android.content.Context
 import android.content.SharedPreferences
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -50,6 +47,8 @@ class AppSettings(context: Context) {
         const val KEY_PREFERRED_NAV_APP = "preferred_nav_app"
         const val KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT = "skip_cluster_nav_when_headunit"
 
+        const val DEFAULT_REJECT_SMS_TEMPLATE = "I'm riding right now. I'll call you later."
+
         const val NAV_APP_GOOGLE_MAPS = "google_maps"
         const val NAV_APP_WAZE = "waze"
 
@@ -79,6 +78,24 @@ class AppSettings(context: Context) {
         const val KEY_DOC_PUC_CERT = "doc_puc_cert"
         const val KEY_DOC_PUC_EXPIRY = "doc_puc_expiry"
         const val KEY_DOC_PUC_PATH = "doc_puc_path"
+
+        const val KEY_TFT_WIFI_SSID = "tft_wifi_ssid"
+        const val KEY_TFT_WIFI_VIN = "tft_wifi_vin"
+        const val KEY_TFT_WIFI_PASSPHRASE = "tft_wifi_passphrase"
+
+        const val KEY_SMS_REJECT_ENABLED = "feature_sms_reject_enabled"
+        const val KEY_SMS_REJECT_MESSAGE = "feature_sms_reject_message"
+        const val KEY_FAV_PLACE_ADDRESS = "quicknav_fav_address"
+        const val KEY_HOME_LAT = "quicknav_home_lat"
+        const val KEY_HOME_LNG = "quicknav_home_lng"
+        const val KEY_WORK_LAT = "quicknav_work_lat"
+        const val KEY_WORK_LNG = "quicknav_work_lng"
+        const val KEY_FAV_PLACE_LAT = "quicknav_fav_lat"
+        const val KEY_FAV_PLACE_LNG = "quicknav_fav_lng"
+        const val KEY_NAV_V2_ROUTE_MODE = "nav_v2_route_mode"
+        const val KEY_NAV_V2_UNITS = "nav_v2_units"
+        const val KEY_NAV_V2_AVOID_BITMASK = "nav_v2_avoid_bitmask"
+        const val KEY_NAV_V2_RECENT_DESTS_JSON = "nav_v2_recent_dests_json"
 
         const val THEME_WINE_RED = "wine_red"
         const val THEME_AMOLED = "amoled"
@@ -168,84 +185,52 @@ class AppSettings(context: Context) {
         }
     }
 
-    private val _autoParkFlow = MutableStateFlow(getSafeBoolean(KEY_AUTO_PARK, true))
-    val autoParkFlow: StateFlow<Boolean> = _autoParkFlow.asStateFlow()
-
-    private val _autoConnectFlow = MutableStateFlow(getSafeBoolean(KEY_AUTO_CONNECT, true))
-    val autoConnectFlow: StateFlow<Boolean> = _autoConnectFlow.asStateFlow()
-
-    private val _rideTrackingFlow = MutableStateFlow(getSafeBoolean(KEY_RIDE_TRACKING, true))
-    val rideTrackingFlow: StateFlow<Boolean> = _rideTrackingFlow.asStateFlow()
-
-    private val _mediaControlFlow = MutableStateFlow(getSafeBoolean(KEY_MEDIA_CONTROL, true))
-    val mediaControlFlow: StateFlow<Boolean> = _mediaControlFlow.asStateFlow()
-
-    private val _whatsappAlertsFlow = MutableStateFlow(getSafeBoolean(KEY_WHATSAPP_ALERTS, true))
-    val whatsappAlertsFlow: StateFlow<Boolean> = _whatsappAlertsFlow.asStateFlow()
-
-    private val _maintenanceAlertsFlow = MutableStateFlow(getSafeBoolean(KEY_MAINTENANCE_ALERTS, true))
-    val maintenanceAlertsFlow: StateFlow<Boolean> = _maintenanceAlertsFlow.asStateFlow()
-
-    private val _telemetrySyncFlow = MutableStateFlow(getSafeBoolean(KEY_TELEMETRY_SYNC, true))
-    val telemetrySyncFlow: StateFlow<Boolean> = _telemetrySyncFlow.asStateFlow()
-
-    private val _twoWheelerModeFlow = MutableStateFlow(getSafeBoolean(KEY_TWO_WHEELER_MODE, true))
-    val twoWheelerModeFlow: StateFlow<Boolean> = _twoWheelerModeFlow.asStateFlow()
-
     var isAutoParkEnabled: Boolean
-        get() = _autoParkFlow.value
+        get() = getSafeBoolean(KEY_AUTO_PARK, true)
         set(value) {
             prefs.edit().putBoolean(KEY_AUTO_PARK, value).apply()
-            _autoParkFlow.value = value
         }
 
     var isRideTrackingEnabled: Boolean
-        get() = _rideTrackingFlow.value
+        get() = getSafeBoolean(KEY_RIDE_TRACKING, true)
         set(value) {
             prefs.edit().putBoolean(KEY_RIDE_TRACKING, value).apply()
-            _rideTrackingFlow.value = value
         }
 
     var isMediaControlEnabled: Boolean
-        get() = _mediaControlFlow.value
+        get() = getSafeBoolean(KEY_MEDIA_CONTROL, true)
         set(value) {
             prefs.edit().putBoolean(KEY_MEDIA_CONTROL, value).apply()
-            _mediaControlFlow.value = value
         }
 
     var isWhatsAppAlertsEnabled: Boolean
-        get() = _whatsappAlertsFlow.value
+        get() = getSafeBoolean(KEY_WHATSAPP_ALERTS, true)
         set(value) {
             prefs.edit().putBoolean(KEY_WHATSAPP_ALERTS, value).apply()
-            _whatsappAlertsFlow.value = value
         }
 
     var isMaintenanceAlertsEnabled: Boolean
-        get() = _maintenanceAlertsFlow.value
+        get() = getSafeBoolean(KEY_MAINTENANCE_ALERTS, true)
         set(value) {
             prefs.edit().putBoolean(KEY_MAINTENANCE_ALERTS, value).apply()
-            _maintenanceAlertsFlow.value = value
         }
 
     var isTelemetrySyncEnabled: Boolean
-        get() = _telemetrySyncFlow.value
+        get() = getSafeBoolean(KEY_TELEMETRY_SYNC, true)
         set(value) {
             prefs.edit().putBoolean(KEY_TELEMETRY_SYNC, value).apply()
-            _telemetrySyncFlow.value = value
         }
 
     var isTwoWheelerMode: Boolean
-        get() = _twoWheelerModeFlow.value
+        get() = getSafeBoolean(KEY_TWO_WHEELER_MODE, true)
         set(value) {
             prefs.edit().putBoolean(KEY_TWO_WHEELER_MODE, value).apply()
-            _twoWheelerModeFlow.value = value
         }
 
     var isAutoConnectEnabled: Boolean
-        get() = _autoConnectFlow.value
+        get() = getSafeBoolean(KEY_AUTO_CONNECT, true)
         set(value) {
             prefs.edit().putBoolean(KEY_AUTO_CONNECT, value).apply()
-            _autoConnectFlow.value = value
         }
 
     var homeAddress: String
@@ -434,21 +419,6 @@ class AppSettings(context: Context) {
             prefs.edit().putLong(KEY_LAST_SYNC_MS, value).apply()
         }
 
-    var purchaseDateMs: Long
-        get() = getSafeLong(KEY_PURCHASE_DATE_MS, System.currentTimeMillis())
-        set(value) {
-            prefs.edit().putLong(KEY_PURCHASE_DATE_MS, value).apply()
-        }
-
-    val daysOfOwnership: Int
-        get() {
-            val diffMs = (System.currentTimeMillis() - purchaseDateMs).coerceAtLeast(0L)
-            return (diffMs / 86400000L).toInt()
-        }
-
-    val formattedPurchaseDate: String
-        get() = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(purchaseDateMs))
-
     var riderBloodGroup: String
         get() = prefs.getString(KEY_RIDER_BLOOD_GROUP, "Not Specified") ?: "Not Specified"
         set(value) {
@@ -520,6 +490,83 @@ class AppSettings(context: Context) {
         set(value) {
             prefs.edit().putString(KEY_DOC_PUC_PATH, value).apply()
         }
+
+    var tftWifiSsid: String
+        get() = prefs.getString(KEY_TFT_WIFI_SSID, "") ?: ""
+        set(value) {
+            prefs.edit().putString(KEY_TFT_WIFI_SSID, value.trim()).apply()
+        }
+
+    var tftWifiVin: String
+        get() = prefs.getString(KEY_TFT_WIFI_VIN, "") ?: ""
+        set(value) {
+            prefs.edit().putString(KEY_TFT_WIFI_VIN, value.trim()).apply()
+        }
+
+    var tftWifiPassphrase: String
+        get() = prefs.getString(KEY_TFT_WIFI_PASSPHRASE, "") ?: ""
+        set(value) {
+            prefs.edit().putString(KEY_TFT_WIFI_PASSPHRASE, value).apply()
+        }
+
+    var isSmsRejectEnabled: Boolean
+        get() = getSafeBoolean(KEY_SMS_REJECT_ENABLED, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SMS_REJECT_ENABLED, value).apply()
+        }
+
+    var smsRejectMessage: String
+        get() = prefs.getString(KEY_SMS_REJECT_MESSAGE, DEFAULT_REJECT_SMS_TEMPLATE)
+            ?: DEFAULT_REJECT_SMS_TEMPLATE
+        set(value) {
+            prefs.edit().putString(KEY_SMS_REJECT_MESSAGE, value.trim()).apply()
+        }
+
+    var favPlaceAddress: String
+        get() = prefs.getString(KEY_FAV_PLACE_ADDRESS, "") ?: ""
+        set(value) {
+            prefs.edit().putString(KEY_FAV_PLACE_ADDRESS, value.trim()).apply()
+        }
+
+    var homeLat: Double
+        get() = prefs.getString(KEY_HOME_LAT, "0.0")?.toDoubleOrNull() ?: 0.0
+        set(value) { prefs.edit().putString(KEY_HOME_LAT, value.toString()).apply() }
+
+    var homeLng: Double
+        get() = prefs.getString(KEY_HOME_LNG, "0.0")?.toDoubleOrNull() ?: 0.0
+        set(value) { prefs.edit().putString(KEY_HOME_LNG, value.toString()).apply() }
+
+    var workLat: Double
+        get() = prefs.getString(KEY_WORK_LAT, "0.0")?.toDoubleOrNull() ?: 0.0
+        set(value) { prefs.edit().putString(KEY_WORK_LAT, value.toString()).apply() }
+
+    var workLng: Double
+        get() = prefs.getString(KEY_WORK_LNG, "0.0")?.toDoubleOrNull() ?: 0.0
+        set(value) { prefs.edit().putString(KEY_WORK_LNG, value.toString()).apply() }
+
+    var favPlaceLat: Double
+        get() = prefs.getString(KEY_FAV_PLACE_LAT, "0.0")?.toDoubleOrNull() ?: 0.0
+        set(value) { prefs.edit().putString(KEY_FAV_PLACE_LAT, value.toString()).apply() }
+
+    var favPlaceLng: Double
+        get() = prefs.getString(KEY_FAV_PLACE_LNG, "0.0")?.toDoubleOrNull() ?: 0.0
+        set(value) { prefs.edit().putString(KEY_FAV_PLACE_LNG, value.toString()).apply() }
+
+    var navV2RouteMode: Int
+        get() = getSafeInt(KEY_NAV_V2_ROUTE_MODE, 0)
+        set(value) { prefs.edit().putInt(KEY_NAV_V2_ROUTE_MODE, value.coerceIn(0, 3)).apply() }
+
+    var navV2Units: Int
+        get() = getSafeInt(KEY_NAV_V2_UNITS, 0)
+        set(value) { prefs.edit().putInt(KEY_NAV_V2_UNITS, value.coerceIn(0, 1)).apply() }
+
+    var navV2AvoidBitmask: Int
+        get() = getSafeInt(KEY_NAV_V2_AVOID_BITMASK, 0)
+        set(value) { prefs.edit().putInt(KEY_NAV_V2_AVOID_BITMASK, value and 0x0F).apply() }
+
+    var navV2RecentDestsJson: String
+        get() = prefs.getString(KEY_NAV_V2_RECENT_DESTS_JSON, "[]") ?: "[]"
+        set(value) { prefs.edit().putString(KEY_NAV_V2_RECENT_DESTS_JSON, value).apply() }
 
     fun getBikeIssues(): MutableList<BikeIssue> {
         val raw = prefs.getString(KEY_BIKE_ISSUES_JSON, null)
@@ -646,15 +693,5 @@ class AppSettings(context: Context) {
             }
         }
         editor.apply()
-
-        // Reload StateFlows for instant UI response
-        _autoParkFlow.value = prefs.getBoolean(KEY_AUTO_PARK, true)
-        _rideTrackingFlow.value = prefs.getBoolean(KEY_RIDE_TRACKING, true)
-        _mediaControlFlow.value = prefs.getBoolean(KEY_MEDIA_CONTROL, true)
-        _whatsappAlertsFlow.value = prefs.getBoolean(KEY_WHATSAPP_ALERTS, true)
-        _maintenanceAlertsFlow.value = prefs.getBoolean(KEY_MAINTENANCE_ALERTS, true)
-        _telemetrySyncFlow.value = prefs.getBoolean(KEY_TELEMETRY_SYNC, true)
-        _twoWheelerModeFlow.value = prefs.getBoolean(KEY_TWO_WHEELER_MODE, true)
-        _autoConnectFlow.value = prefs.getBoolean(KEY_AUTO_CONNECT, true)
     }
 }

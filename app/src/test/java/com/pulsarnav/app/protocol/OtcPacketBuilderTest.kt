@@ -248,6 +248,152 @@ class OtcPacketBuilderTest {
     }
 
     @Test
+    fun buildWhatsAppAlertPacket_matches44ByteOemLayoutAndClampsLength() {
+        val packet = OtcPacketBuilder.buildWhatsAppAlertPacket("A".repeat(40))
+        assertEquals(OtcPacketBuilder.ALERT_PACKET_SIZE, packet.size)
+        assertEquals(AlertType.WHATSAPP.value, packet[0])
+        assertEquals(32.toByte(), packet[1])
+        assertEquals("A".repeat(32), String(packet, 2, 32, StandardCharsets.UTF_8))
+        val ts = ((packet[34].toLong() and 0xFF) shl 24) or
+            ((packet[35].toLong() and 0xFF) shl 16) or
+            ((packet[36].toLong() and 0xFF) shl 8) or
+            (packet[37].toLong() and 0xFF)
+        assertTrue("Expected positive big-endian epoch seconds, got $ts", ts > 1_700_000_000L)
+        for (i in 38 until OtcPacketBuilder.ALERT_PACKET_SIZE) {
+            assertEquals("Expected zero padding at $i", 0, packet[i].toInt())
+        }
+    }
+
+    @Test
+    fun buildMissedCallPacket_matches63ByteOemLayout() {
+        val packet = OtcPacketBuilder.buildMissedCallPacket("Mom", "+91 98765-43210")
+        assertEquals(OtcPacketBuilder.MISSED_CALL_PACKET_SIZE, packet.size)
+        assertEquals(1.toByte(), packet[0])
+        assertEquals(3.toByte(), packet[1])
+        assertEquals("Mom", String(packet, 2, 3, StandardCharsets.UTF_8))
+        assertEquals(13.toByte(), packet[34])
+        assertEquals("+919876543210", String(packet, 35, 13, StandardCharsets.US_ASCII))
+        for (i in 57 until OtcPacketBuilder.MISSED_CALL_PACKET_SIZE) {
+            assertEquals("Expected zero padding at $i", 0, packet[i].toInt())
+        }
+    }
+
+    @Test
+    fun buildFavContactsAndRecentCallsFrames_match151ByteOemWireLayout() {
+        val favs = listOf(
+            ClusterContactEntry(name = "Dad (Mobile)", number = "+91 98765 43210"),
+            ClusterContactEntry(name = "Mom", number = "9123456789")
+        )
+        val favFrame = OtcPacketBuilder.buildFavContactsFrame(favs)
+        assertEquals(OtcPacketBuilder.FAV_CONTACTS_PACKET_SIZE, favFrame.size)
+        assertEquals(0xC0.toByte(), favFrame[0])
+        assertEquals(0x20.toByte(), favFrame[1])
+        assertEquals(10.toByte(), favFrame[2])
+        assertEquals("Dad (Mobil", String(favFrame, 3, 10, StandardCharsets.US_ASCII))
+        assertEquals(12.toByte(), favFrame[13])
+        assertEquals("919876543210", String(favFrame, 14, 12, StandardCharsets.US_ASCII))
+        assertEquals(3.toByte(), favFrame[29])
+        assertEquals("Mom", String(favFrame, 30, 3, StandardCharsets.US_ASCII))
+        assertChecksumValid(favFrame, 150)
+
+        val recents = listOf(
+            ClusterRecentCallEntry("ServiceCtr", "+91-8000011111", RecentCallStatus.OUTGOING),
+            ClusterRecentCallEntry("Rider Two", "9998887776", RecentCallStatus.MISSED),
+            ClusterRecentCallEntry("Friend", "9777666555", RecentCallStatus.INCOMING)
+        )
+        val recentFrame = OtcPacketBuilder.buildRecentCallsFrame(recents)
+        assertEquals(OtcPacketBuilder.RECENT_CALLS_PACKET_SIZE, recentFrame.size)
+        assertEquals(0x80.toByte(), recentFrame[0])
+        assertEquals(0x30.toByte(), recentFrame[1])
+        assertEquals(RecentCallStatus.OUTGOING.value.toByte(), recentFrame[137])
+        assertEquals(RecentCallStatus.MISSED.value.toByte(), recentFrame[138])
+        assertEquals(RecentCallStatus.INCOMING.value.toByte(), recentFrame[139])
+        assertEquals(0.toByte(), recentFrame[140])
+        assertChecksumValid(recentFrame, 150)
+    }
+
+    @Test
+    fun buildPlaylistAndResetFrames_match177ByteOemWireLayout() {
+        val frame = OtcPacketBuilder.buildPlaylistFrame(
+            trackTitles = listOf("Hello old friend! feat Pulsar NS", "Night Ride"),
+            totalSongs = 7,
+            totalPages = 2,
+            currentTrackNumber = 1,
+            pagePlaylistAck = 2,
+            newPlaylistAck = 1,
+            userChangePlaylistCounter = 10
+        )
+        assertEquals(OtcPacketBuilder.PLAYLIST_PACKET_SIZE, frame.size)
+        assertEquals(((1 shl 6) or 2).toByte(), frame[0])
+        assertEquals(7.toByte(), frame[1])
+        assertEquals(2.toByte(), frame[2])
+        assertEquals(1.toByte(), frame[3])
+        assertEquals(10.toByte(), frame[4])
+        assertEquals(0x1F.toByte(), frame[5])
+        assertEquals(32.toByte(), frame[6])
+        assertEquals("Hello old friend! feat Pulsar NS", String(frame, 7, 32, StandardCharsets.UTF_8))
+        assertEquals(10.toByte(), frame[39])
+        assertEquals("Night Ride", String(frame, 40, 10, StandardCharsets.UTF_8))
+
+        val reset = OtcPacketBuilder.buildResetPlaylistFrame(pagePlaylistAck = 1, newPlaylistAck = 2, userChangePlaylistCounter = 4)
+        assertEquals(OtcPacketBuilder.PLAYLIST_PACKET_SIZE, reset.size)
+        assertEquals(((2 shl 6) or 1).toByte(), reset[0])
+        assertEquals(4.toByte(), reset[4])
+        assertEquals(0x1F.toByte(), reset[5])
+        assertEquals(0.toByte(), reset[1])
+        assertEquals(0.toByte(), reset[6])
+    }
+
+    @Test
+    fun parseControlFrame_decodesDialSourceIndexTxnPlaylistAndTakeMeHome() {
+        val raw = ByteArray(26)
+        raw[0] = ((2 shl 6) or 7).toByte() // dialSource=2 (Recent), volume=7
+        raw[3] = 5 // callRejectWithSms
+        raw[4] = ((1 shl 6) or 3).toByte() // newPlaylistReq=1, pagePlaylist=3
+        raw[5] = 2 // takeMeHome
+        raw[11] = 4 // missedCallGet
+        raw[12] = 9 // alertGet
+        raw[14] = 2 // selectPlaylistSongReq
+        raw[15] = 4 // selectedPlaylistSong
+        raw[16] = 3 // dialIndex
+        raw[17] = 11 // dialTxn
+
+        val frame = OtcPacketBuilder.parseControlFrame(raw)!!
+        assertEquals(7, frame.volumeToSet)
+        assertEquals(2, frame.dialSource)
+        assertEquals(5, frame.callRejectWithSms)
+        assertEquals(3, frame.pagePlaylist)
+        assertEquals(1, frame.newPlaylistReq)
+        assertEquals(2, frame.takeMeHome)
+        assertEquals(4, frame.missedCallGet)
+        assertEquals(9, frame.alertGet)
+        assertEquals(2, frame.selectPlaylistSongReq)
+        assertEquals(4, frame.selectedPlaylistSong)
+        assertEquals(3, frame.dialIndex)
+        assertEquals(11, frame.dialTxn)
+
+        val tbtWithHomeAck = OtcPacketBuilder.buildTbtFrame(
+            type = 1,
+            maneuverIcon = Maneuver.STRAIGHT.opcode.toInt(),
+            stepMeters = 200,
+            totalMeters = 5000,
+            takeMeHomeAck = 2
+        )
+        assertEquals(2.toByte(), tbtWithHomeAck[13])
+        assertChecksumValid(tbtWithHomeAck, 47)
+
+        val outgoing = OtcPacketBuilder.buildGeneralPacketV2(
+            batteryPercent = 80,
+            volumeLevel = 5,
+            signalBars = 4,
+            callState = CallState.OUTGOING_CALL,
+            callerName = "Dad"
+        )
+        assertEquals(1.toByte(), outgoing[18])
+        assertChecksumValid(outgoing, 88)
+    }
+
+    @Test
     fun vehicleCatalog_containsNs400zProfile() {
         val model = VehicleCatalog.getModelById("ns400z")
         assertEquals("ns400z", model.id)

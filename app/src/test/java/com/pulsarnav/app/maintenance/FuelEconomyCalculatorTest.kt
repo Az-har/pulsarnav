@@ -37,4 +37,46 @@ class FuelEconomyCalculatorTest {
         assertEquals(0.0, stats.averageKmpl, 0.001)
         assertEquals(0.0, stats.costPerKm, 0.001)
     }
+
+    @Test
+    fun computeSyncedOdometer_preventsBackdatedRegressionAndAllowsTopTypoFix() {
+        assertEquals(2500.0, FuelEconomyCalculator.computeSyncedOdometerAfterAdd(2500.0, 1800.0), 0.001)
+        assertEquals(2620.0, FuelEconomyCalculator.computeSyncedOdometerAfterAdd(2500.0, 2620.0), 0.001)
+
+        val e1 = FuelEntry("1", 1_000L, 1000.0, 5.0, 500.0, null, true)
+        val e2 = FuelEntry("2", 2_000L, 1250.0, 5.0, 500.0, null, true)
+
+        // Editing an older historical entry never pulls down current bike ODO
+        assertEquals(
+            1250.0,
+            FuelEconomyCalculator.computeSyncedOdometerAfterUpdate(
+                currentBikeOdoKm = 1250.0,
+                oldEntryOdoKm = 1000.0,
+                allUpdatedEntries = listOf(e2, e1.copy(odometerKm = 990.0))
+            ),
+            0.001
+        )
+
+        // Correcting a typo on the top entry that matched the current bike ODO restores true highest ODO
+        assertEquals(
+            1250.0,
+            FuelEconomyCalculator.computeSyncedOdometerAfterUpdate(
+                currentBikeOdoKm = 9250.0,
+                oldEntryOdoKm = 9250.0,
+                allUpdatedEntries = listOf(e2, e1)
+            ),
+            0.001
+        )
+
+        // If GPS trips already pushed ODO past that entry, keep higher GPS ODO
+        assertEquals(
+            1400.0,
+            FuelEconomyCalculator.computeSyncedOdometerAfterUpdate(
+                currentBikeOdoKm = 1400.0,
+                oldEntryOdoKm = 1250.0,
+                allUpdatedEntries = listOf(e2.copy(odometerKm = 1240.0), e1)
+            ),
+            0.001
+        )
+    }
 }

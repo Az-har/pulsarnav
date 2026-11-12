@@ -27,10 +27,4 @@ enum class Maneuver(val opcode: Byte, val description: String) {
     FERRY(89, "Ferry"),
     KEEP_LEFT(90, "Keep Left"),
     WRONG_WAY(66, "Wrong Way");
-
-    companion object {
-        fun fromOpcode(opcode: Byte): Maneuver {
-            return entries.firstOrNull { it.opcode == opcode } ?: STRAIGHT
-        }
-    }
 }

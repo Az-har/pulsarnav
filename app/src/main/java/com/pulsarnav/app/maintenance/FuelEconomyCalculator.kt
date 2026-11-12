@@ -82,4 +82,31 @@ object FuelEconomyCalculator {
 
         return FuelStats(avgKmpl, totalSpent, costPerKm)
     }
+
+    /**
+     * Prevents backdated fuel entries from regressing the bike's current odometer.
+     */
+    fun computeSyncedOdometerAfterAdd(currentBikeOdoKm: Double, newEntryOdoKm: Double): Double =
+        maxOf(currentBikeOdoKm, newEntryOdoKm)
+
+    /**
+     * Syncs the odometer after editing a fuel entry:
+     * - Historical or lower-than-bike edits never regress the current bike odometer.
+     * - Correcting an inflated typo on the entry that set the current odometer lowers it back to the
+     *   true highest fuel odometer across all remaining entries.
+     */
+    fun computeSyncedOdometerAfterUpdate(
+        currentBikeOdoKm: Double,
+        oldEntryOdoKm: Double,
+        allUpdatedEntries: List<FuelEntry>
+    ): Double {
+        val highestFuelOdo = allUpdatedEntries.maxOfOrNull { it.odometerKm } ?: currentBikeOdoKm
+        val wasTopOrMatchingBikeOdo =
+            kotlin.math.abs(currentBikeOdoKm - oldEntryOdoKm) < 0.11 && oldEntryOdoKm >= highestFuelOdo
+        return if (wasTopOrMatchingBikeOdo) {
+            highestFuelOdo
+        } else {
+            maxOf(currentBikeOdoKm, highestFuelOdo)
+        }
+    }
 }

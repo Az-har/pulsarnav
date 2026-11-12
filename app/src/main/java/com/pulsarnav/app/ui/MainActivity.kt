@@ -1,18 +1,23 @@
 package com.pulsarnav.app.ui
 
 import android.app.DatePickerDialog
+import android.app.Dialog
 import android.view.WindowManager
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -25,9 +30,8 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import com.pulsarnav.app.data.VehicleCatalog
-import com.pulsarnav.app.data.BikeModelProfile
-import com.pulsarnav.app.data.CountryProfile
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -49,6 +53,9 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.android.material.snackbar.Snackbar
 import com.pulsarnav.app.data.DataVaultManager
 import com.pulsarnav.app.data.VaultPassphraseRequiredException
+import com.pulsarnav.app.maintenance.GloveboxDocumentStatus
+import com.pulsarnav.app.maintenance.GloveboxExpiryEvaluator
+import com.pulsarnav.app.maintenance.MaintenanceMath
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -60,8 +67,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
@@ -72,18 +82,24 @@ import com.pulsarnav.app.ble.BleConnectionState
 import com.pulsarnav.app.ble.DiscoveredBike
 import com.pulsarnav.app.data.AppSettings
 import com.pulsarnav.app.databinding.ActivityMainBinding
+import com.pulsarnav.app.debug.DebugFilter
+import com.pulsarnav.app.debug.DebugLogRepository
 import com.pulsarnav.app.location.ParkingManager
 import com.pulsarnav.app.maintenance.FuelLogManager
 import com.pulsarnav.app.maintenance.MaintenanceManager
 import com.pulsarnav.app.media.MediaControlManager
 import com.pulsarnav.app.model.Maneuver
+import com.pulsarnav.app.navigation.NavigationIntentLauncher
 import com.pulsarnav.app.protocol.CallState
 import com.pulsarnav.app.service.BikeBleForegroundService
 import com.pulsarnav.app.service.GoogleMapsNotificationListener
 import com.pulsarnav.app.telemetry.PhoneTelemetryManager
 import com.pulsarnav.app.telephony.CallManager
-import com.pulsarnav.app.tracking.RideTracker
-import com.pulsarnav.app.tracking.Trip
+import com.pulsarnav.app.wifi.TftMirrorSource
+import com.pulsarnav.app.wifi.TftMirrorStatus
+import com.pulsarnav.app.wifi.TftPasswordGenerator
+import com.pulsarnav.app.wifi.TftWifiMirrorManager
+import com.pulsarnav.app.wifi.TftWifiProtocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -102,7 +118,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var telemetryManager: PhoneTelemetryManager
     private lateinit var appSettings: AppSettings
     private lateinit var parkingManager: ParkingManager
-    private lateinit var rideTracker: RideTracker
     private lateinit var maintenanceManager: MaintenanceManager
     private lateinit var fuelLogManager: FuelLogManager
     private lateinit var mediaControlManager: MediaControlManager
@@ -132,6 +147,18 @@ class MainActivity : AppCompatActivity() {
         uri?.let { importVaultFromUri(it) }
     }
 
+    private val tftScreenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == android.app.Activity.RESULT_OK && data != null) {
+            BikeBleForegroundService.startForTftLiveCast(this, result.resultCode, data)
+            showFeedback("Starting 800×480 live screen cast to TFT cluster...")
+        } else {
+            showFeedback("Live screen cast cancelled")
+        }
+    }
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -148,11 +175,58 @@ class MainActivity : AppCompatActivity() {
         }
 
         updateHardwareReadinessUi()
+        updateTelephonyPermissionsUi()
         if (btGranted) {
             bleManager.startAutoConnect(force = true)
         } else {
             showFeedback("Bluetooth permissions are required to connect to your bike", isAlert = true)
         }
+    }
+
+    private val telephonyPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        telemetryManager.initialize()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
+            callManager.initialize()
+        }
+        updateTelephonyPermissionsUi()
+        val remaining = getMissingTelephonyPermissions()
+        if (remaining.isEmpty()) {
+            showFeedback("Call log, contacts, dial & SMS permissions granted")
+        } else {
+            showFeedback("Some telephony/POI permissions remain disabled (${remaining.size} left)", isAlert = true)
+        }
+        bleManager.syncPhonebookAndCalls()
+        bleManager.dispatchPlaylistInfoOnBle()
+    }
+
+    private var pendingTftWifiAction: (() -> Unit)? = null
+    private val tftWifiPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        val action = pendingTftWifiAction
+        pendingTftWifiAction = null
+        if (getMissingTftWifiPermissions().isEmpty()) {
+            action?.invoke()
+        } else {
+            showFeedback("Grant Nearby Wi-Fi / Location permission to start TFT Wi-Fi mirroring", isAlert = true)
+        }
+    }
+
+    private var activeDebugFilter: DebugFilter = DebugFilter.ALL
+    private var isDebugLogPaused: Boolean = false
+    private var fullscreenTftDialog: Dialog? = null
+    private var fullscreenTftImageView: ImageView? = null
+    private var fullscreenTftMetricsView: TextView? = null
+    private var fullscreenTftTouchView: TextView? = null
+    private var refreshTftPreviewCallback: (() -> Unit)? = null
+    private val previewDecodeLock = Any()
+    private val previewBitmapSlots = arrayOfNulls<Bitmap>(2)
+    private var previewBitmapSlotIdx = 0
+
+    private fun renderLatestTftPreviewIfVisible() {
+        refreshTftPreviewCallback?.invoke()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -184,14 +258,13 @@ class MainActivity : AppCompatActivity() {
         callManager = CallManager.getInstance(this)
         telemetryManager = PhoneTelemetryManager.getInstance(this)
         parkingManager = ParkingManager.getInstance(this)
-        rideTracker = RideTracker.getInstance(this)
         maintenanceManager = MaintenanceManager.getInstance(this)
         fuelLogManager = FuelLogManager.getInstance(this)
         mediaControlManager = MediaControlManager.getInstance(this)
 
+        telemetryManager.initialize()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
             callManager.initialize()
-            telemetryManager.initialize()
         }
 
         // Setup UI Sections
@@ -205,6 +278,8 @@ class MainActivity : AppCompatActivity() {
         updateHeroRangeDisplay()
         updateBikeIssuesSummary()
         updateEmergencyHomeCard()
+        updateTelephonyPermissionsUi()
+        updateSmsRejectUi()
         setupSupportAndAccountDialogs()
         setupFeatureToggles()
         setupThemeSelector()
@@ -220,6 +295,8 @@ class MainActivity : AppCompatActivity() {
 
         // Observers
         observeBleState()
+        observeTftWifiMirror()
+        setupTftAndLogDebugger()
         observeNavigation()
         observeTelephonyAndAlerts()
         observeTelemetry()
@@ -235,8 +312,6 @@ class MainActivity : AppCompatActivity() {
         // Show introduction / vehicle setup on first launch if not configured yet
         updateQuickNavButtons()
         updateFuelPriceUi()
-        updateBikeIssuesSummary()
-        updateNavAppSelectionUi()
         binding.tvAppVersionTitle.text = "PulsarNav Companion v${com.pulsarnav.app.BuildConfig.VERSION_NAME}"
 
         binding.root.post {
@@ -295,9 +370,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        DataVaultManager.getInstance(this).pruneExportCache()
         updateNotificationAccessUi()
         updateBatteryOptimizationUi()
         updateHardwareReadinessUi()
+        updateTelephonyPermissionsUi()
+        updateSmsRejectUi()
         updateBikeInfoDisplay()
         updateQuickNavButtons()
         updateFuelPriceUi()
@@ -308,6 +386,32 @@ class MainActivity : AppCompatActivity() {
         if (bleManager.connectionState.value is BleConnectionState.Disconnected) {
             checkAndStartScan(silent = true)
         }
+    }
+
+    override fun onDestroy() {
+        fullscreenTftDialog?.dismiss()
+        fullscreenTftDialog = null
+        fullscreenTftImageView = null
+        fullscreenTftMetricsView = null
+        fullscreenTftTouchView = null
+        if (::binding.isInitialized) {
+            binding.labsTftDebug.ivTftDebugPreview.setImageDrawable(null)
+        }
+        synchronized(previewDecodeLock) {
+            for (i in previewBitmapSlots.indices) {
+                previewBitmapSlots[i]?.let { bmp ->
+                    if (!bmp.isRecycled) bmp.recycle()
+                }
+                previewBitmapSlots[i] = null
+            }
+        }
+        if (!isChangingConfigurations) {
+            TftWifiMirrorManager.getInstance(this).stopLocalDebugPreview()
+        }
+        if (isFinishing && !isChangingConfigurations) {
+            DataVaultManager.getInstance(this).clearExportCache()
+        }
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -440,21 +544,11 @@ class MainActivity : AppCompatActivity() {
         binding.scrollSettings.visibility = View.GONE
 
         targetView.visibility = View.VISIBLE
-        return true
-    }
-
-    private fun getPillChipDrawable(active: Boolean, theme: CockpitTheme): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dpToPx(20).toFloat()
-            if (active) {
-                setColor(theme.subtleColor)
-                setStroke(dpToPx(2), theme.accentColor)
-            } else {
-                setColor(theme.cardColor)
-                setStroke(dpToPx(1), theme.cardBorderColor)
-            }
+        if (targetView === binding.scrollSettings) {
+            renderLatestTftPreviewIfVisible()
+            renderDebugLogsUi(DebugLogRepository.entries.value, forceRender = true)
         }
+        return true
     }
 
     private fun setupClusterRecalibrate() {
@@ -566,7 +660,16 @@ class MainActivity : AppCompatActivity() {
         } else {
             "Upload RC, Insurance & PUC certificates"
         }
-        binding.tvDocumentsBadge.text = if (uploadedCount > 0) "$uploadedCount Uploaded" else "0 Uploaded"
+        val insStatus = GloveboxExpiryEvaluator.evaluate(hasIns, appSettings.docInsuranceExpiry)
+        val pucStatus = GloveboxExpiryEvaluator.evaluate(hasPuc, appSettings.docPucExpiry)
+        binding.tvDocumentsBadge.text = when {
+            insStatus == GloveboxDocumentStatus.EXPIRED || pucStatus == GloveboxDocumentStatus.EXPIRED ->
+                "$uploadedCount • EXPIRED"
+            insStatus == GloveboxDocumentStatus.EXPIRING_SOON || pucStatus == GloveboxDocumentStatus.EXPIRING_SOON ->
+                "$uploadedCount • EXPIRING"
+            uploadedCount > 0 -> "$uploadedCount Uploaded"
+            else -> "0 Uploaded"
+        }
     }
 
     private fun updateBikeInvestmentDisplay() {
@@ -758,6 +861,48 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // TFT Wi-Fi Full-Screen Mirroring Controls (NS400Z / Bajaj TFT)
+        binding.btnConfigureTftWifi.setOnClickListener {
+            provideHapticFeedback()
+            showTftWifiConfigDialog()
+        }
+        binding.btnToggleTftHudMirror.setOnClickListener {
+            provideHapticFeedback()
+            val wifiMgr = TftWifiMirrorManager.getInstance(this)
+            val mirrorState = wifiMgr.mirrorState.value
+            if (mirrorState.status != TftMirrorStatus.IDLE && mirrorState.status != TftMirrorStatus.ERROR) {
+                BikeBleForegroundService.stopTftMirror(this)
+                showFeedback("TFT Wi-Fi mirror stopped")
+            } else {
+                val missingWifi = getMissingTftWifiPermissions()
+                if (missingWifi.isNotEmpty()) {
+                    pendingTftWifiAction = { startTftHudMirror() }
+                    tftWifiPermissionLauncher.launch(missingWifi.toTypedArray())
+                } else {
+                    startTftHudMirror()
+                }
+            }
+        }
+        binding.btnCastLiveScreen.setOnClickListener {
+            provideHapticFeedback()
+            val mirrorState = TftWifiMirrorManager.getInstance(this).mirrorState.value
+            if (mirrorState.source == TftMirrorSource.LIVE_SCREEN_CAST &&
+                mirrorState.status != TftMirrorStatus.IDLE &&
+                mirrorState.status != TftMirrorStatus.ERROR
+            ) {
+                BikeBleForegroundService.stopTftMirror(this)
+                showFeedback("Live TFT cast stopped")
+            } else {
+                val missingWifi = getMissingTftWifiPermissions()
+                if (missingWifi.isNotEmpty()) {
+                    pendingTftWifiAction = { launchTftScreenCapture() }
+                    tftWifiPermissionLauncher.launch(missingWifi.toTypedArray())
+                } else {
+                    launchTftScreenCapture()
+                }
+            }
+        }
+
         // Notification Access Prompts
         binding.btnEnableNotificationAccess.setOnClickListener {
             provideHapticFeedback()
@@ -878,6 +1023,18 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             callManager.simulateMissedCall("Mom", "+91 98765 12345")
             showFeedback("Simulating Missed Call Alert on Cluster")
+        }
+
+        binding.btnSyncPhonebookCalls.setOnClickListener {
+            provideHapticFeedback()
+            bleManager.syncPhonebookAndCalls()
+            bleManager.dispatchPlaylistInfoOnBle()
+            showFeedback("Syncing Favs, Call Log & Playlist to cluster...")
+        }
+
+        binding.btnGrantTelephonyPerms.setOnClickListener {
+            provideHapticFeedback()
+            requestTelephonyAndClusterPermissions()
         }
 
         // Edit Odometer
@@ -1605,12 +1762,43 @@ class MainActivity : AppCompatActivity() {
         data class ServiceRowHolder(val rowView: View, val etName: EditText, val etItemCost: EditText)
         val rowHolders = mutableListOf<ServiceRowHolder>()
 
+        var isCostManuallyEdited = false
+        var isUpdatingCostFromItems = false
+        val existingCostVal = MaintenanceMath.parseCurrencyAmount(existing?.cost)
+        val existingItemsSum = existing?.items?.sumOf { it.cost } ?: 0.0
+        if (existing != null && existingCostVal != null &&
+            existingCostVal > 0.0 &&
+            kotlin.math.abs(existingCostVal - existingItemsSum) >= 0.01
+        ) {
+            isCostManuallyEdited = true
+        }
+        etCost.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (!isUpdatingCostFromItems) {
+                    isCostManuallyEdited = true
+                }
+            }
+        })
+
         fun recalculateTotalCost() {
+            if (isCostManuallyEdited) return
             val sum = rowHolders.sumOf {
                 parseDecimal(it.etItemCost.text) ?: 0.0
             }
-            if (sum > 0.0 || rowHolders.isNotEmpty()) {
-                etCost.setText(String.format(Locale.US, "%s%.0f", appSettings.currentCurrencySymbol, sum))
+            if (sum > 0.0 || (existing == null && rowHolders.isNotEmpty())) {
+                isUpdatingCostFromItems = true
+                try {
+                    etCost.setText(
+                        "%s%s".format(
+                            appSettings.currentCurrencySymbol,
+                            MaintenanceMath.formatCurrencyAmount(sum)
+                        )
+                    )
+                } finally {
+                    isUpdatingCostFromItems = false
+                }
             }
         }
 
@@ -1633,7 +1821,7 @@ class MainActivity : AppCompatActivity() {
 
             val etItemCost = createThemedEditText(
                 hintText = "Cost (%s)".format(appSettings.currentCurrencySymbol),
-                initialText = if (itemCost > 0.0) String.format(Locale.US, "%.0f", itemCost) else "",
+                initialText = if (itemCost > 0.0) MaintenanceMath.formatCurrencyAmount(itemCost) else "",
                 inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             ).apply {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.1f).apply {
@@ -1728,23 +1916,28 @@ class MainActivity : AppCompatActivity() {
                 }
                 val costStr = etCost.text.toString().trim().ifBlank {
                     val sum = parsedItems.sumOf { it.cost }
-                    String.format(Locale.US, "%s%.0f", appSettings.currentCurrencySymbol, sum)
+                    "%s%s".format(
+                        appSettings.currentCurrencySymbol,
+                        MaintenanceMath.formatCurrencyAmount(sum)
+                    )
                 }
                 val extraNotes = etNotes.text.toString().trim()
+                val resolvedDate = date.ifBlank { today }
+                val resolvedWorkshop = existing?.workshop?.takeIf { it.isNotBlank() } ?: "Self / Workshop"
 
                 val rec = existing?.copy(
                     title = if (title.isNotBlank()) title else "Periodic Service",
-                    date = if (date.isNotBlank()) date else "Today",
+                    date = resolvedDate,
                     odoKm = odoVal,
-                    workshop = "Self / Workshop",
+                    workshop = resolvedWorkshop,
                     cost = costStr,
                     notes = extraNotes,
                     items = parsedItems
                 ) ?: com.pulsarnav.app.maintenance.ServiceRecord(
                     title = if (title.isNotBlank()) title else "Periodic Service",
-                    date = if (date.isNotBlank()) date else "Today",
+                    date = resolvedDate,
                     odoKm = odoVal,
-                    workshop = "Self / Workshop",
+                    workshop = resolvedWorkshop,
                     cost = costStr,
                     notes = extraNotes,
                     items = parsedItems
@@ -1838,17 +2031,12 @@ class MainActivity : AppCompatActivity() {
 
         view.findViewById<TextView>(R.id.tvInsurancePolicy)?.text = insPolicy
         view.findViewById<TextView>(R.id.tvInsuranceExpiry)?.text = insExpiry
-        view.findViewById<TextView>(R.id.badgeInsuranceStatus)?.apply {
-            if (hasInsFile) {
-                text = "ACTIVE"
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
-                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.status_connected_subtle))
-            } else {
-                text = "NO FILE"
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.surface_elevated))
-            }
-        }
+        applyGloveboxStatusBadge(
+            badge = view.findViewById(R.id.badgeInsuranceStatus),
+            hasFile = hasInsFile,
+            rawExpiry = appSettings.docInsuranceExpiry,
+            validLabel = "ACTIVE"
+        )
         view.findViewById<View>(R.id.btnViewInsurance)?.apply {
             isEnabled = hasInsFile
             alpha = if (hasInsFile) 1.0f else 0.4f
@@ -1880,17 +2068,12 @@ class MainActivity : AppCompatActivity() {
 
         view.findViewById<TextView>(R.id.tvPucNumber)?.text = pucCert
         view.findViewById<TextView>(R.id.tvPucExpiry)?.text = pucExpiry
-        view.findViewById<TextView>(R.id.badgePucStatus)?.apply {
-            if (hasPucFile) {
-                text = "VALID"
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
-                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.status_connected_subtle))
-            } else {
-                text = "NO FILE"
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_tertiary))
-                backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.surface_elevated))
-            }
-        }
+        applyGloveboxStatusBadge(
+            badge = view.findViewById(R.id.badgePucStatus),
+            hasFile = hasPucFile,
+            rawExpiry = appSettings.docPucExpiry,
+            validLabel = "VALID"
+        )
         view.findViewById<View>(R.id.btnViewPuc)?.apply {
             isEnabled = hasPucFile
             alpha = if (hasPucFile) 1.0f else 0.4f
@@ -1989,6 +2172,31 @@ class MainActivity : AppCompatActivity() {
 
             val et = createThemedEditText(hintText = "e.g. 15 Nov 2027", initialText = currentExpiry ?: "")
             layout.addView(et)
+
+            val btnPickExpiry = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "Pick Date from Calendar"
+                textSize = 12f
+                setTextColor(currentTheme.accentColor)
+                strokeColor = ColorStateList.valueOf(currentTheme.borderColor)
+                setOnClickListener {
+                    provideHapticFeedback()
+                    val cal = Calendar.getInstance()
+                    GloveboxExpiryEvaluator.parseExpiryDate(et.text.toString())?.let { existingDate ->
+                        cal.set(existingDate.year, existingDate.monthValue - 1, existingDate.dayOfMonth)
+                    }
+                    DatePickerDialog(
+                        this@MainActivity,
+                        { _, y, m, d ->
+                            cal.set(y, m, d)
+                            et.setText(SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(cal.time))
+                        },
+                        cal.get(Calendar.YEAR),
+                        cal.get(Calendar.MONTH),
+                        cal.get(Calendar.DAY_OF_MONTH)
+                    ).show()
+                }
+            }
+            layout.addView(btnPickExpiry)
             et
         } else null
 
@@ -2008,11 +2216,11 @@ class MainActivity : AppCompatActivity() {
                     }
                     "insurance" -> {
                         if (newNum.isNotBlank()) appSettings.docInsurancePolicy = newNum
-                        if (!newExp.isNullOrBlank()) appSettings.docInsuranceExpiry = newExp
+                        if (newExp != null) appSettings.docInsuranceExpiry = newExp
                     }
                     "puc" -> {
                         if (newNum.isNotBlank()) appSettings.docPucCert = newNum
-                        if (!newExp.isNullOrBlank()) appSettings.docPucExpiry = newExp
+                        if (newExp != null) appSettings.docPucExpiry = newExp
                     }
                 }
 
@@ -2024,6 +2232,31 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun applyGloveboxStatusBadge(
+        badge: TextView?,
+        hasFile: Boolean,
+        rawExpiry: String?,
+        validLabel: String
+    ) {
+        badge ?: return
+        val status = GloveboxExpiryEvaluator.evaluate(hasFile, rawExpiry)
+        val (label, textColorRes, bgColorRes) = when (status) {
+            GloveboxDocumentStatus.VALID ->
+                Triple(validLabel, R.color.status_connected, R.color.status_connected_subtle)
+            GloveboxDocumentStatus.EXPIRING_SOON ->
+                Triple("EXPIRING", R.color.status_scanning, R.color.status_scanning_subtle)
+            GloveboxDocumentStatus.EXPIRED ->
+                Triple("EXPIRED", R.color.status_disconnected, R.color.status_disconnected_subtle)
+            GloveboxDocumentStatus.ATTACHED_NO_EXPIRY ->
+                Triple("ATTACHED", R.color.text_secondary, R.color.surface_elevated)
+            GloveboxDocumentStatus.NO_FILE ->
+                Triple("NO FILE", R.color.text_tertiary, R.color.surface_elevated)
+        }
+        badge.text = label
+        badge.setTextColor(ContextCompat.getColor(this, textColorRes))
+        badge.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, bgColorRes))
     }
 
     private fun numberOrPolicy(docType: String): String {
@@ -2190,7 +2423,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage("All Turn-by-Turn GATT packets and Bluetooth logs are stored locally. Would you like to share a diagnostic log or report an issue on GitHub?")
             .setPositiveButton("Report on GitHub") { _, _ ->
                 provideHapticFeedback()
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nikhilmaity00/pulsarnav/issues")))
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Az-har/pulsarnav/issues")))
             }
             .setNegativeButton("Close", null)
             .show()
@@ -2284,6 +2517,30 @@ class MainActivity : AppCompatActivity() {
         binding.rowSkipHeadunitNav.setOnClickListener {
             provideHapticFeedback()
             binding.switchSkipHeadunitNav.toggle()
+        }
+
+        // Reject-with-SMS Auto-Reply Switch & Template
+        updateSmsRejectUi()
+        binding.switchSmsReject.setOnCheckedChangeListener { _, isChecked ->
+            appSettings.isSmsRejectEnabled = isChecked
+            updateSmsRejectUi()
+            if (isChecked && ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+                showFeedback("Grant SEND_SMS permission in Settings to auto-reply from switchgear", isAlert = true)
+            }
+        }
+        binding.rowSmsReject.setOnClickListener {
+            provideHapticFeedback()
+            binding.switchSmsReject.toggle()
+        }
+        binding.btnEditSmsRejectMsg.setOnClickListener {
+            provideHapticFeedback()
+            showEditSmsRejectTemplateDialog()
+        }
+
+        // Cluster Phonebook, Call Log, Dialback & SMS Permissions Row
+        binding.rowTelephonyPermissions.setOnClickListener {
+            provideHapticFeedback()
+            requestTelephonyAndClusterPermissions()
         }
     }
 
@@ -2570,7 +2827,9 @@ class MainActivity : AppCompatActivity() {
             binding.ivVaultBackupIcon,
             binding.ivNavAppPrefIcon,
             binding.ivInterceptorIcon,
-            binding.ivBatteryOptIcon
+            binding.ivBatteryOptIcon,
+            binding.ivSmsRejectIcon,
+            binding.ivTelephonyPermsIcon
         )
         for (icon in allThemedIcons) {
             icon.imageTintList = ColorStateList.valueOf(theme.accentColor)
@@ -2580,6 +2839,7 @@ class MainActivity : AppCompatActivity() {
         val contentCards = listOf(
             binding.cardHeroRange,
             binding.cardConnection,
+            binding.cardTftWifiMirror,
             binding.cardEmergencyHome,
             binding.cardQuickHome,
             binding.cardQuickWork,
@@ -2599,6 +2859,8 @@ class MainActivity : AppCompatActivity() {
             binding.cardNavPreference,
             binding.cardHudMirror,
             binding.cardCallerId,
+            binding.labsTftDebug.cardTftScreenDebugger,
+            binding.labsTftDebug.cardDebugLogConsole,
             binding.cardToggles,
             binding.cardQuickDestinations,
             binding.cardAboutLegal,
@@ -2741,10 +3003,20 @@ class MainActivity : AppCompatActivity() {
             binding.btnScan.setTextColor(theme.accentColor)
         }
 
+        binding.btnConfigureTftWifi.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+        binding.btnConfigureTftWifi.strokeColor = ColorStateList.valueOf(theme.borderColor)
+        binding.btnConfigureTftWifi.setTextColor(theme.accentColor)
+        binding.btnToggleTftHudMirror.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
+        binding.btnToggleTftHudMirror.setTextColor(theme.onPrimaryColor)
+        binding.btnCastLiveScreen.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+        binding.btnCastLiveScreen.strokeColor = ColorStateList.valueOf(theme.borderColor)
+        binding.btnCastLiveScreen.setTextColor(theme.accentColor)
+
         // Status Banners
         binding.tvMediaBanner.setTextColor(theme.accentColor)
         binding.tvCallerStatus.setTextColor(theme.accentColor)
         binding.tvWhatsAppAlertBanner.setTextColor(theme.accentColor)
+        binding.tvClusterActionStatus.setTextColor(theme.accentColor)
 
         // Streamlined Metrics
         binding.tvHomeOdometer.setTextColor(theme.accentColor)
@@ -2814,16 +3086,28 @@ class MainActivity : AppCompatActivity() {
         binding.tvVaultBackupAction.setTextColor(theme.accentColor)
         binding.btnConfigHome.setTextColor(theme.accentColor)
         binding.btnConfigWork.setTextColor(theme.accentColor)
+        binding.btnConfigFavPlace.setTextColor(theme.accentColor)
+        binding.btnEditSmsRejectMsg.setTextColor(theme.accentColor)
 
         val testButtons = listOf(
             binding.btnTestLeft, binding.btnTestStraight, binding.btnTestRight, binding.btnTestRoundabout,
-            binding.btnSimulateCall, binding.btnSimulateWhatsApp, binding.btnSimulateMissedCall
+            binding.btnSimulateCall, binding.btnSimulateWhatsApp, binding.btnSimulateMissedCall,
+            binding.btnSyncPhonebookCalls, binding.btnGrantTelephonyPerms,
+            binding.labsTftDebug.btnTftDbgFullscreen, binding.labsTftDebug.btnTftDbgNavV2Test,
+            binding.labsTftDebug.btnTftDbgRecenter, binding.labsTftDebug.btnTftDbgDaylight,
+            binding.labsTftDebug.btnTftDbgMotion, binding.labsTftDebug.btnTftDbgHitboxes,
+            binding.labsTftDebug.btnLogPauseResume, binding.labsTftDebug.btnLogCopy,
+            binding.labsTftDebug.btnLogShare, binding.labsTftDebug.btnLogClear
         )
         for (btn in testButtons) {
             btn.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
             btn.strokeColor = ColorStateList.valueOf(theme.borderColor)
             btn.setTextColor(theme.accentColor)
         }
+        binding.labsTftDebug.pbTftJpegBudget.progressTintList = ColorStateList.valueOf(theme.primaryColor)
+        binding.labsTftDebug.btnTftDbgTogglePreview.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
+        binding.labsTftDebug.btnTftDbgTogglePreview.setTextColor(theme.onPrimaryColor)
+        updateDebugFilterChipsUi()
         binding.btnStopSimulation.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnStopSimulation.strokeColor = ColorStateList.valueOf(theme.borderColor)
         binding.btnStopSimulation.setTextColor(theme.textSecondaryColor)
@@ -2838,7 +3122,8 @@ class MainActivity : AppCompatActivity() {
             binding.switchMediaControl,
             binding.switchWhatsAppAlerts,
             binding.switchTelemetry,
-            binding.switchSkipHeadunitNav
+            binding.switchSkipHeadunitNav,
+            binding.switchSmsReject
         )
         val switchStates = arrayOf(
             intArrayOf(android.R.attr.state_checked),
@@ -2959,7 +3244,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.cardQuickHome.setOnLongClickListener {
             provideHapticFeedback()
-            showSetAddressDialog("Home", true)
+            showSetAddressDialog("Home", 0)
             true
         }
 
@@ -2983,18 +3268,23 @@ class MainActivity : AppCompatActivity() {
         }
         binding.cardQuickWork.setOnLongClickListener {
             provideHapticFeedback()
-            showSetAddressDialog("Work", false)
+            showSetAddressDialog("Work", 1)
             true
         }
 
         binding.btnConfigHome.setOnClickListener {
             provideHapticFeedback()
-            showSetAddressDialog("Home", true)
+            showSetAddressDialog("Home", 0)
         }
 
         binding.btnConfigWork.setOnClickListener {
             provideHapticFeedback()
-            showSetAddressDialog("Work", false)
+            showSetAddressDialog("Work", 1)
+        }
+
+        binding.btnConfigFavPlace.setOnClickListener {
+            provideHapticFeedback()
+            showSetAddressDialog("Favorite", 2)
         }
     }
 
@@ -3033,8 +3323,11 @@ class MainActivity : AppCompatActivity() {
 
         val displayHome = if (home.isNotBlank() && !home.equals("Home", ignoreCase = true)) home else defaultHomeLabel
         val displayWork = if (work.isNotBlank() && !work.equals("Work", ignoreCase = true)) work else defaultWorkLabel
+        val fav = appSettings.favPlaceAddress.trim()
+        val displayFav = fav.ifBlank { "Not configured (optional 3rd cluster favorite)" }
         binding.tvSettingsHome.text = "Home: $displayHome"
         binding.tvSettingsWork.text = "Work: $displayWork"
+        binding.tvSettingsFavPlace.text = "Favorite: $displayFav"
     }
 
     private fun provideHapticFeedback() {
@@ -3049,12 +3342,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     @Suppress("DEPRECATION")
                     val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        vibrator?.vibrate(android.os.VibrationEffect.createOneShot(20, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                    } else {
-                        @Suppress("DEPRECATION")
-                        vibrator?.vibrate(20)
-                    }
+                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(20, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
                 }
             }
         } catch (_: Exception) {}
@@ -3210,11 +3498,16 @@ class MainActivity : AppCompatActivity() {
         btnScanQr?.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
         btnScanQr?.setTextColor(currentTheme.accentColor)
 
-        fun loadAndShowQr() {
+        fun loadAndShowQr(includeSensitiveProfile: Boolean = false, passphrase: String? = null) {
             lifecycleScope.launch {
                 try {
                     val bitmap = withContext(Dispatchers.Default) {
-                        DataVaultManager.getInstance(this@MainActivity).generateSetupQrBitmap(600, 600)
+                        DataVaultManager.getInstance(this@MainActivity).generateSetupQrBitmap(
+                            width = 600,
+                            height = 600,
+                            includeSensitiveProfile = includeSensitiveProfile,
+                            passphrase = passphrase
+                        )
                     }
                     if (!dialog.isShowing) return@launch
                     ivQr?.setImageBitmap(bitmap)
@@ -3227,7 +3520,7 @@ class MainActivity : AppCompatActivity() {
 
         if (openQrDirectly) {
             layoutQr?.visibility = View.VISIBLE
-            dialog.setOnShowListener { loadAndShowQr() }
+            dialog.setOnShowListener { loadAndShowQr(includeSensitiveProfile = false, passphrase = null) }
         }
 
         btnShowQr?.setOnClickListener {
@@ -3235,7 +3528,41 @@ class MainActivity : AppCompatActivity() {
             if (layoutQr?.visibility == View.VISIBLE) {
                 layoutQr.visibility = View.GONE
             } else {
-                loadAndShowQr()
+                MaterialAlertDialogBuilder(this)
+                    .setTitle("Migration QR Privacy")
+                    .setMessage(
+                        "Choose whether to generate a safe Bike & Theme QR (no personal/medical details) " +
+                            "or an AES-256-GCM Encrypted Full Profile QR."
+                    )
+                    .setPositiveButton("Bike Settings Only") { _, _ ->
+                        loadAndShowQr(includeSensitiveProfile = false, passphrase = null)
+                    }
+                    .setNeutralButton("Full Encrypted QR") { _, _ ->
+                        val layout = LinearLayout(this).apply {
+                            orientation = LinearLayout.VERTICAL
+                            setPadding(48, 20, 48, 10)
+                        }
+                        val etPass = createThemedEditText(
+                            hintText = "QR Encryption Passphrase",
+                            inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                        )
+                        layout.addView(etPass)
+                        MaterialAlertDialogBuilder(this)
+                            .setTitle("Encrypt Migration QR")
+                            .setView(layout)
+                            .setPositiveButton("Generate Encrypted QR") { _, _ ->
+                                val pass = etPass.text.toString().trim()
+                                if (pass.isBlank()) {
+                                    showFeedback("Enter a passphrase to encrypt full profile QR.", isAlert = true)
+                                } else {
+                                    loadAndShowQr(includeSensitiveProfile = true, passphrase = pass)
+                                }
+                            }
+                            .setNegativeButton("Cancel", null)
+                            .show()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
             }
         }
 
@@ -3249,7 +3576,9 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             dialog.dismiss()
             binding.rootLayout.postDelayed({
-                showExportVaultPassphraseDialog()
+                if (!isFinishing && !isDestroyed) {
+                    showExportVaultPassphraseDialog()
+                }
             }, 250)
         }
 
@@ -3257,6 +3586,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             dialog.dismiss()
             binding.rootLayout.postDelayed({
+                if (isFinishing || isDestroyed) return@postDelayed
                 try {
                     vaultGetContentPicker.launch("*/*")
                 } catch (e: Exception) {
@@ -3278,13 +3608,13 @@ class MainActivity : AppCompatActivity() {
             setPadding(48, 20, 48, 10)
         }
         val tvDesc = TextView(this).apply {
-            text = "Enter a passphrase to encrypt your .pnav backup with AES-256-GCM, or leave blank to export a plaintext .pnav.json file."
+            text = "Recommended: enter a strong passphrase to encrypt your .pnav backup with AES-256-GCM before sharing."
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
             setPadding(0, 0, 0, 14)
         }
         val etPassphrase = createThemedEditText(
-            hintText = "Passphrase (optional)",
+            hintText = "Encryption passphrase",
             inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
         )
         layout.addView(tvDesc)
@@ -3294,25 +3624,42 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Export Data Vault")
             .setView(layout)
             .setPositiveButton("Export") { _, _ ->
-                val pass = etPassphrase.text.toString().trim().ifBlank { null }
-                exportVaultFile(pass)
+                val rawPass = etPassphrase.text.toString().trim()
+                if (rawPass.isNotEmpty()) {
+                    exportVaultFile(passphrase = rawPass, allowUnencrypted = false)
+                } else {
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle("Export Unencrypted Backup?")
+                        .setMessage(
+                            "Without a passphrase, the exported .pnav.json file stores emergency contacts, medical notes, " +
+                                "home/work addresses, parked coordinates, and service history in plaintext."
+                        )
+                        .setPositiveButton("Encrypt Instead") { _, _ ->
+                            showExportVaultPassphraseDialog()
+                        }
+                        .setNeutralButton("Export Plaintext") { _, _ ->
+                            exportVaultFile(passphrase = null, allowUnencrypted = true)
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    private fun exportVaultFile(passphrase: String? = null) {
+    private fun exportVaultFile(passphrase: String? = null, allowUnencrypted: Boolean = false) {
         lifecycleScope.launch {
             try {
                 android.util.Log.i("PulsarNav", "Exporting vault file...")
                 val manager = DataVaultManager.getInstance(this@MainActivity)
                 val file = withContext(Dispatchers.IO) {
-                    manager.exportVaultToFile(passphrase)
+                    manager.exportVaultToFile(passphrase, allowUnencrypted = allowUnencrypted)
                 }
                 android.util.Log.i("PulsarNav", "Vault file created: ${file.absolutePath}, size=${file.length()} bytes")
                 val chooser = manager.createVaultShareIntent(file)
                 startActivity(chooser)
-                showFeedback(if (passphrase != null) "Encrypted .pnav vault exported" else "Vault JSON bundle exported")
+                showFeedback(if (passphrase != null) "Encrypted .pnav vault exported" else "Plaintext .pnav.json vault exported")
             } catch (e: Throwable) {
                 android.util.Log.e("PulsarNav", "Export failed", e)
                 showFeedback("Export failed: ${e.message}", isAlert = true)
@@ -3470,6 +3817,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun executeQrImport(rawValue: String, passphrase: String? = null) {
+        val result = DataVaultManager.getInstance(this).importFromQrPayload(rawValue, passphrase)
+        result.onSuccess { msg ->
+            showFeedback(msg)
+            refreshAllUiAfterVaultImport()
+        }.onFailure { err ->
+            if (err is VaultPassphraseRequiredException) {
+                showDecryptQrPassphraseDialog(rawValue)
+            } else {
+                showFeedback("QR Error: ${err.message}", isAlert = true)
+            }
+        }
+    }
+
+    private fun showDecryptQrPassphraseDialog(rawQrPayload: String) {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 20, 48, 10)
+        }
+        val tvDesc = TextView(this).apply {
+            text = "This migration QR is encrypted. Enter its passphrase to restore:"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+            setPadding(0, 0, 0, 14)
+        }
+        val etPass = createThemedEditText(
+            hintText = "QR Passphrase",
+            inputTypeFlags = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        )
+        layout.addView(tvDesc)
+        layout.addView(etPass)
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Unlock Migration QR")
+            .setView(layout)
+            .setPositiveButton("Unlock") { _, _ ->
+                executeQrImport(rawQrPayload, etPass.text.toString().trim())
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun launchGoogleCodeScanner() {
         try {
             val scanner = GmsBarcodeScanning.getClient(this)
@@ -3477,13 +3866,7 @@ class MainActivity : AppCompatActivity() {
                 .addOnSuccessListener { barcode: Barcode ->
                     val rawValue = barcode.rawValue
                     if (!rawValue.isNullOrBlank()) {
-                        val result = DataVaultManager.getInstance(this).importFromQrPayload(rawValue)
-                        result.onSuccess { msg ->
-                            showFeedback(msg)
-                            refreshAllUiAfterVaultImport()
-                        }.onFailure { err ->
-                            showFeedback("QR Error: ${err.message}", isAlert = true)
-                        }
+                        executeQrImport(rawValue)
                     }
                 }
                 .addOnFailureListener { e: Exception ->
@@ -3503,6 +3886,7 @@ class MainActivity : AppCompatActivity() {
         binding.switchWhatsAppAlerts.isChecked = appSettings.isWhatsAppAlertsEnabled
         binding.switchTelemetry.isChecked = appSettings.isTelemetrySyncEnabled
         binding.switchSkipHeadunitNav.isChecked = appSettings.isSkipClusterNavWhenHeadunit
+        binding.switchSmsReject.isChecked = appSettings.isSmsRejectEnabled
         updateFuelPriceUi()
         updateBikeInfoDisplay()
         updateDocumentsSummary()
@@ -3512,6 +3896,8 @@ class MainActivity : AppCompatActivity() {
         updateBikeIssuesSummary()
         updateEmergencyHomeCard()
         updateQuickNavButtons()
+        updateTelephonyPermissionsUi()
+        updateSmsRejectUi()
         applyTheme(appSettings.appTheme)
     }
 
@@ -3524,39 +3910,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun proceedWithNavigationLaunch(destination: String) {
-        BikeBleForegroundService.start(this)
-        if (appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE) {
-            try {
-                val uri = Uri.parse("waze://?q=${Uri.encode(destination)}&navigate=yes")
-                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                    setPackage("com.waze")
-                }
-                startActivity(intent)
-                return
-            } catch (_: Exception) {
-                try {
-                    val webWaze = Uri.parse("https://waze.com/ul?q=${Uri.encode(destination)}&navigate=yes")
-                    startActivity(Intent(Intent.ACTION_VIEW, webWaze))
-                    return
-                } catch (_: Exception) {}
-            }
-        }
-
-        val mode = if (appSettings.isTwoWheelerMode) "l" else "d"
-        try {
-            val uri = Uri.parse("google.navigation:q=${Uri.encode(destination)}&mode=$mode")
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage("com.google.android.apps.maps")
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            try {
-                val travelMode = if (appSettings.isTwoWheelerMode) "two_wheeler" else "driving"
-                val webUri = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=${Uri.encode(destination)}&travelmode=$travelMode")
-                startActivity(Intent(Intent.ACTION_VIEW, webUri))
-            } catch (e2: Exception) {
-                showFeedback("Could not open navigation app", isAlert = true)
-            }
+        if (!NavigationIntentLauncher.launchNavigation(this, destination)) {
+            showFeedback("Could not open navigation app", isAlert = true)
         }
     }
 
@@ -3584,34 +3939,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isBatteryOptimizationIgnored(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
-            return pm?.isIgnoringBatteryOptimizations(packageName) ?: true
-        }
-        return true
+        val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        return pm?.isIgnoringBatteryOptimizations(packageName) ?: true
     }
 
     private fun requestIgnoreBatteryOptimization() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
-                try {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    try {
-                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                    } catch (_: Exception) {
-                        showFeedback("Set Battery to 'Unrestricted' in App Info -> Battery", isAlert = true)
-                    }
+        val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+            try {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
                 }
-            } else {
-                showFeedback("Background execution is already unrestricted")
+                startActivity(intent)
+            } catch (e: Exception) {
+                try {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                } catch (_: Exception) {
+                    showFeedback("Set Battery to 'Unrestricted' in App Info -> Battery", isAlert = true)
+                }
             }
         } else {
-            showFeedback("Background execution is unrestricted on this Android version")
+            showFeedback("Background execution is already unrestricted")
         }
     }
 
@@ -3643,7 +3991,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun showSetAddressDialog(label: String, isHome: Boolean) {
+    private fun showSetAddressDialog(label: String, slot: Int) {
         val sheet = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_set_destination, null)
         sheet.setContentView(sheetView)
@@ -3659,12 +4007,16 @@ class MainActivity : AppCompatActivity() {
         val btnSaveCustom = sheetView.findViewById<MaterialButton>(R.id.btnSaveCustomAddress)
         val btnDismiss = sheetView.findViewById<MaterialButton>(R.id.btnDismissSheet)
 
-        ivIcon?.setImageResource(if (isHome) R.drawable.ic_home else R.drawable.ic_work)
+        ivIcon?.setImageResource(if (slot == 0) R.drawable.ic_home else R.drawable.ic_work)
         tvTitle.text = "Set $label Destination"
         val isWaze = appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE
         tvOptionMapsTitle.text = if (isWaze) "Waze Saved $label" else "Google Maps Saved $label"
 
-        val current = if (isHome) appSettings.homeAddress else appSettings.workAddress
+        val current = when (slot) {
+            0 -> appSettings.homeAddress
+            1 -> appSettings.workAddress
+            else -> appSettings.favPlaceAddress
+        }
         if (current.isNotBlank() && current != "Home" && current != "Work") {
             etCustom.setText(current)
         }
@@ -3679,16 +4031,31 @@ class MainActivity : AppCompatActivity() {
 
         cardOptionMapsSaved.setOnClickListener {
             provideHapticFeedback()
-            val defaultVal = if (isHome) "Home" else "Work"
-            if (isHome) appSettings.homeAddress = defaultVal else appSettings.workAddress = defaultVal
+            when (slot) {
+                0 -> {
+                    appSettings.homeAddress = "Home"
+                    appSettings.homeLat = 0.0
+                    appSettings.homeLng = 0.0
+                }
+                1 -> {
+                    appSettings.workAddress = "Work"
+                    appSettings.workLat = 0.0
+                    appSettings.workLng = 0.0
+                }
+                else -> {
+                    appSettings.favPlaceAddress = ""
+                    appSettings.favPlaceLat = 0.0
+                    appSettings.favPlaceLng = 0.0
+                }
+            }
             updateQuickNavButtons()
-            showFeedback("Linked to Google Maps $label")
+            showFeedback(if (slot == 2) "Cleared Favorite spot" else "Linked to Google Maps $label")
             sheet.dismiss()
         }
 
         cardOptionPinGps.setOnClickListener {
             provideHapticFeedback()
-            pinCurrentLocationAs(label, isHome)
+            pinCurrentLocationAs(label, slot)
             sheet.dismiss()
         }
 
@@ -3696,7 +4063,23 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             val text = etCustom.text.toString().trim()
             if (text.isNotBlank()) {
-                if (isHome) appSettings.homeAddress = text else appSettings.workAddress = text
+                when (slot) {
+                    0 -> {
+                        appSettings.homeAddress = text
+                        appSettings.homeLat = 0.0
+                        appSettings.homeLng = 0.0
+                    }
+                    1 -> {
+                        appSettings.workAddress = text
+                        appSettings.workLat = 0.0
+                        appSettings.workLng = 0.0
+                    }
+                    else -> {
+                        appSettings.favPlaceAddress = text
+                        appSettings.favPlaceLat = 0.0
+                        appSettings.favPlaceLng = 0.0
+                    }
+                }
                 updateQuickNavButtons()
                 showFeedback("$label address saved")
                 sheet.dismiss()
@@ -3713,7 +4096,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun pinCurrentLocationAs(label: String, isHome: Boolean) {
+    private fun pinCurrentLocationAs(label: String, slot: Int) {
+        val hasLoc = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasLoc) {
+            showFeedback("Grant Location permission to pin current GPS", isAlert = true)
+            return
+        }
         val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         var location: Location? = null
         try {
@@ -3728,40 +4117,29 @@ class MainActivity : AppCompatActivity() {
         if (location != null) {
             val lat = location.latitude
             val lng = location.longitude
-            val addr = "%.5f,%.5f".format(lat, lng)
-            if (isHome) appSettings.homeAddress = addr else appSettings.workAddress = addr
+            val addr = "%.5f,%.5f".format(java.util.Locale.US, lat, lng)
+            when (slot) {
+                0 -> {
+                    appSettings.homeAddress = addr
+                    appSettings.homeLat = lat
+                    appSettings.homeLng = lng
+                }
+                1 -> {
+                    appSettings.workAddress = addr
+                    appSettings.workLat = lat
+                    appSettings.workLng = lng
+                }
+                else -> {
+                    appSettings.favPlaceAddress = addr
+                    appSettings.favPlaceLat = lat
+                    appSettings.favPlaceLng = lng
+                }
+            }
             updateQuickNavButtons()
             showFeedback("Pinned GPS as $label")
         } else {
             showFeedback("Unable to get current GPS location", isAlert = true)
         }
-    }
-
-    private fun showEditOdometerDialog() {
-        val current = maintenanceManager.status.value.totalOdometerKm
-        val input = createThemedEditText(
-            hintText = "Odometer in km",
-            initialText = formatDecimal(current),
-            inputTypeFlags = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        )
-        val container = FrameLayout(this).apply {
-            setPadding(50, 30, 50, 10)
-            addView(input)
-        }
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Edit Lifetime Odometer")
-            .setView(container)
-            .setPositiveButton("Save") { _, _ ->
-                val odo = parseDecimal(input.text)
-                if (odo != null && odo >= 0) {
-                    maintenanceManager.setOdometer(odo)
-                    recordSyncTime()
-                    showFeedback("Odometer updated to ${formatDecimal(odo)} km")
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun showAddFuelDialog() {
@@ -3970,7 +4348,26 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun getMissingPermissions(): List<String> {
+    private fun startTftHudMirror() {
+        TftWifiMirrorManager.getInstance(this).stopLocalDebugPreview()
+        BikeBleForegroundService.startForTftCockpitMirror(this)
+        showFeedback("Connecting to TFT Wi-Fi for 800×480 Cockpit Mirror...")
+    }
+
+    private fun launchTftScreenCapture() {
+        val mpm = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+        if (mpm == null) {
+            showFeedback("Screen capture unsupported on this device", isAlert = true)
+            return
+        }
+        try {
+            tftScreenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
+        } catch (e: Exception) {
+            showFeedback("Unable to start screen capture: ${e.message}", isAlert = true)
+        }
+    }
+
+    private fun getMissingBlePermissions(): List<String> {
         val required = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             required.add(Manifest.permission.BLUETOOTH_SCAN)
@@ -3978,12 +4375,111 @@ class MainActivity : AppCompatActivity() {
         } else {
             required.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
+        return required.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun getMissingTftWifiPermissions(): List<String> {
+        val required = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            required.add(Manifest.permission.POST_NOTIFICATIONS)
+            required.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        } else {
+            required.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         return required.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
+    }
+
+    private fun getMissingPermissions(): List<String> {
+        val required = getMissingBlePermissions().toMutableList()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                required.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
+                required.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            }
+        }
+        return required
+    }
+
+    private fun getMissingTelephonyPermissions(): List<String> {
+        val required = mutableListOf(
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.READ_CALL_LOG,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ANSWER_PHONE_CALLS
+        )
+        return required.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun requestTelephonyAndClusterPermissions() {
+        val missing = getMissingTelephonyPermissions()
+        if (missing.isEmpty()) {
+            showFeedback("All Call Log, Contacts, Dialback, SMS & POI permissions granted")
+            bleManager.syncPhonebookAndCalls()
+            bleManager.dispatchPlaylistInfoOnBle()
+            updateTelephonyPermissionsUi()
+        } else {
+            telephonyPermissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun updateTelephonyPermissionsUi() {
+        val missing = getMissingTelephonyPermissions()
+        if (missing.isEmpty()) {
+            binding.tvTelephonyPermsStatus.text = "All Granted (Favs, Recents, Dialback, SMS, POI GPS)"
+            binding.tvTelephonyPermsStatus.setTextColor(ContextCompat.getColor(this, R.color.mint_accent))
+        } else {
+            val shortNames = missing.joinToString(", ") { it.substringAfterLast('.') }
+            binding.tvTelephonyPermsStatus.text = "Tap to grant: $shortNames"
+            binding.tvTelephonyPermsStatus.setTextColor(ContextCompat.getColor(this, R.color.amber_accent))
+        }
+    }
+
+    private fun updateSmsRejectUi() {
+        binding.switchSmsReject.isChecked = appSettings.isSmsRejectEnabled
+        val msg = appSettings.smsRejectMessage.trim().ifBlank { com.pulsarnav.app.data.AppSettings.DEFAULT_REJECT_SMS_TEMPLATE }
+        binding.tvSmsRejectSummary.text = if (appSettings.isSmsRejectEnabled) {
+            "Reply: \"$msg\""
+        } else {
+            "Off (Template: \"$msg\")"
+        }
+    }
+
+    private fun showEditSmsRejectTemplateDialog() {
+        val currentMsg = appSettings.smsRejectMessage.trim().ifBlank { com.pulsarnav.app.data.AppSettings.DEFAULT_REJECT_SMS_TEMPLATE }
+        val input = createThemedEditText(
+            hintText = "SMS reply when rejecting call on switchgear",
+            initialText = currentMsg
+        )
+        val container = FrameLayout(this).apply {
+            setPadding(50, 30, 50, 10)
+            addView(input)
+        }
+        MaterialAlertDialogBuilder(this, R.style.ObsidianAlertDialog)
+            .setTitle("Call Reject Auto-Reply SMS")
+            .setMessage("Sent when Reject with SMS is triggered on your Bajaj TFT cluster switchgear (up to 160 chars).")
+            .setView(container)
+            .setPositiveButton("Save") { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isNotEmpty()) {
+                    appSettings.smsRejectMessage = text.take(160)
+                    updateSmsRejectUi()
+                    showFeedback("Reject-with-SMS template saved")
+                } else {
+                    showFeedback("Template cannot be empty", isAlert = true)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun updateHardwareReadinessUi() {
@@ -3997,8 +4493,8 @@ class MainActivity : AppCompatActivity() {
         }
         val isGpsRequiredForBle = Build.VERSION.SDK_INT < Build.VERSION_CODES.S
 
-        val missingPerms = getMissingPermissions()
-        val hasPerms = missingPerms.isEmpty()
+        val missingBle = getMissingBlePermissions()
+        val hasPerms = missingBle.isEmpty()
 
         binding.chipBtWarning.visibility = if (!isBtOn) View.VISIBLE else View.GONE
         binding.chipGpsWarning.visibility = if (isGpsRequiredForBle && !isGpsOn) View.VISIBLE else View.GONE
@@ -4048,11 +4544,12 @@ class MainActivity : AppCompatActivity() {
 
         updateHardwareReadinessUi()
 
-        val missing = getMissingPermissions()
-        if (missing.isNotEmpty()) {
+        val missingBle = getMissingBlePermissions()
+        val btGranted = missingBle.isEmpty()
+        if (!btGranted) {
             if (!silent) {
                 showFeedback("Grant required permissions to connect to your bike console", isAlert = true)
-                permissionLauncher.launch(missing.toTypedArray())
+                permissionLauncher.launch(getMissingPermissions().toTypedArray())
             }
             return
         }
@@ -4300,15 +4797,671 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            bleManager.lastSentPacket.collectLatest { packet ->
-                if (packet != null) {
-                    val hex = packet.joinToString(" ") { "%02X".format(it) }
-                    binding.tvPacketHex.text = "Last Packet (${packet.size}B):\n$hex"
-                } else {
-                    binding.tvPacketHex.text = "Last BLE Packet: None"
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                bleManager.lastSentPacket.collectLatest { packet ->
+                    if (packet != null) {
+                        val hex = com.pulsarnav.app.protocol.OtcPacketBuilder.toHex(packet)
+                        binding.tvPacketHex.text = "Last Packet (${packet.size}B):\n$hex"
+                        binding.tvPacketDecoded.text = "Decoded: ${DebugLogRepository.summarizeBlePacket(packet)}"
+                    } else {
+                        binding.tvPacketHex.text = "Last BLE Packet: None"
+                        binding.tvPacketDecoded.text = "Decoded: Waiting for BLE frame..."
+                    }
                 }
             }
         }
+    }
+
+    private fun observeTftWifiMirror() {
+        val mirrorManager = TftWifiMirrorManager.getInstance(this)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                combine(mirrorManager.mirrorState, bleManager.connectionState) { mirror, ble ->
+                    mirror to ble
+                }.collectLatest { (mirror, ble) ->
+                val active = mirror.status != TftMirrorStatus.IDLE && mirror.status != TftMirrorStatus.ERROR
+                val dotRes = when (mirror.status) {
+                    TftMirrorStatus.STREAMING, TftMirrorStatus.TCP_CONNECTED_IDLE -> R.color.status_connected
+                    TftMirrorStatus.CONNECTING_WIFI, TftMirrorStatus.WIFI_CONNECTED_WAITING_TCP -> R.color.status_scanning
+                    TftMirrorStatus.IDLE, TftMirrorStatus.ERROR -> R.color.status_disconnected
+                }
+                binding.viewTftWifiDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, dotRes)
+
+                val targetSsid = mirror.ssid.ifBlank {
+                    appSettings.tftWifiSsid.ifBlank {
+                        TftPasswordGenerator.deriveDefaultSsid(bleManager.getConnectedClusterName(), appSettings.tftWifiVin)
+                    }
+                }
+                val isOtcConnected = (ble is BleConnectionState.Connected) && !bleManager.isConnectedToTftCluster()
+
+                binding.tvTftWifiStatus.text = when (mirror.status) {
+                    TftMirrorStatus.IDLE -> {
+                        if (isOtcConnected) {
+                            "OTC LCD cluster connected • Wi-Fi mirror is for TFT (NS400Z)"
+                        } else {
+                            "Idle • Target $targetSsid (800×480)"
+                        }
+                    }
+                    TftMirrorStatus.CONNECTING_WIFI -> "Joining SoftAP $targetSsid..."
+                    TftMirrorStatus.WIFI_CONNECTED_WAITING_TCP -> "Wi-Fi linked (${mirror.clusterHost}) • Waiting for TCP 5558"
+                    TftMirrorStatus.TCP_CONNECTED_IDLE -> "Cluster TCP ready (${mirror.clusterHost}) • Idle"
+                    TftMirrorStatus.STREAMING -> {
+                        val modeLabel = if (mirror.source == TftMirrorSource.LIVE_SCREEN_CAST) "Live Cast" else "HUD Mirror"
+                        String.format(
+                            java.util.Locale.US,
+                            "%s • %.1f fps • %s:%d",
+                            modeLabel,
+                            mirror.fps,
+                            mirror.clusterHost,
+                            com.pulsarnav.app.wifi.TftWifiProtocol.UDP_PORT
+                        )
+                    }
+                    TftMirrorStatus.ERROR -> "Error • Check Wi-Fi / VIN config"
+                }
+
+                binding.tvTftWifiMeta.text = when {
+                    !mirror.errorMessage.isNullOrBlank() -> mirror.errorMessage
+                    active && mirror.framesSent > 0 -> {
+                        val parkTag = if (mirror.isBikeStationary) "Stationary" else "Moving"
+                        val touchTag = if (mirror.lastTouchInfo.isNotBlank()) " • ${mirror.lastTouchInfo}" else ""
+                        "${mirror.framesSent} frames • ${mirror.lastFrameBytes}B (Q=${mirror.jpegQuality}) • $parkTag$touchTag"
+                    }
+                    else -> {
+                        val credHint = if (appSettings.tftWifiVin.isNotBlank() || appSettings.tftWifiPassphrase.isNotBlank()) {
+                            "SoftAP credentials saved for $targetSsid."
+                        } else {
+                            "Tap Config to enter VIN/WPA2 password, or join bike Wi-Fi manually."
+                        }
+                        "Offline Cockpit HUD (works screen-off) or Cast Live Maps. $credHint"
+                    }
+                }
+
+                binding.btnToggleTftHudMirror.text = if (active) "Stop Mirror" else "Mirror HUD"
+                binding.btnCastLiveScreen.text = if (active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST) {
+                    "Stop Cast"
+                } else {
+                    "Cast Maps"
+                }
+                }
+            }
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupTftAndLogDebugger() {
+        val wifiMgr = TftWifiMirrorManager.getInstance(this)
+        val dbg = binding.labsTftDebug
+
+        attachTftTouchMapper(dbg.ivTftDebugPreview) { x, y ->
+            wifiMgr.startLocalDebugPreview()
+            wifiMgr.simulateClusterTouch(9, x, y)
+            dbg.tvTftDbgTouchInfo.text = "Touch mapped @ ($x, $y) on 800×480"
+        }
+
+        dbg.btnTftDbgTogglePreview.setOnClickListener {
+            provideHapticFeedback()
+            if (wifiMgr.isLocalPreviewActiveFlow.value) {
+                wifiMgr.stopLocalDebugPreview()
+            } else {
+                wifiMgr.startLocalDebugPreview()
+                showFeedback("800×480 Local TFT Preview started")
+            }
+        }
+
+        dbg.btnTftDbgFullscreen.setOnClickListener {
+            provideHapticFeedback()
+            if (!wifiMgr.isLocalPreviewActiveFlow.value &&
+                wifiMgr.mirrorState.value.status == TftMirrorStatus.IDLE
+            ) {
+                wifiMgr.startLocalDebugPreview()
+            }
+            showFullscreenTftDebuggerDialog()
+        }
+
+        dbg.btnTftDbgNavV2Test.setOnClickListener {
+            provideHapticFeedback()
+            wifiMgr.runNavV2LoopbackDiagnostics()
+            showFeedback("NAV_V2 loopback suite queued — check Log Console")
+        }
+
+        dbg.btnTftDbgRecenter.setOnClickListener {
+            provideHapticFeedback()
+            wifiMgr.startLocalDebugPreview()
+            wifiMgr.simulateHandlebarRecenter()
+        }
+
+        dbg.btnTftDbgDaylight.setOnClickListener {
+            provideHapticFeedback()
+            wifiMgr.startLocalDebugPreview()
+            val highContrast = wifiMgr.toggleDebugDaylightContrast()
+            dbg.btnTftDbgDaylight.text = if (highContrast) "🌙 Night UI" else "☀ Daylight"
+        }
+
+        dbg.btnTftDbgMotion.setOnClickListener {
+            provideHapticFeedback()
+            wifiMgr.startLocalDebugPreview()
+            val stationary = wifiMgr.toggleDebugStationaryMode()
+            dbg.btnTftDbgMotion.text = if (stationary) "PARK ✓" else "RIDE ✓"
+        }
+
+        dbg.btnTftDbgHitboxes.setOnClickListener {
+            provideHapticFeedback()
+            wifiMgr.startLocalDebugPreview()
+            val guides = wifiMgr.toggleDebugHitboxOverlay()
+            dbg.btnTftDbgHitboxes.text = if (guides) "⊞ Guides ON" else "⊞ Guides"
+        }
+
+        // Prevent outer NestedScrollView from hijacking scrolling inside the monospace log viewport
+        dbg.scrollDebugLogs.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            false
+        }
+
+        val filterButtons = listOf(
+            dbg.btnLogFilterAll to DebugFilter.ALL,
+            dbg.btnLogFilterBle to DebugFilter.BLE,
+            dbg.btnLogFilterWifi to DebugFilter.WIFI_NAV_V2,
+            dbg.btnLogFilterCall to DebugFilter.TELEPHONY,
+            dbg.btnLogFilterMaps to DebugFilter.MAPS,
+            dbg.btnLogFilterErr to DebugFilter.ERRORS
+        )
+        for ((btn, filter) in filterButtons) {
+            btn.setOnClickListener {
+                provideHapticFeedback()
+                activeDebugFilter = filter
+                updateDebugFilterChipsUi()
+                renderDebugLogsUi(DebugLogRepository.entries.value, forceRender = true)
+            }
+        }
+
+        dbg.btnLogPauseResume.setOnClickListener {
+            provideHapticFeedback()
+            isDebugLogPaused = !isDebugLogPaused
+            dbg.btnLogPauseResume.text = if (isDebugLogPaused) "▶ Resume" else "⏸ Pause"
+            if (!isDebugLogPaused) {
+                renderDebugLogsUi(DebugLogRepository.entries.value, forceRender = true)
+            }
+        }
+
+        dbg.btnLogCopy.setOnClickListener {
+            provideHapticFeedback()
+            val filtered = DebugLogRepository.filterEntries(DebugLogRepository.entries.value, activeDebugFilter)
+            val payload = DebugLogRepository.formatLogsForExport(
+                filtered,
+                headerInfo = "${bleManager.getDebugDiagnosticsSummary()} • Model=${appSettings.selectedModelId}"
+            )
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("PulsarNav Logs", payload))
+            showFeedback("Copied ${filtered.size} filtered log entries")
+        }
+
+        dbg.btnLogShare.setOnClickListener {
+            provideHapticFeedback()
+            shareDebugLogText()
+        }
+
+        dbg.btnLogClear.setOnClickListener {
+            provideHapticFeedback()
+            DebugLogRepository.clear()
+            renderDebugLogsUi(emptyList(), forceRender = true)
+            showFeedback("Debug log buffer cleared")
+        }
+
+        suspend fun renderFrameIfVisible(
+            frame: com.pulsarnav.app.wifi.TftDebugFrame?,
+            mirrorState: com.pulsarnav.app.wifi.TftMirrorState,
+            anyActive: Boolean
+        ) {
+            if (frame != null && anyActive) {
+                val previewVisible = binding.scrollSettings.visibility == View.VISIBLE ||
+                    fullscreenTftDialog?.isShowing == true
+                if (previewVisible) {
+                    val bmp = withContext(Dispatchers.Default) {
+                        synchronized(previewDecodeLock) {
+                            val slot = previewBitmapSlotIdx
+                            val reusable = previewBitmapSlots[slot]
+                            val opts = BitmapFactory.Options().apply {
+                                inMutable = true
+                                inPreferredConfig = Bitmap.Config.ARGB_8888
+                                if (reusable != null && !reusable.isRecycled &&
+                                    reusable.width == frame.width && reusable.height == frame.height
+                                ) {
+                                    inBitmap = reusable
+                                }
+                            }
+                            val decoded = try {
+                                BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
+                            } catch (_: IllegalArgumentException) {
+                                opts.inBitmap = null
+                                BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
+                            }
+                            if (decoded != null) {
+                                previewBitmapSlots[slot] = decoded
+                                previewBitmapSlotIdx = slot xor 1
+                            }
+                            decoded
+                        }
+                    }
+                    if (bmp != null) {
+                        dbg.ivTftDebugPreview.setImageBitmap(bmp)
+                        dbg.layoutTftDebugEmpty.visibility = View.GONE
+                        fullscreenTftImageView?.setImageBitmap(bmp)
+                    }
+                }
+                val kb = frame.byteSize / 1024f
+                val motionBadge = if (mirrorState.isBikeStationary) "PARK" else "RIDE"
+                val metricsText = String.format(
+                    Locale.US,
+                    "%dx%d • %.1f KB / 30 KB • Q=%d • #%d • %s",
+                    frame.width,
+                    frame.height,
+                    kb,
+                    frame.quality,
+                    frame.frameIndex,
+                    motionBadge
+                )
+                dbg.tvTftDbgMetrics.text = metricsText
+                fullscreenTftMetricsView?.text = metricsText
+                dbg.pbTftJpegBudget.progress =
+                    frame.byteSize.coerceIn(0, TftWifiProtocol.UDP_MAX_JPEG_BYTES)
+            } else if (!anyActive) {
+                dbg.layoutTftDebugEmpty.visibility = View.VISIBLE
+                dbg.pbTftJpegBudget.progress = 0
+                dbg.tvTftDbgMetrics.text = "800×480 • Idle • JPEG budget <= 30 KB"
+            }
+        }
+
+        refreshTftPreviewCallback = {
+            val frame = wifiMgr.latestDebugFrame.value
+            val mirrorState = wifiMgr.mirrorState.value
+            val anyActive = (mirrorState.status != TftMirrorStatus.IDLE &&
+                mirrorState.status != TftMirrorStatus.ERROR) ||
+                wifiMgr.isLocalPreviewActiveFlow.value
+            if (frame != null && anyActive) {
+                lifecycleScope.launch {
+                    renderFrameIfVisible(frame, mirrorState, anyActive = true)
+                }
+            }
+        }
+
+        // Collect 800x480 TFT frames, auto-refresh triggers & debug logs only while UI is STARTED
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    combine(
+                        wifiMgr.latestDebugFrame,
+                        wifiMgr.mirrorState,
+                        wifiMgr.isLocalPreviewActiveFlow
+                    ) { frame, mirrorState, localActive ->
+                        Triple(frame, mirrorState, localActive)
+                    }.collectLatest { (frame, mirrorState, localActive) ->
+                        val liveWifi = mirrorState.status != TftMirrorStatus.IDLE &&
+                            mirrorState.status != TftMirrorStatus.ERROR
+                        val anyActive = liveWifi || localActive
+
+                        dbg.btnTftDbgTogglePreview.text = when {
+                            liveWifi -> "Live Wi-Fi Active"
+                            localActive -> "⏹ Stop Preview"
+                            else -> "▶ Start Preview"
+                        }
+
+                        dbg.tvTftDbgStatus.text = when {
+                            liveWifi -> "LIVE WI-FI"
+                            localActive -> "LOCAL PREVIEW"
+                            else -> "IDLE"
+                        }
+                        dbg.tvTftDbgStatus.setTextColor(
+                            if (anyActive) ContextCompat.getColor(this@MainActivity, R.color.status_connected)
+                            else currentTheme.textSecondaryColor
+                        )
+
+                        val touchSummary = mirrorState.lastTouchInfo.ifBlank { "None" }
+                        dbg.tvTftDbgTouchInfo.text = "Last Cluster Input: $touchSummary"
+                        fullscreenTftTouchView?.text = "Input: $touchSummary"
+
+                        renderFrameIfVisible(frame, mirrorState, anyActive)
+                    }
+                }
+
+                // Automatically refresh local 800x480 TFT bench whenever Labs sims / Maps / Call / Media change
+                launch {
+                    combine(
+                        GoogleMapsNotificationListener.currentNavStep,
+                        bleManager.simulatedNavStep,
+                        bleManager.simulatedAlert,
+                        callManager.callInfo
+                    ) { _, _, _, _ -> Unit }.collectLatest {
+                        wifiMgr.refreshDebugCockpitFrame()
+                    }
+                }
+
+                // Collect live protocol & system logs + BLE diagnostics banner
+                launch {
+                    DebugLogRepository.entries.collectLatest { entries ->
+                        renderDebugLogsUi(entries, forceRender = false)
+                    }
+                }
+            }
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun attachTftTouchMapper(imageView: ImageView, onMappedTouch: (Int, Int) -> Unit) {
+        imageView.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    val w = v.width.coerceAtLeast(1)
+                    val h = v.height.coerceAtLeast(1)
+                    val x = ((event.x / w.toFloat()) * TftWifiProtocol.TFT_WIDTH).roundToInt()
+                        .coerceIn(0, TftWifiProtocol.TFT_WIDTH - 1)
+                    val y = ((event.y / h.toFloat()) * TftWifiProtocol.TFT_HEIGHT).roundToInt()
+                        .coerceIn(0, TftWifiProtocol.TFT_HEIGHT - 1)
+                    provideHapticFeedback()
+                    onMappedTouch(x, y)
+                    v.performClick()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    false
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun showFullscreenTftDebuggerDialog() {
+        fullscreenTftDialog?.dismiss()
+        val wifiMgr = TftWifiMirrorManager.getInstance(this)
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#080B10"))
+            setPadding(dpToPx(12), dpToPx(12), dpToPx(12), dpToPx(12))
+        }
+
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val tvTitle = TextView(this).apply {
+            text = "800×480 TFT LIVE BENCH"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val tvTouch = TextView(this).apply {
+            text = "Tap display to inspect touch (x,y)"
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setPadding(0, 0, dpToPx(8), 0)
+        }
+        val btnClose = MaterialButton(this).apply {
+            text = "Close"
+            setTextColor(Color.WHITE)
+            backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1E293B"))
+            setOnClickListener { dialog.dismiss() }
+        }
+        topBar.addView(tvTitle)
+        topBar.addView(tvTouch)
+        topBar.addView(btnClose)
+        root.addView(topBar)
+
+        val previewFrame = androidx.constraintlayout.widget.ConstraintLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            ).apply {
+                topMargin = dpToPx(8)
+                bottomMargin = dpToPx(8)
+            }
+        }
+        val ivFull = ImageView(this).apply {
+            id = View.generateViewId()
+            scaleType = ImageView.ScaleType.FIT_XY
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            layoutParams = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(0, 0).apply {
+                startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                dimensionRatio = "5:3"
+            }
+        }
+        previewFrame.addView(ivFull)
+        root.addView(previewFrame)
+
+        val tvMetrics = TextView(this).apply {
+            text = binding.labsTftDebug.tvTftDbgMetrics.text
+            setTextColor(Color.parseColor("#CBD5E1"))
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setPadding(0, 0, 0, dpToPx(6))
+        }
+        root.addView(tvMetrics)
+
+        val actionBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        fun addBarBtn(label: String, onClick: () -> Unit) {
+            val b = MaterialButton(this).apply {
+                text = label
+                textSize = 11f
+                setTextColor(Color.WHITE)
+                backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1E293B"))
+                layoutParams = LinearLayout.LayoutParams(0, dpToPx(42), 1f).apply {
+                    marginEnd = dpToPx(4)
+                }
+                setOnClickListener {
+                    provideHapticFeedback()
+                    onClick()
+                }
+            }
+            actionBar.addView(b)
+        }
+        addBarBtn("Recenter") { wifiMgr.simulateHandlebarRecenter() }
+        addBarBtn("Day/Night") { wifiMgr.toggleDebugDaylightContrast() }
+        addBarBtn("Park/Ride") { wifiMgr.toggleDebugStationaryMode() }
+        addBarBtn("Guides") { wifiMgr.toggleDebugHitboxOverlay() }
+        addBarBtn("NAV_V2") { wifiMgr.runNavV2LoopbackDiagnostics() }
+        root.addView(actionBar)
+
+        attachTftTouchMapper(ivFull) { x, y ->
+            wifiMgr.simulateClusterTouch(9, x, y)
+            tvTouch.text = "Touch @ ($x, $y)"
+        }
+
+        // Seed currently cached frame immediately before next frame arrives
+        wifiMgr.latestDebugFrame.value?.let { frame ->
+            BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size)?.let { bmp ->
+                ivFull.setImageBitmap(bmp)
+            }
+        }
+
+        fullscreenTftImageView = ivFull
+        fullscreenTftMetricsView = tvMetrics
+        fullscreenTftTouchView = tvTouch
+        fullscreenTftDialog = dialog
+
+        dialog.setOnDismissListener {
+            if (fullscreenTftDialog === dialog) {
+                fullscreenTftDialog = null
+                fullscreenTftImageView = null
+                fullscreenTftMetricsView = null
+                fullscreenTftTouchView = null
+            }
+        }
+        dialog.setContentView(root)
+        dialog.show()
+    }
+
+    private fun updateDebugFilterChipsUi() {
+        val theme = currentTheme
+        val dbg = binding.labsTftDebug
+        val chips = listOf(
+            dbg.btnLogFilterAll to DebugFilter.ALL,
+            dbg.btnLogFilterBle to DebugFilter.BLE,
+            dbg.btnLogFilterWifi to DebugFilter.WIFI_NAV_V2,
+            dbg.btnLogFilterCall to DebugFilter.TELEPHONY,
+            dbg.btnLogFilterMaps to DebugFilter.MAPS,
+            dbg.btnLogFilterErr to DebugFilter.ERRORS
+        )
+        for ((btn, filter) in chips) {
+            val selected = activeDebugFilter == filter
+            if (selected) {
+                btn.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
+                btn.strokeColor = ColorStateList.valueOf(theme.primaryColor)
+                btn.setTextColor(theme.onPrimaryColor)
+            } else {
+                btn.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+                btn.strokeColor = ColorStateList.valueOf(theme.cardBorderColor)
+                btn.setTextColor(theme.textSecondaryColor)
+            }
+        }
+    }
+
+    private fun renderDebugLogsUi(entries: List<com.pulsarnav.app.debug.DebugLogEntry>, forceRender: Boolean) {
+        if (!forceRender && binding.scrollSettings.visibility != View.VISIBLE) return
+        val dbg = binding.labsTftDebug
+        dbg.tvBleDiagBanner.text = bleManager.getDebugDiagnosticsSummary()
+        val errCount = DebugLogRepository.errorCount.value
+        val filtered = DebugLogRepository.filterEntries(entries, activeDebugFilter)
+        val pauseTag = if (isDebugLogPaused) " • PAUSED" else ""
+        dbg.tvDebugLogStats.text = "${filtered.size}/${entries.size} • $errCount err$pauseTag"
+
+        if (isDebugLogPaused && !forceRender) return
+
+        val recent = if (filtered.size > 140) filtered.takeLast(140) else filtered
+        dbg.tvDebugLogOutput.text = if (recent.isEmpty()) {
+            "No entries matching '${activeDebugFilter.label}'. Trigger BLE, TFT preview, or NAV_V2 test."
+        } else {
+            recent.joinToString("\n") { DebugLogRepository.formatEntryLine(it) }
+        }
+        dbg.scrollDebugLogs.post {
+            dbg.scrollDebugLogs.fullScroll(View.FOCUS_DOWN)
+        }
+    }
+
+    private fun shareDebugLogText() {
+        val entries = DebugLogRepository.entries.value
+        val filtered = DebugLogRepository.filterEntries(entries, activeDebugFilter)
+        val payload = DebugLogRepository.formatLogsForExport(
+            filtered,
+            headerInfo = "PulsarNav v${com.pulsarnav.app.BuildConfig.VERSION_NAME} • Model=${appSettings.selectedModelId} • ${bleManager.getDebugDiagnosticsSummary()}"
+        )
+        lifecycleScope.launch {
+            try {
+                val uri = withContext(Dispatchers.IO) {
+                    val dir = File(cacheDir, "debug_logs").apply { mkdirs() }
+                    val logFile = File(dir, "pulsarnav-log.txt")
+                    logFile.writeText(payload, Charsets.UTF_8)
+                    FileProvider.getUriForFile(
+                        this@MainActivity,
+                        "${applicationContext.packageName}.fileprovider",
+                        logFile
+                    )
+                }
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "PulsarNav Diagnostic Log (${activeDebugFilter.label})")
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    clipData = ClipData.newRawUri("PulsarNav Diagnostic Log", uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(sendIntent, "Share PulsarNav Diagnostic Log"))
+            } catch (e: Exception) {
+                showFeedback("Unable to open Share sheet: ${e.message}", isAlert = true)
+            }
+        }
+    }
+
+    private fun showTftWifiConfigDialog() {
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val pad = dpToPx(20)
+            setPadding(pad, dpToPx(12), pad, 0)
+        }
+
+        val infoText = android.widget.TextView(this).apply {
+            text = "For Bajaj NS400Z / TFT clusters. Leave SSID blank to auto-use the connected PULSAR device name. If you enter your 17-char VIN, PulsarNav derives the OEM SoftAP WPA2 password automatically."
+            textSize = 12f
+            setTextColor(currentTheme.textSecondaryColor)
+        }
+        container.addView(infoText)
+
+        val etSsid = createThemedEditText("Custom Wi-Fi SSID (optional, e.g. PULSAR1854)").apply {
+            setText(appSettings.tftWifiSsid)
+        }
+        container.addView(etSsid)
+
+        val etVin = createThemedEditText("17-char Bike VIN (for auto WPA2 password)").apply {
+            setText(appSettings.tftWifiVin)
+        }
+        container.addView(etVin)
+
+        val etPass = createThemedEditText("Or manual WPA2 passphrase (optional)").apply {
+            setText(appSettings.tftWifiPassphrase)
+        }
+        container.addView(etPass)
+
+        val tvPreview = android.widget.TextView(this).apply {
+            textSize = 11f
+            setTextColor(currentTheme.accentColor)
+            setPadding(0, dpToPx(8), 0, 0)
+        }
+        fun refreshPreview() {
+            val vin = etVin.text.toString().trim()
+            val manual = etPass.text.toString().trim()
+            tvPreview.text = when {
+                manual.isNotEmpty() -> "Using custom WPA2 passphrase (${manual.length} chars)"
+                vin.isNotEmpty() -> "Derived OEM PSK: ${TftPasswordGenerator.deriveSoftApPassword(vin)}"
+                else -> "Tip: Joining PULSAR Wi-Fi manually in Android Settings works without VIN too."
+            }
+        }
+        refreshPreview()
+        etVin.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) { refreshPreview() }
+        })
+        etPass.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) { refreshPreview() }
+        })
+        container.addView(tvPreview)
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("TFT Wi-Fi Configuration")
+            .setView(container)
+            .setPositiveButton("Save") { _, _ ->
+                appSettings.tftWifiSsid = etSsid.text.toString().trim()
+                appSettings.tftWifiVin = etVin.text.toString().trim()
+                appSettings.tftWifiPassphrase = etPass.text.toString().trim()
+                showFeedback("TFT Wi-Fi settings saved")
+            }
+            .setNeutralButton("Clear") { _, _ ->
+                appSettings.tftWifiSsid = ""
+                appSettings.tftWifiVin = ""
+                appSettings.tftWifiPassphrase = ""
+                showFeedback("TFT Wi-Fi credentials cleared")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun updateDeviceList(bikes: List<DiscoveredBike>) {
@@ -4439,6 +5592,11 @@ class MainActivity : AppCompatActivity() {
                         binding.tvCallerStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
                         binding.btnSimulateCall.text = "End Call"
                     }
+                    CallState.OUTGOING_CALL -> {
+                        binding.tvCallerStatus.text = "Outgoing Call: ${call.callerName ?: "Dialing..."}"
+                        binding.tvCallerStatus.setTextColor(currentTheme.accentColor)
+                        binding.btnSimulateCall.text = "End Call"
+                    }
                     else -> {
                         binding.tvCallerStatus.text = "Phone Idle • No incoming call"
                         binding.tvCallerStatus.setTextColor(currentTheme.textPrimaryColor)
@@ -4469,6 +5627,18 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     binding.tvWhatsAppAlertBanner.text = "WhatsApp Alerts: Listening (SMS excluded)"
                     binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.textSecondaryColor)
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            bleManager.lastClusterAction.collectLatest { action ->
+                if (action != null) {
+                    binding.tvClusterActionStatus.text = "Cluster Action: $action"
+                    binding.tvClusterActionStatus.setTextColor(currentTheme.accentColor)
+                } else {
+                    binding.tvClusterActionStatus.text = "Cluster Action: Waiting for switchgear / phonebook sync"
+                    binding.tvClusterActionStatus.setTextColor(currentTheme.textSecondaryColor)
                 }
             }
         }

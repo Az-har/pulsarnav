@@ -3,4 +3,5 @@
     <files-path name="documents" path="documents" />
     <cache-path name="vault_cache" path="vault" />
     <files-path name="vault_files" path="vault" />
+    <cache-path name="debug_logs" path="debug_logs/" />
 </paths>

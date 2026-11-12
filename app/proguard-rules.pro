@@ -19,6 +19,7 @@
 -keep class com.pulsarnav.app.telephony.** { *; }
 -keep class com.pulsarnav.app.tracking.** { *; }
 -keep class com.pulsarnav.app.ui.** { *; }
+-keep class com.pulsarnav.app.wifi.** { *; }
 
 -keepclassmembers enum * {
     public static **[] values();
@@ -40,3 +41,7 @@
 # Optional desktop AWT classes referenced in some ZXing helpers
 -dontwarn java.awt.**
 -dontwarn javax.imageio.**
+
+# Keep debug and navigation components readable in stacktraces
+-keep class com.pulsarnav.app.debug.** { *; }
+-keep class com.pulsarnav.app.navigation.** { *; }

@@ -15,6 +15,7 @@ import com.pulsarnav.app.location.ParkingManager
 import com.pulsarnav.app.maintenance.FuelEntry
 import com.pulsarnav.app.maintenance.FuelLogManager
 import com.pulsarnav.app.maintenance.MaintenanceManager
+import com.pulsarnav.app.maintenance.MaintenanceMath
 import com.pulsarnav.app.maintenance.ServiceRecord
 import com.pulsarnav.app.tracking.RideTracker
 import com.pulsarnav.app.tracking.Trip
@@ -37,14 +38,85 @@ data class VaultImportSummary(
     val totalOdometerKm: Double
 )
 
-class VaultPassphraseRequiredException : Exception("This .pnav backup is encrypted. Enter your passphrase to decrypt.")
+class VaultPassphraseRequiredException(
+    message: String = "This .pnav backup is encrypted. Enter your passphrase to decrypt."
+) : Exception(message)
+
+internal object QrMigrationCodec {
+    const val QR_MAGIC_HEADER = "PNAV_SETUP"
+    const val QR_ENCRYPTED_HEADER = "PNAV_SETUP_ENC"
+
+    private val SENSITIVE_KEYS = setOf("r", "p", "bg", "in", "ip", "mn", "mac", "reg", "ha", "wa")
+
+    fun buildPayload(
+        settingsObj: JSONObject,
+        includeSensitiveProfile: Boolean = false,
+        passphrase: String? = null
+    ): String {
+        if (passphrase != null && passphrase.isBlank()) {
+            throw IllegalArgumentException("Passphrase cannot be blank.")
+        }
+        val includePii = includeSensitiveProfile || !passphrase.isNullOrBlank()
+        val obj = JSONObject().apply {
+            put("m", QR_MAGIC_HEADER)
+            val keys = settingsObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (includePii || key !in SENSITIVE_KEYS) {
+                    put(key, settingsObj.get(key))
+                }
+            }
+        }
+        val plain = obj.toString()
+        if (!passphrase.isNullOrBlank()) {
+            return JSONObject().apply {
+                put("m", QR_ENCRYPTED_HEADER)
+                put("payload", VaultCrypto.encrypt(plain, passphrase))
+            }.toString()
+        }
+        return plain
+    }
+
+    fun decodePayload(payload: String, passphrase: String? = null): Result<JSONObject> {
+        return try {
+            val outer = JSONObject(payload)
+            when (outer.optString("m")) {
+                QR_MAGIC_HEADER -> Result.success(outer)
+                QR_ENCRYPTED_HEADER -> {
+                    val encryptedJson = outer.optString("payload", "")
+                    if (encryptedJson.isBlank() || !VaultCrypto.isEncryptedPayload(encryptedJson)) {
+                        return Result.failure(IllegalArgumentException("Malformed encrypted PulsarNav QR code."))
+                    }
+                    if (passphrase.isNullOrBlank()) {
+                        return Result.failure(
+                            VaultPassphraseRequiredException("This setup QR is encrypted. Enter the passphrase to unlock.")
+                        )
+                    }
+                    val decrypted = VaultCrypto.decrypt(encryptedJson, passphrase).getOrElse { err ->
+                        return Result.failure(err)
+                    }
+                    val inner = JSONObject(decrypted)
+                    if (inner.optString("m") != QR_MAGIC_HEADER) {
+                        return Result.failure(IllegalArgumentException("Not a valid PulsarNav Migration QR code."))
+                    }
+                    Result.success(inner)
+                }
+                else -> Result.failure(IllegalArgumentException("Not a valid PulsarNav Migration QR code."))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+}
 
 class DataVaultManager private constructor(private val context: Context) {
 
     companion object {
         private const val TAG = "DataVaultManager"
         const val VAULT_SCHEMA_VERSION = 2
-        const val QR_MAGIC_HEADER = "PNAV_SETUP"
+        const val QR_MAGIC_HEADER = QrMigrationCodec.QR_MAGIC_HEADER
+        const val QR_ENCRYPTED_HEADER = QrMigrationCodec.QR_ENCRYPTED_HEADER
+        const val DEFAULT_EXPORT_CACHE_MAX_AGE_MS = 10L * 60L * 1000L
         private val EXCLUDED_SETTINGS_KEYS = setOf(
             AppSettings.KEY_DOC_RC_PATH,
             AppSettings.KEY_DOC_INSURANCE_PATH,
@@ -175,17 +247,44 @@ class DataVaultManager private constructor(private val context: Context) {
     }
 
     /**
-     * Writes the vault to a timestamped `.pnav` (AES-256-GCM encrypted when passphrase supplied)
-     * or `.pnav.json` file in cacheDir/vault/, pruning stale cached exports first.
+     * Deletes cached temporary export artifacts older than [maxAgeMs] from cacheDir/vault/.
      */
-    fun exportVaultToFile(passphrase: String? = null): File {
-        val vaultDir = File(context.cacheDir, "vault").apply { mkdirs() }
+    fun pruneExportCache(maxAgeMs: Long = DEFAULT_EXPORT_CACHE_MAX_AGE_MS) {
+        val vaultDir = File(context.cacheDir, "vault")
+        if (!vaultDir.exists()) return
+        val cutoff = System.currentTimeMillis() - maxAgeMs
         vaultDir.listFiles()?.forEach { oldFile ->
-            if (oldFile.isFile) oldFile.delete()
+            if (oldFile.isFile && (maxAgeMs <= 0L || oldFile.lastModified() <= cutoff)) {
+                oldFile.delete()
+            }
         }
+    }
+
+    /**
+     * Clears all temporary export files from cacheDir/vault/.
+     */
+    fun clearExportCache() {
+        pruneExportCache(maxAgeMs = 0L)
+    }
+
+    /**
+     * Writes the vault to a timestamped `.pnav` (AES-256-GCM encrypted when [passphrase] is supplied)
+     * or `.pnav.json` file in cacheDir/vault/ when [allowUnencrypted] is explicitly true.
+     */
+    fun exportVaultToFile(passphrase: String? = null, allowUnencrypted: Boolean = false): File {
+        if (passphrase != null && passphrase.isBlank()) {
+            throw IllegalArgumentException("Passphrase cannot be blank.")
+        }
+        val encrypted = !passphrase.isNullOrBlank()
+        if (!encrypted && !allowUnencrypted) {
+            throw IllegalArgumentException(
+                "Refusing unencrypted vault export without explicit confirmation. Enter a passphrase or allow plaintext export."
+            )
+        }
+        val vaultDir = File(context.cacheDir, "vault").apply { mkdirs() }
+        clearExportCache()
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val json = exportVaultJson()
-        val encrypted = !passphrase.isNullOrBlank()
         val payload = if (encrypted) VaultCrypto.encrypt(json, passphrase!!) else json
         val ext = if (encrypted) "pnav" else "pnav.json"
         val file = File(vaultDir, "pulsarnav_vault_$timeStamp.$ext")
@@ -225,8 +324,6 @@ class DataVaultManager private constructor(private val context: Context) {
     // =========================================================================
     // 2. FULL VAULT IMPORT & RESTORE
     // =========================================================================
-
-    fun isEncryptedBackup(rawContent: String): Boolean = VaultCrypto.isEncryptedPayload(rawContent)
 
     /**
      * Imports either an AES-256-GCM encrypted `.pnav` backup (using `passphrase`)
@@ -382,8 +479,15 @@ class DataVaultManager private constructor(private val context: Context) {
                     maintenanceManager.setLastServiceKm(lastServ)
                 }
                 val targetOdo = maintObj.optDouble("nextServiceTargetOdoKm", -1.0)
-                if (targetOdo > 0.0) {
-                    maintenanceManager.setNextServiceTargetOdo(targetOdo)
+                val resolvedTarget = when {
+                    targetOdo <= 0.0 -> -1.0
+                    // Legacy builds could export fallback 500.0 when KEY_NEXT_SERVICE_TARGET_ODO was unset
+                    targetOdo == 500.0 && totalOdo > 750.0 && lastServ >= 500.0 ->
+                        MaintenanceMath.defaultServiceTargetOdo(totalOdo)
+                    else -> targetOdo
+                }
+                if (resolvedTarget > 0.0) {
+                    maintenanceManager.setNextServiceTargetOdo(resolvedTarget)
                 }
             }
 
@@ -420,11 +524,15 @@ class DataVaultManager private constructor(private val context: Context) {
     // =========================================================================
 
     /**
-     * Generates a compact payload representing essential setup credentials.
+     * Generates a compact migration QR payload. By default, sensitive personal/medical/contact
+     * fields are omitted from unencrypted QR payloads unless [passphrase] is supplied or
+     * [includeSensitiveProfile] is explicitly enabled.
      */
-    fun createSetupQrPayload(): String {
-        val obj = JSONObject().apply {
-            put("m", QR_MAGIC_HEADER)
+    fun createSetupQrPayload(
+        includeSensitiveProfile: Boolean = false,
+        passphrase: String? = null
+    ): String {
+        val rawObj = JSONObject().apply {
             put("r", settings.riderName)
             put("p", settings.riderPhone)
             put("bg", settings.riderBloodGroup)
@@ -446,14 +554,23 @@ class DataVaultManager private constructor(private val context: Context) {
             put("odo", maintenanceManager.status.value.totalOdometerKm)
             put("dte", settings.projectedDteKm)
         }
-        return obj.toString()
+        return QrMigrationCodec.buildPayload(
+            settingsObj = rawObj,
+            includeSensitiveProfile = includeSensitiveProfile,
+            passphrase = passphrase
+        )
     }
 
     /**
      * Renders an obsidian/wine-red styled QR Code Bitmap from the setup payload.
      */
-    fun generateSetupQrBitmap(width: Int = 600, height: Int = 600): Bitmap {
-        val payload = createSetupQrPayload()
+    fun generateSetupQrBitmap(
+        width: Int = 600,
+        height: Int = 600,
+        includeSensitiveProfile: Boolean = false,
+        passphrase: String? = null
+    ): Bitmap {
+        val payload = createSetupQrPayload(includeSensitiveProfile, passphrase)
         val hints = EnumMap<EncodeHintType, Any>(EncodeHintType::class.java).apply {
             put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M)
             put(EncodeHintType.MARGIN, 2)
@@ -478,13 +595,12 @@ class DataVaultManager private constructor(private val context: Context) {
     }
 
     /**
-     * Parses and restores from a scanned QR Code payload.
+     * Parses and restores from a scanned QR Code payload (`PNAV_SETUP` or encrypted `PNAV_SETUP_ENC`).
      */
-    fun importFromQrPayload(payload: String): Result<String> {
+    fun importFromQrPayload(payload: String, passphrase: String? = null): Result<String> {
         return try {
-            val obj = JSONObject(payload)
-            if (obj.optString("m") != QR_MAGIC_HEADER) {
-                return Result.failure(IllegalArgumentException("Not a valid PulsarNav Migration QR code."))
+            val obj = QrMigrationCodec.decodePayload(payload, passphrase).getOrElse { err ->
+                return Result.failure(err)
             }
 
             fun JSONObject.optNonNullString(key: String): String? =
@@ -523,7 +639,9 @@ class DataVaultManager private constructor(private val context: Context) {
             if (dte > 0) settings.projectedDteKm = dte
 
             settings.isSetupCompleted = true
-            Result.success("Profile restored for ${settings.riderName} (${settings.bikeName})")
+            val displayTarget = settings.riderName.ifBlank { settings.bikeName.ifBlank { "Bike Profile" } }
+            val scopeNote = if (obj.has("r") || obj.has("in")) "Profile" else "Bike & app settings"
+            Result.success("$scopeNote restored for $displayTarget (${settings.bikeName})")
         } catch (e: Exception) {
             Result.failure(e)
         }

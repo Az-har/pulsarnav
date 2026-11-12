@@ -1,16 +1,6 @@
 <resources>
     <string name="app_name">PulsarNav</string>
     <string name="service_notification_listener">Pulsar Google Maps Bridge</string>
-    <string name="status_disconnected">Disconnected</string>
-    <string name="status_scanning">Scanning for Bikes...</string>
-    <string name="status_connected">Connected to %1$s</string>
-    <string name="btn_scan">Scan for Bike</string>
-    <string name="btn_stop_scan">Stop Scanning</string>
-    <string name="btn_disconnect">Disconnect</string>
-    <string name="btn_grant_permission">Grant Notification Access</string>
-    <string name="btn_open_maps">Open Google Maps</string>
-    <string name="live_hud_title">Live Navigation HUD</string>
-    <string name="waiting_for_navigation">Start navigation in Google Maps to begin projecting turns.</string>
 
     <!-- App Shortcuts & Samsung Routines -->
     <string name="shortcut_work_short">Work (2W)</string>

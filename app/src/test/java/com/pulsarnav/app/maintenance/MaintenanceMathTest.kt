@@ -3,6 +3,7 @@ package com.pulsarnav.app.maintenance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.time.LocalDate
 
 class MaintenanceMathTest {
 
@@ -12,6 +13,56 @@ class MaintenanceMathTest {
         assertEquals(3.25, MaintenanceMath.parseDecimal(" 3.25 ")!!, 0.001)
         assertNull(MaintenanceMath.parseDecimal("abc"))
         assertEquals("14250.5", MaintenanceMath.formatDecimal(14250.5))
+    }
+
+    @Test
+    fun formatCurrencyAmount_preservesCentsAndFormatsExactIntegersCleanly() {
+        assertEquals("550", MaintenanceMath.formatCurrencyAmount(550.0))
+        assertEquals("125.50", MaintenanceMath.formatCurrencyAmount(125.5))
+        assertEquals("99.95", MaintenanceMath.formatCurrencyAmount(99.95))
+    }
+
+    @Test
+    fun defaultServiceTargetOdo_scalesWithMotorcycleMilestones() {
+        assertEquals(500.0, MaintenanceMath.defaultServiceTargetOdo(350.0), 0.001)
+        assertEquals(5000.0, MaintenanceMath.defaultServiceTargetOdo(750.0), 0.001)
+        assertEquals(5000.0, MaintenanceMath.defaultServiceTargetOdo(3200.0), 0.001)
+        assertEquals(10000.0, MaintenanceMath.defaultServiceTargetOdo(6400.0), 0.001)
+        assertEquals(15000.0, MaintenanceMath.defaultServiceTargetOdo(10200.0), 0.001)
+    }
+
+    @Test
+    fun gloveboxExpiryEvaluator_distinguishesExpiredExpiringValidAndUnknown() {
+        val today = LocalDate.of(2026, 11, 12)
+
+        assertEquals(
+            GloveboxDocumentStatus.NO_FILE,
+            GloveboxExpiryEvaluator.evaluate(hasFile = false, rawExpiry = "", today = today)
+        )
+        assertEquals(
+            GloveboxDocumentStatus.ATTACHED_NO_EXPIRY,
+            GloveboxExpiryEvaluator.evaluate(hasFile = true, rawExpiry = "", today = today)
+        )
+        assertEquals(
+            GloveboxDocumentStatus.EXPIRED,
+            GloveboxExpiryEvaluator.evaluate(hasFile = true, rawExpiry = "11 Nov 2026", today = today)
+        )
+        assertEquals(
+            GloveboxDocumentStatus.EXPIRED,
+            GloveboxExpiryEvaluator.evaluate(hasFile = false, rawExpiry = "2026-11-01", today = today)
+        )
+        assertEquals(
+            GloveboxDocumentStatus.EXPIRING_SOON,
+            GloveboxExpiryEvaluator.evaluate(hasFile = true, rawExpiry = "30 Nov 2026", today = today)
+        )
+        assertEquals(
+            GloveboxDocumentStatus.VALID,
+            GloveboxExpiryEvaluator.evaluate(hasFile = true, rawExpiry = "15 Nov 2027", today = today)
+        )
+        assertEquals(
+            LocalDate.of(2027, 11, 30),
+            GloveboxExpiryEvaluator.parseExpiryDate("Nov 2027")
+        )
     }
 
     @Test

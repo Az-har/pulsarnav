@@ -78,7 +78,12 @@ class FuelLogManager private constructor(private val context: Context) {
         _stats.value = FuelEconomyCalculator.computeStats(recalculated)
         saveEntries(recalculated)
 
-        MaintenanceManager.getInstance(context).setOdometer(odometerKm)
+        val maintenanceManager = MaintenanceManager.getInstance(context)
+        val currentBikeOdo = maintenanceManager.status.value.totalOdometerKm
+        val syncedOdo = FuelEconomyCalculator.computeSyncedOdometerAfterAdd(currentBikeOdo, odometerKm)
+        if (kotlin.math.abs(syncedOdo - currentBikeOdo) >= 0.05) {
+            maintenanceManager.setOdometer(syncedOdo)
+        }
         return recalculated.firstOrNull { it.id == entry.id } ?: entry
     }
 
@@ -105,7 +110,16 @@ class FuelLogManager private constructor(private val context: Context) {
         _entries.value = recalculated
         _stats.value = FuelEconomyCalculator.computeStats(recalculated)
         saveEntries(recalculated)
-        MaintenanceManager.getInstance(context).setOdometer(odometerKm)
+        val maintenanceManager = MaintenanceManager.getInstance(context)
+        val currentBikeOdo = maintenanceManager.status.value.totalOdometerKm
+        val syncedOdo = FuelEconomyCalculator.computeSyncedOdometerAfterUpdate(
+            currentBikeOdoKm = currentBikeOdo,
+            oldEntryOdoKm = old.odometerKm,
+            allUpdatedEntries = recalculated
+        )
+        if (kotlin.math.abs(syncedOdo - currentBikeOdo) >= 0.05) {
+            maintenanceManager.setOdometer(syncedOdo)
+        }
         return recalculated.firstOrNull { it.id == id } ?: updated
     }
 

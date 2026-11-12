@@ -29,8 +29,48 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
+      - name: Run Unit Tests & Lint
+        run: ./gradlew testDebugUnitTest lintDebug --stacktrace
+
+      - name: Configure Release Signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          REQUIRE_PRIVATE_SIGNING: ${{ vars.REQUIRE_PRIVATE_SIGNING }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] || [ -n "$RELEASE_STORE_PASSWORD" ] || [ -n "$RELEASE_KEY_ALIAS" ] || [ -n "$RELEASE_KEY_PASSWORD" ]; then
+            if [ -z "$RELEASE_KEYSTORE_BASE64" ] || [ -z "$RELEASE_STORE_PASSWORD" ] || [ -z "$RELEASE_KEY_ALIAS" ] || [ -z "$RELEASE_KEY_PASSWORD" ]; then
+              echo "::error::Partial release signing secrets configured. Set RELEASE_KEYSTORE_BASE64, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, and RELEASE_KEY_PASSWORD together."
+              exit 1
+            fi
+            KEYSTORE_PATH="${{ runner.temp }}/pulsarnav-private-release.jks"
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > "$KEYSTORE_PATH"
+            echo "RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+            echo "RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "Configured private release signing keystore."
+          else
+            if [ "$REQUIRE_PRIVATE_SIGNING" = "true" ]; then
+              echo "::error::vars.REQUIRE_PRIVATE_SIGNING is 'true' cleanly blocking release without private signing secrets."
+              exit 1
+            fi
+            echo "::warning::RELEASE_KEYSTORE_BASE64 not set; release build will use the repository fallback keystore (app/keystore/pulsarnav-release.jks). Configure signing secrets and vars.REQUIRE_PRIVATE_SIGNING=true for private distribution."
+          fi
+
       - name: Build Release APK
+        env:
+          REQUIRE_PRIVATE_RELEASE_SIGNING: ${{ vars.REQUIRE_PRIVATE_SIGNING }}
         run: ./gradlew assembleRelease --stacktrace
+
+      - name: Cleanup Ephemeral Keystore
+        if: always()
+        run: |
+          if [ -n "${RELEASE_STORE_FILE:-}" ] && [ -f "$RELEASE_STORE_FILE" ]; then
+            rm -f "$RELEASE_STORE_FILE"
+          fi
 
       - name: Prepare APK Asset
         run: |

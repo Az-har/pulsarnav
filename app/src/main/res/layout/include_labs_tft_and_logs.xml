@@ -1,0 +1,549 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <!-- Full 800x480 TFT Screen Debugger -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardTftScreenDebugger"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="@dimen/card_margin_bottom"
+        app:cardBackgroundColor="@color/surface_card"
+        app:cardCornerRadius="@dimen/card_corner_radius"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/surface_border"
+        app:strokeWidth="@dimen/card_stroke_width">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="@dimen/card_padding">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:letterSpacing="0.06"
+                    android:text="FULL 800×480 TFT DEBUGGER"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvTftDbgStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/pill_badge"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="3dp"
+                    android:text="IDLE"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Live interactive virtual 800×480 TFT framebuffer • Tap screen to simulate cluster touch"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/frameTftDebugViewport"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="#090C12">
+
+                <ImageView
+                    android:id="@+id/ivTftDebugPreview"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:contentDescription="Full 800x480 TFT Screen Preview"
+                    android:scaleType="fitXY"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintDimensionRatio="H,5:3"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toTopOf="parent" />
+
+                <LinearLayout
+                    android:id="@+id/layoutTftDebugEmpty"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:background="#CC0B0E14"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="16dp"
+                    app:layout_constraintBottom_toBottomOf="@id/ivTftDebugPreview"
+                    app:layout_constraintEnd_toEndOf="@id/ivTftDebugPreview"
+                    app:layout_constraintStart_toStartOf="@id/ivTftDebugPreview"
+                    app:layout_constraintTop_toTopOf="@id/ivTftDebugPreview">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:text="800 × 480 VIRTUAL TFT"
+                        android:textColor="#E2E8F0"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center"
+                        android:text="Tap Start Preview below to test Cockpit HUD offline, or stream Live Screen Cast from Home."
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+            <TextView
+                android:id="@+id/tvTftDbgMetrics"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="monospace"
+                android:text="800×480 • 0 B / 30 KB budget • Q=50 • IDLE"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp" />
+
+            <ProgressBar
+                android:id="@+id/pbTftJpegBudget"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="6dp"
+                android:layout_marginTop="4dp"
+                android:max="30000"
+                android:progress="0" />
+
+            <TextView
+                android:id="@+id/tvTftDbgTouchInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/rounded_box"
+                android:fontFamily="monospace"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="Last Cluster Input: None"
+                android:textColor="@color/text_tertiary"
+                android:textSize="10sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTftDbgTogglePreview"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/btn_height_secondary"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1.35"
+                    android:backgroundTint="@color/wine_red"
+                    android:text="▶ Start Preview"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="@dimen/btn_corner_radius" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTftDbgFullscreen"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/btn_height_secondary"
+                    android:layout_marginHorizontal="2dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:text="⛶ Expand"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="@dimen/btn_corner_radius"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="@dimen/card_stroke_width" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTftDbgNavV2Test"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/btn_height_secondary"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:text="NAV_V2"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="@dimen/btn_corner_radius"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="@dimen/card_stroke_width" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTftDbgRecenter"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="3dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="⌖ Recenter"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTftDbgDaylight"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="☀ Day/Night"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTftDbgMotion"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Park/Ride"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTftDbgHitboxes"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="3dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="⊞ Guides"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
+            </LinearLayout>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Live Protocol & System Debug Log Console -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardDebugLogConsole"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="@dimen/card_margin_bottom"
+        app:cardBackgroundColor="@color/surface_card"
+        app:cardCornerRadius="@dimen/card_corner_radius"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/surface_border"
+        app:strokeWidth="@dimen/card_stroke_width">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="@dimen/card_padding">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:letterSpacing="0.06"
+                    android:text="PROTOCOL &amp; SYSTEM LOG CONSOLE"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvDebugLogStats"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/pill_badge"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="3dp"
+                    android:text="0 logs • 0 err"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvBleDiagBanner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/rounded_box"
+                android:fontFamily="monospace"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="6dp"
+                android:text="BLE ready=false • mtu=23 • bond=N/A"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp" />
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLogFilterAll"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:layout_marginEnd="5dp"
+                        android:backgroundTint="@color/surface_card"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="All"
+                        android:textSize="11sp"
+                        app:cornerRadius="16dp"
+                        app:strokeColor="@color/surface_border"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLogFilterBle"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:layout_marginEnd="5dp"
+                        android:backgroundTint="@color/surface_card"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="BLE"
+                        android:textSize="11sp"
+                        app:cornerRadius="16dp"
+                        app:strokeColor="@color/surface_border"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLogFilterWifi"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:layout_marginEnd="5dp"
+                        android:backgroundTint="@color/surface_card"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="Wi-Fi / NAV_V2"
+                        android:textSize="11sp"
+                        app:cornerRadius="16dp"
+                        app:strokeColor="@color/surface_border"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLogFilterCall"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:layout_marginEnd="5dp"
+                        android:backgroundTint="@color/surface_card"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="Calls/SMS"
+                        android:textSize="11sp"
+                        app:cornerRadius="16dp"
+                        app:strokeColor="@color/surface_border"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLogFilterMaps"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:layout_marginEnd="5dp"
+                        android:backgroundTint="@color/surface_card"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="Maps"
+                        android:textSize="11sp"
+                        app:cornerRadius="16dp"
+                        app:strokeColor="@color/surface_border"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLogFilterErr"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:backgroundTint="@color/surface_card"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="Errors"
+                        android:textSize="11sp"
+                        app:cornerRadius="16dp"
+                        app:strokeColor="@color/surface_border"
+                        app:strokeWidth="1dp" />
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <androidx.core.widget.NestedScrollView
+                android:id="@+id/scrollDebugLogs"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/rounded_box"
+                android:nestedScrollingEnabled="true"
+                android:padding="10dp">
+
+                <TextView
+                    android:id="@+id/tvDebugLogOutput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="3dp"
+                    android:text="No debug log entries yet. Trigger a BLE action, TFT preview, or simulation above."
+                    android:textColor="@color/text_secondary"
+                    android:textIsSelectable="true"
+                    android:textSize="10sp" />
+            </androidx.core.widget.NestedScrollView>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLogPauseResume"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="3dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="⏸ Pause"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLogCopy"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Copy"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLogShare"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Share .txt"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLogClear"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="3dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/surface_card"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Clear"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/surface_border"
+                    app:strokeWidth="1dp" />
+            </LinearLayout>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+</LinearLayout>

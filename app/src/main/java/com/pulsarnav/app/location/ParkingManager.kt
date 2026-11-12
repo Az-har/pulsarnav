@@ -1,13 +1,17 @@
 package com.pulsarnav.app.location
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import android.net.Uri
+import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import com.pulsarnav.app.data.AppSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +20,29 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+internal object ParkingFixValidator {
+    const val MAX_FIX_AGE_MS = 5 * 60 * 1000L
+    const val MAX_ACCEPTABLE_ACCURACY_METERS = 150f
+
+    fun isAcceptableFix(
+        fixTimeMs: Long,
+        fixElapsedNanos: Long?,
+        accuracyMeters: Float?,
+        nowMs: Long = System.currentTimeMillis(),
+        nowElapsedNanos: Long? = null
+    ): Boolean {
+        if (accuracyMeters != null && accuracyMeters > MAX_ACCEPTABLE_ACCURACY_METERS) {
+            return false
+        }
+        if (fixElapsedNanos != null && nowElapsedNanos != null && fixElapsedNanos > 0L && nowElapsedNanos >= fixElapsedNanos) {
+            val ageMs = (nowElapsedNanos - fixElapsedNanos) / 1_000_000L
+            return ageMs in 0..MAX_FIX_AGE_MS
+        }
+        val wallAgeMs = nowMs - fixTimeMs
+        return fixTimeMs > 0L && wallAgeMs in 0..MAX_FIX_AGE_MS
+    }
+}
 
 data class ParkedLocation(
     val latitude: Double,
@@ -61,20 +88,43 @@ class ParkingManager private constructor(private val context: Context) {
     fun onBikeDisconnected() {
         if (!AppSettings.getInstance(context).isAutoParkEnabled) return
 
+        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) return
+
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-        var location: Location? = null
+        val candidates = mutableListOf<Location>()
 
         try {
-            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            if (hasFine && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)?.let { candidates.add(it) }
             }
-            if (location == null && locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)?.let { candidates.add(it) }
             }
         } catch (_: Exception) { }
 
-        if (location != null) {
-            saveLocation(location.latitude, location.longitude)
+        val nowMs = System.currentTimeMillis()
+        val nowElapsedNanos = SystemClock.elapsedRealtimeNanos()
+        val validCandidates = candidates.filter { loc ->
+            ParkingFixValidator.isAcceptableFix(
+                fixTimeMs = loc.time,
+                fixElapsedNanos = loc.elapsedRealtimeNanos,
+                accuracyMeters = if (loc.hasAccuracy()) loc.accuracy else null,
+                nowMs = nowMs,
+                nowElapsedNanos = nowElapsedNanos
+            )
+        }
+
+        val bestLocation = validCandidates.maxWithOrNull(
+            compareBy<Location> { it.elapsedRealtimeNanos }
+                .thenBy { if (it.hasAccuracy()) -it.accuracy else Float.NEGATIVE_INFINITY }
+        )
+
+        if (bestLocation != null) {
+            saveLocation(bestLocation.latitude, bestLocation.longitude)
         }
     }
 
@@ -122,21 +172,6 @@ class ParkingManager private constructor(private val context: Context) {
             }
         } catch (_: Exception) {
             "%.5f, %.5f".format(lat, lng)
-        }
-    }
-
-    fun getElapsedParkedTimeFormatted(): String {
-        val loc = _lastParkedLocation.value ?: return "No record"
-        val diffMs = System.currentTimeMillis() - loc.timestampMs
-        val mins = (diffMs / 60000).toInt()
-        val hours = mins / 60
-        val days = hours / 24
-
-        return when {
-            days > 0 -> "$days d ago"
-            hours > 0 -> "$hours h ago"
-            mins > 0 -> "$mins m ago"
-            else -> "Just now"
         }
     }
 }

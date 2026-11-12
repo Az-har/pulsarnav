@@ -1,7 +1,7 @@
 package com.pulsarnav.app.parser
 
-import android.os.Bundle
 import com.pulsarnav.app.model.Maneuver
+import com.pulsarnav.app.protocol.OtcPacketBuilder
 import java.util.Calendar
 import java.util.regex.Pattern
 
@@ -366,6 +366,9 @@ object GoogleMapsNotificationParser {
         if (s.startsWith("onto ", ignoreCase = true)) s = s.substring(5)
         if (s.startsWith("on ", ignoreCase = true)) s = s.substring(3)
         if (s.startsWith("in ", ignoreCase = true)) s = s.substring(3)
+
+        // Transliterate diacritics before stripping non-ASCII characters (e.g., São -> Sao)
+        s = OtcPacketBuilder.transliterateAscii(s)
 
         // Clean to alphanumerics and clamp to 31 characters matching OtcPacketBuilder capacity
         val sanitized = s.replace(Regex("[^0-9a-zA-Z. ]"), " ").replace(Regex("\\s+"), " ").trim()

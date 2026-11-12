@@ -15,8 +15,8 @@ android {
         applicationId = "com.pulsarnav.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
-        versionName = "1.1.0"
+        versionCode = 10
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -67,6 +67,15 @@ android {
                 keyAlias = propKeyAlias
                 keyPassword = propKeyPassword
             } else {
+                val requirePrivateSigning =
+                    (project.findProperty("requirePrivateReleaseSigning")?.toString()?.toBooleanStrictOrNull() == true) ||
+                        (System.getenv("REQUIRE_PRIVATE_RELEASE_SIGNING")?.equals("true", ignoreCase = true) == true)
+                if (requirePrivateSigning) {
+                    throw GradleException(
+                        "Private release signing is required (requirePrivateReleaseSigning / REQUIRE_PRIVATE_RELEASE_SIGNING), " +
+                            "but neither RELEASE_STORE_FILE nor keystore.properties is configured."
+                    )
+                }
                 val ksFile = file("keystore/pulsarnav-release.jks")
                 if (ksFile.exists()) {
                     logger.warn(

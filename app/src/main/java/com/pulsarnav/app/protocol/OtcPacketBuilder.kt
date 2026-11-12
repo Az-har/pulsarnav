@@ -20,6 +20,24 @@ enum class AlertType(val value: Byte) {
     WHATSAPP(2)
 }
 
+enum class RecentCallStatus(val value: Int) {
+    UNKNOWN(0),
+    INCOMING(1),
+    OUTGOING(2),
+    MISSED(3)
+}
+
+data class ClusterContactEntry(
+    val name: String,
+    val number: String
+)
+
+data class ClusterRecentCallEntry(
+    val name: String,
+    val number: String,
+    val status: RecentCallStatus
+)
+
 /**
  * Decoded handlebar/switchgear & volume control state from characteristic 0a10676e-...
  * (18B legacy LCD or 20..26B TFT such as Pulsar NS400Z).
@@ -42,7 +60,9 @@ data class OtcControlFrame(
     val selectPlaylistSongReq: Int,
     val selectedPlaylistSong: Int,
     val dialIndex: Int,
-    val dialTxn: Int
+    val dialTxn: Int,
+    val pagePlaylist: Int = 0,
+    val newPlaylistReq: Int = 0
 )
 
 /**
@@ -60,12 +80,18 @@ object OtcPacketBuilder {
     const val ALERT_PACKET_SIZE = 44
     const val MISSED_CALL_PACKET_SIZE = 63
     const val MUSIC_INFO_PACKET_SIZE = 111
+    const val FAV_CONTACTS_PACKET_SIZE = 151
+    const val RECENT_CALLS_PACKET_SIZE = 151
+    const val PLAYLIST_PACKET_SIZE = 177
 
     private const val MAX_STREET_LEN = 31
     private const val MAX_NAME_LEN = 32
     private const val MAX_PHONE_LEN = 18
 
     private val heartbeatCounter = AtomicInteger(0)
+    private val COMBINING_MARKS_REGEX = Regex("\\p{InCombiningDiacriticalMarks}+")
+    private val NON_PRINTABLE_ASCII_REGEX = Regex("[^\\x20-\\x7E]")
+    private val HEX_CHARS = "0123456789ABCDEF".toCharArray()
 
     private fun nextHeartbeatByte(): Byte =
         (heartbeatCounter.incrementAndGet() and 0xFF).toByte()
@@ -102,7 +128,8 @@ object OtcPacketBuilder {
         etaHour: Int = 12,
         etaMinute: Int = 0,
         roundaboutExit: Int = 0,
-        streetText: String? = null
+        streetText: String? = null,
+        takeMeHomeAck: Int = 0
     ): ByteArray {
         val step = formatDistance(stepMeters.coerceAtLeast(0).toDouble())
         val total = formatDistance(totalMeters.coerceAtLeast(0).toDouble())
@@ -163,7 +190,7 @@ object OtcPacketBuilder {
         b[12] = ((total[0].toInt() and 0x01) or (gpsActive shl 2)).toByte()
 
         // Byte 13: takeMeHome ack
-        b[13] = 0
+        b[13] = (takeMeHomeAck and 0xFF).toByte()
 
         // Bytes 14-45: Street length and ASCII content
         if (t.isNotEmpty()) {
@@ -192,8 +219,10 @@ object OtcPacketBuilder {
      * Nav stop frame: type 0, all parameters zeroed, valid checksum (0).
      * Clears turn-by-turn navigation graphics on the bike's LCD.
      */
-    fun buildTbtStopFrame(): ByteArray {
-        return ByteArray(TBT_PACKET_SIZE)
+    fun buildTbtStopFrame(takeMeHomeAck: Int = 0): ByteArray {
+        val b = ByteArray(TBT_PACKET_SIZE)
+        b[13] = (takeMeHomeAck and 0xFF).toByte()
+        return b
     }
 
     /**
@@ -302,7 +331,9 @@ object OtcPacketBuilder {
         b[17] = (selectPlaylistSongAck and 0xFF).toByte()
 
         // [18..51] Caller ID info
-        val hasCaller = (callState == CallState.INCOMING_CALL || callState == CallState.ACTIVE_CALL)
+        val hasCaller = (callState == CallState.INCOMING_CALL ||
+            callState == CallState.ACTIVE_CALL ||
+            callState == CallState.OUTGOING_CALL)
         if (hasCaller && !callerName.isNullOrBlank()) {
             b[18] = 1
             var clean = sanitizeAscii(callerName, MAX_NAME_LEN)
@@ -381,7 +412,9 @@ object OtcPacketBuilder {
         b[14] = (missedCallGetAck and 0xFF).toByte()
         b[17] = 0
 
-        val hasCaller = (callState == CallState.INCOMING_CALL || callState == CallState.ACTIVE_CALL)
+        val hasCaller = (callState == CallState.INCOMING_CALL ||
+            callState == CallState.ACTIVE_CALL ||
+            callState == CallState.OUTGOING_CALL)
         if (hasCaller && !callerName.isNullOrBlank()) {
             b[18] = 1
             var clean = sanitizeAscii(callerName, 30)
@@ -407,9 +440,12 @@ object OtcPacketBuilder {
     /**
      * Builds 44-byte WhatsApp Alert Packet for characteristic 0410676e-...
      */
-    fun buildWhatsAppAlertPacket(senderName: String): ByteArray {
+    fun buildWhatsAppAlertPacket(
+        senderName: String,
+        alertType: AlertType = AlertType.WHATSAPP
+    ): ByteArray {
         val packet = ByteArray(ALERT_PACKET_SIZE)
-        packet[0] = AlertType.WHATSAPP.value
+        packet[0] = alertType.value
 
         val cleanName = sanitizeAscii(senderName, MAX_NAME_LEN)
         val nameBytes = cleanName.toByteArray(StandardCharsets.UTF_8)
@@ -422,23 +458,6 @@ object OtcPacketBuilder {
         packet[35] = ((epochSec shr 16) and 0xFF).toByte()
         packet[36] = ((epochSec shr 8) and 0xFF).toByte()
         packet[37] = (epochSec and 0xFF).toByte()
-
-        return packet
-    }
-
-    /**
-     * Builds 40-byte Legacy Alert Packet for characteristic 0410676e-...
-     * Compatible with older Bajaj instrument cluster firmware.
-     */
-    fun buildWhatsAppAlertLegacyPacket(senderName: String): ByteArray {
-        val packet = ByteArray(40)
-        packet[0] = AlertType.WHATSAPP.value
-
-        val cleanName = sanitizeAscii(senderName, 32)
-        val nameBytes = cleanName.toByteArray(StandardCharsets.UTF_8)
-        val nameLen = nameBytes.size.coerceAtMost(32)
-        packet[1] = nameLen.toByte()
-        System.arraycopy(nameBytes, 0, packet, 2, nameLen)
 
         return packet
     }
@@ -519,12 +538,132 @@ object OtcPacketBuilder {
         return b
     }
 
+    // =========================================================================
+    // 6. Favourite Contacts (0910, 151B), Recent Calls (0b10, 151B) & Playlist (0510, 177B)
+    // =========================================================================
+
+    /**
+     * Builds the 151-byte Favourite Contacts frame for characteristic `0910676e-...`.
+     * Encodes up to 5 slots of `[1B nameLen (<=10), 10B ASCII name, 1B numLen (<=15), 15B ASCII digits]`
+     * starting at offset 2, with header `[0xC0, count << 4]` and 8-bit sum checksum at byte `[150]`.
+     */
+    fun buildFavContactsFrame(entries: List<ClusterContactEntry>): ByteArray {
+        val b = ByteArray(FAV_CONTACTS_PACKET_SIZE)
+        val count = entries.size.coerceIn(0, 5)
+        b[0] = 0xC0.toByte()
+        b[1] = ((count and 0x0F) shl 4).toByte()
+        for (i in 0 until count) {
+            writePhonebookSlot27(b, offset = 2 + (i * 27), name = entries[i].name, number = entries[i].number)
+        }
+        b[150] = computeChecksumByte(b, 150)
+        return b
+    }
+
+    /**
+     * Builds the 151-byte Recent Calls frame for characteristic `0b10676e-...`.
+     * Shares the 5 x 27-byte phonebook slot layout at `[2..136]` with `[0] = 0x80`, `[1] = count << 4`,
+     * per-slot call status (`1=INCOMING`, `2=OUTGOING`, `3=MISSED`) at `[137..141]`, and checksum at `[150]`.
+     */
+    fun buildRecentCallsFrame(entries: List<ClusterRecentCallEntry>): ByteArray {
+        val b = ByteArray(RECENT_CALLS_PACKET_SIZE)
+        val count = entries.size.coerceIn(0, 5)
+        b[0] = 0x80.toByte()
+        b[1] = ((count and 0x0F) shl 4).toByte()
+        for (i in 0 until count) {
+            writePhonebookSlot27(b, offset = 2 + (i * 27), name = entries[i].name, number = entries[i].number)
+            b[137 + i] = (entries[i].status.value and 0xFF).toByte()
+        }
+        b[150] = computeChecksumByte(b, 150)
+        return b
+    }
+
+    /**
+     * Builds the 177-byte Music Playlist Page frame for characteristic `0510676e-...`.
+     * Byte `[0]` packs `pagePlaylistAck (bits 0..5) | (newPlaylistAck << 6)`, `[1]` total tracks,
+     * `[2]` total pages, `[3]` active track index, `[4]` playlist change counter, `[5] = 0x1F`,
+     * followed by 5 x 33-byte track slots (`1B UTF-8 byte len <= 32 + 32B UTF-8 title`).
+     */
+    fun buildPlaylistFrame(
+        trackTitles: List<String>,
+        totalSongs: Int,
+        totalPages: Int,
+        currentTrackNumber: Int,
+        pagePlaylistAck: Int,
+        newPlaylistAck: Int = 0,
+        userChangePlaylistCounter: Int = 0
+    ): ByteArray {
+        val b = ByteArray(PLAYLIST_PACKET_SIZE)
+        b[0] = ((pagePlaylistAck and 0x3F) or ((newPlaylistAck and 0x03) shl 6)).toByte()
+        b[1] = totalSongs.coerceIn(0, 255).toByte()
+        b[2] = totalPages.coerceIn(0, 255).toByte()
+        b[3] = currentTrackNumber.coerceIn(0, 255).toByte()
+        b[4] = (userChangePlaylistCounter and 0xFF).toByte()
+        b[5] = 0x1F
+        val count = trackTitles.size.coerceAtMost(5)
+        for (i in 0 until count) {
+            val offset = 6 + (i * 33)
+            val cleaned = sanitizeUnicodeForCluster(trackTitles[i])
+            writeUtf8Field32(b, offset, offset + 1, cleaned)
+        }
+        return b
+    }
+
+    fun buildResetPlaylistFrame(
+        pagePlaylistAck: Int = 0,
+        newPlaylistAck: Int = 0,
+        userChangePlaylistCounter: Int = 0
+    ): ByteArray {
+        val b = ByteArray(PLAYLIST_PACKET_SIZE)
+        b[0] = ((pagePlaylistAck and 0x3F) or ((newPlaylistAck and 0x03) shl 6)).toByte()
+        b[4] = (userChangePlaylistCounter and 0xFF).toByte()
+        b[5] = 0x1F
+        return b
+    }
+
+    private fun writePhonebookSlot27(dest: ByteArray, offset: Int, name: String, number: String) {
+        val normalizedDigits = normalizeClusterDigits(number)
+        val displayAscii = sanitizeAscii(name.ifBlank { normalizedDigits }, 10)
+        val nameBytes = displayAscii.toByteArray(StandardCharsets.US_ASCII)
+        val nameLen = nameBytes.size.coerceAtMost(10)
+        dest[offset] = nameLen.toByte()
+        if (nameLen > 0) {
+            System.arraycopy(nameBytes, 0, dest, offset + 1, nameLen)
+        }
+        val numBytes = normalizedDigits.toByteArray(StandardCharsets.US_ASCII)
+        val numLen = numBytes.size.coerceAtMost(15)
+        dest[offset + 11] = numLen.toByte()
+        if (numLen > 0) {
+            System.arraycopy(numBytes, 0, dest, offset + 12, numLen)
+        }
+    }
+
+    internal fun normalizeClusterDigits(phone: String?): String {
+        if (phone.isNullOrBlank()) return ""
+        val digits = phone.filter { it.isDigit() }
+        if (digits.length > 15) return digits.takeLast(15)
+        return digits
+    }
+
+    private fun computeChecksumByte(buf: ByteArray, length: Int): Byte {
+        var sum = 0
+        for (i in 0 until length) {
+            sum = (sum + (buf[i].toInt() and 0xFF)) and 0xFF
+        }
+        return sum.toByte()
+    }
+
+    private fun sanitizeUnicodeForCluster(input: String?): String {
+        if (input.isNullOrBlank()) return ""
+        return input.replace(Regex("[\\p{Cn}]"), "").trim()
+    }
+
     /**
      * Parses characteristic 0a10 control notifications/reads (18B LCD or 20..26B TFT).
      */
     fun parseControlFrame(b: ByteArray): OtcControlFrame? {
         if (b.size < 18) return null
         val b0 = b[0].toInt() and 0xFF
+        val b4 = b[4].toInt() and 0xFF
         return OtcControlFrame(
             volumeToSet = b0 and 0x0F,
             dialSource = (b0 ushr 6) and 0x03,
@@ -542,28 +681,55 @@ object OtcPacketBuilder {
             launchMediaPlayer = b[13].toInt() and 0xFF,
             selectPlaylistSongReq = b[14].toInt() and 0xFF,
             selectedPlaylistSong = b[15].toInt() and 0xFF,
-            dialIndex = (b[16].toInt() and 0xFF).coerceIn(0, 4),
-            dialTxn = b[17].toInt() and 0xFF
+            dialIndex = b[16].toInt() and 0xFF,
+            dialTxn = b[17].toInt() and 0xFF,
+            pagePlaylist = b4 and 0x3F,
+            newPlaylistReq = (b4 ushr 6) and 0x03
         )
+    }
+
+    internal fun clipUtf8Bytes(value: String, maxBytes: Int): ByteArray {
+        if (maxBytes <= 0 || value.isEmpty()) return ByteArray(0)
+        val raw = value.toByteArray(StandardCharsets.UTF_8)
+        if (raw.size <= maxBytes) return raw
+        var end = maxBytes
+        while (end > 0 && (raw[end].toInt() and 0xC0) == 0x80) {
+            end--
+        }
+        return raw.copyOf(end)
     }
 
     private fun writeUtf8Field32(dest: ByteArray, lenIndex: Int, dataOffset: Int, value: String) {
         if (value.isEmpty()) return
-        val bytes = value.toByteArray(StandardCharsets.UTF_8)
-        val len = bytes.size.coerceAtMost(MAX_NAME_LEN)
+        val bytes = clipUtf8Bytes(value, MAX_NAME_LEN)
+        val len = bytes.size
         dest[lenIndex] = len.toByte()
-        System.arraycopy(bytes, 0, dest, dataOffset, len)
+        if (len > 0) {
+            System.arraycopy(bytes, 0, dest, dataOffset, len)
+        }
     }
 
-    private fun transliterateAscii(input: String?): String {
+    private fun isPrintableAscii(text: String): Boolean {
+        for (i in 0 until text.length) {
+            if (text[i] !in '\u0020'..'\u007E') return false
+        }
+        return true
+    }
+
+    internal fun transliterateAscii(input: String?): String {
         if (input.isNullOrBlank()) return ""
+        if (isPrintableAscii(input)) return input
         val normalized = Normalizer.normalize(input, Normalizer.Form.NFD)
-        return normalized.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+        return COMBINING_MARKS_REGEX.replace(normalized, "")
     }
 
     private fun sanitizeAscii(input: String?, maxLength: Int): String {
         if (input.isNullOrBlank()) return ""
-        val cleaned = transliterateAscii(input).replace(Regex("[^\\x20-\\x7E]"), " ").trim()
+        val cleaned = if (isPrintableAscii(input)) {
+            input.trim()
+        } else {
+            NON_PRINTABLE_ASCII_REGEX.replace(transliterateAscii(input), " ").trim()
+        }
         return if (cleaned.length > maxLength) cleaned.substring(0, maxLength) else cleaned
     }
 
@@ -574,6 +740,14 @@ object OtcPacketBuilder {
     }
 
     fun toHex(bytes: ByteArray): String {
-        return bytes.joinToString(" ") { "%02X".format(it) }
+        if (bytes.isEmpty()) return ""
+        val sb = StringBuilder(bytes.size * 3)
+        for (i in bytes.indices) {
+            if (i > 0) sb.append(' ')
+            val b = bytes[i].toInt() and 0xFF
+            sb.append(HEX_CHARS[b ushr 4])
+            sb.append(HEX_CHARS[b and 0x0F])
+        }
+        return sb.toString()
     }
 }

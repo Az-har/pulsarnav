@@ -16,11 +16,114 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.format.DateTimeFormatterBuilder
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
 
+internal enum class GloveboxDocumentStatus {
+    NO_FILE,
+    ATTACHED_NO_EXPIRY,
+    VALID,
+    EXPIRING_SOON,
+    EXPIRED
+}
+
+internal object GloveboxExpiryEvaluator {
+    private const val EXPIRING_SOON_DAYS = 30L
+
+    private val FULL_DATE_FORMATTERS = listOf(
+        "dd MMM yyyy",
+        "d MMM yyyy",
+        "dd MMMM yyyy",
+        "d MMMM yyyy",
+        "dd/MM/yyyy",
+        "d/M/yyyy",
+        "dd-MM-yyyy",
+        "d-M-yyyy",
+        "yyyy-MM-dd",
+        "yyyy/MM/dd"
+    ).map { pattern ->
+        DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern(pattern)
+            .toFormatter(Locale.ENGLISH)
+    }
+
+    private val MONTH_YEAR_FORMATTERS = listOf(
+        "MMM yyyy",
+        "MMMM yyyy",
+        "MM/yyyy",
+        "M/yyyy",
+        "MM-yyyy",
+        "yyyy-MM"
+    ).map { pattern ->
+        DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern(pattern)
+            .toFormatter(Locale.ENGLISH)
+    }
+
+    fun parseExpiryDate(rawExpiry: String?): LocalDate? {
+        val trimmed = rawExpiry?.trim()?.replace(Regex("\\s+"), " ").orEmpty()
+        if (trimmed.isEmpty()) return null
+        for (fmt in FULL_DATE_FORMATTERS) {
+            try {
+                return LocalDate.parse(trimmed, fmt)
+            } catch (_: Exception) {
+            }
+        }
+        for (fmt in MONTH_YEAR_FORMATTERS) {
+            try {
+                return YearMonth.parse(trimmed, fmt).atEndOfMonth()
+            } catch (_: Exception) {
+            }
+        }
+        return null
+    }
+
+    fun evaluate(
+        hasFile: Boolean,
+        rawExpiry: String?,
+        today: LocalDate = LocalDate.now()
+    ): GloveboxDocumentStatus {
+        val expiryDate = parseExpiryDate(rawExpiry)
+        return when {
+            expiryDate != null -> {
+                val daysRemaining = ChronoUnit.DAYS.between(today, expiryDate)
+                when {
+                    daysRemaining < 0L -> GloveboxDocumentStatus.EXPIRED
+                    daysRemaining <= EXPIRING_SOON_DAYS -> GloveboxDocumentStatus.EXPIRING_SOON
+                    hasFile -> GloveboxDocumentStatus.VALID
+                    else -> GloveboxDocumentStatus.NO_FILE
+                }
+            }
+            !hasFile -> GloveboxDocumentStatus.NO_FILE
+            else -> GloveboxDocumentStatus.ATTACHED_NO_EXPIRY
+        }
+    }
+}
+
 internal object MaintenanceMath {
     fun formatDecimal(value: Double): String = String.format(Locale.US, "%.1f", value)
+
+    fun formatCurrencyAmount(amount: Double): String {
+        val rounded = kotlin.math.round(amount * 100.0) / 100.0
+        return if (kotlin.math.abs(rounded - kotlin.math.round(rounded)) < 0.005) {
+            String.format(Locale.US, "%.0f", rounded)
+        } else {
+            String.format(Locale.US, "%.2f", rounded)
+        }
+    }
+
+    fun defaultServiceTargetOdo(odoKm: Double): Double = when {
+        odoKm < 750.0 -> 500.0 // 1st Service milestone for new motorcycle
+        odoKm < 5000.0 -> 5000.0 // 2nd Service
+        odoKm < 10000.0 -> 10000.0 // 3rd Service
+        else -> ((odoKm / 5000.0).toInt() + 1) * 5000.0
+    }
 
     fun parseDecimal(raw: String?): Double? =
         raw?.trim()?.replace(',', '.')?.toDoubleOrNull()
@@ -128,12 +231,7 @@ class MaintenanceManager private constructor(private val context: Context) {
         val lubePercent = ((lubeRemaining / CHAIN_LUBE_INTERVAL_KM) * 100).toInt().coerceIn(0, 100)
 
         val rawTarget = MaintenanceMath.parseDecimal(prefs.getString(KEY_NEXT_SERVICE_TARGET_ODO, null))
-        val targetOdo = rawTarget ?: when {
-            odo < 750.0 -> 500.0 // 1st Service milestone for new motorcycle
-            odo < 5000.0 -> 5000.0 // 2nd Service
-            odo < 10000.0 -> 10000.0 // 3rd Service
-            else -> ((odo / 5000.0).toInt() + 1) * 5000.0
-        }
+        val targetOdo = rawTarget ?: MaintenanceMath.defaultServiceTargetOdo(odo)
 
         val isOverdue = odo > targetOdo
         val overdueKm = if (isOverdue) (odo - targetOdo) else 0.0
@@ -167,7 +265,7 @@ class MaintenanceManager private constructor(private val context: Context) {
         MaintenanceMath.parseDecimal(prefs.getString(KEY_LAST_SERVICE, "0.0")) ?: 0.0
 
     fun getNextServiceTargetOdoKm(): Double =
-        MaintenanceMath.parseDecimal(prefs.getString(KEY_NEXT_SERVICE_TARGET_ODO, "500.0")) ?: 500.0
+        _status.value.nextServiceTargetOdoKm
 
     fun setLastChainLubeKm(km: Double) {
         prefs.edit().putString(KEY_LAST_CHAIN_LUBE, MaintenanceMath.formatDecimal(km)).apply()
@@ -210,7 +308,8 @@ class MaintenanceManager private constructor(private val context: Context) {
         prefs.edit().putString(KEY_LAST_SERVICE, MaintenanceMath.formatDecimal(currentOdo)).apply()
 
         // Advance to next milestone
-        val currentTarget = MaintenanceMath.parseDecimal(prefs.getString(KEY_NEXT_SERVICE_TARGET_ODO, null)) ?: 500.0
+        val currentTarget = MaintenanceMath.parseDecimal(prefs.getString(KEY_NEXT_SERVICE_TARGET_ODO, null))
+            ?: MaintenanceMath.defaultServiceTargetOdo(currentOdo)
         val nextTarget = when {
             currentTarget <= 750.0 -> 5000.0 // 1st service done -> 2nd is 5,000 km
             currentTarget <= 5000.0 -> 10000.0 // 2nd service done -> 3rd is 10,000 km
@@ -235,16 +334,14 @@ class MaintenanceManager private constructor(private val context: Context) {
 
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    "pulsarnav_maintenance_channel",
-                    "Maintenance & Service Alerts",
-                    NotificationManager.IMPORTANCE_HIGH
-                ).apply {
-                    description = "Alerts for upcoming chain lube and scheduled periodic maintenance"
-                }
-                notificationManager.createNotificationChannel(channel)
+            val channel = NotificationChannel(
+                "pulsarnav_maintenance_channel",
+                "Maintenance & Service Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Alerts for upcoming chain lube and scheduled periodic maintenance"
             }
+            notificationManager.createNotificationChannel(channel)
 
             val alertPrefs = context.getSharedPreferences("pulsarnav_maintenance_alerts", Context.MODE_PRIVATE)
             val lubeCycleKey = kotlin.math.round(getLastChainLubeKm() * 10.0).toLong()
