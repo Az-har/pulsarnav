@@ -1307,19 +1307,35 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     ) {
         val w = width.toFloat()
         val h = height.toFloat()
-        bgPaint.color = if (daylightMode) Color.parseColor("#E8ECEF") else Color.parseColor("#0D1117")
+        bgPaint.color = if (daylightMode) Color.parseColor("#0B0F17") else Color.parseColor("#0B0F17")
         canvas.drawRect(0f, 0f, w, h, bgPaint)
 
         val state = _uiState.value
         val step = activeNavStep ?: lastRouteSnapshot?.nextStep
         val zoom = state.zoomLevel.coerceIn(12, 18)
 
-        // Offset marker slightly to the right/lower-center when a top-left TBT card is visible
-        val anchorX = if (step != null) w * 0.60f else w * 0.50f
-        val anchorY = if (state.headingUp) h * 0.62f else h * 0.50f
+        // Keep map cursor centered inside the unobstructed NS400Z top panorama (y=66..322)
+        val anchorX = if (step != null) 536f else 412f
+        val anchorY = if (state.headingUp) 216f else 194f
 
         val camLat = if (state.hasGpsFix) state.lat else (state.previewLat ?: state.lat)
         val camLng = if (state.hasGpsFix) state.lng else (state.previewLng ?: state.lng)
+
+        canvas.save()
+        canvas.clipRect(
+            TftWifiProtocol.NS400Z_SAFE_LEFT.toFloat(),
+            TftWifiProtocol.NS400Z_SAFE_TOP.toFloat(),
+            TftWifiProtocol.NS400Z_SAFE_RIGHT.toFloat(),
+            TftWifiProtocol.NS400Z_SAFE_BOTTOM.toFloat()
+        )
+        bgPaint.color = if (daylightMode) Color.parseColor("#E8ECEF") else Color.parseColor("#0D1117")
+        canvas.drawRect(
+            TftWifiProtocol.NS400Z_SAFE_LEFT.toFloat(),
+            TftWifiProtocol.NS400Z_SAFE_TOP.toFloat(),
+            TftWifiProtocol.NS400Z_SAFE_RIGHT.toFloat(),
+            TftWifiProtocol.NS400Z_SAFE_BOTTOM.toFloat(),
+            bgPaint
+        )
         if (state.hasGpsFix || (state.previewLat != null && state.previewLng != null)) {
             drawMapTilesAndRoute(
                 canvas = canvas,
@@ -1334,35 +1350,43 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
                 darkMode = !daylightMode
             )
         } else {
-            drawGridFallback(canvas, w, h, daylightMode)
+            drawGridFallback(canvas, anchorX, anchorY, daylightMode)
         }
+        canvas.restore()
 
-        // Top-Left compact Turn-by-Turn overlay card (only covers ~32% x 30%, keeping map front & center)
+        // Top-Left compact Turn-by-Turn overlay card inside NS400Z safe zone (y >= 68)
         if (step != null) {
             drawTbtCornerCard(canvas, step, daylightMode)
         } else if (state.statusMessage.isNotBlank()) {
             drawStatusPill(canvas, state.statusMessage, daylightMode)
         }
 
-        // Top-Right Call / WhatsApp alert pill if active
+        // Top-Right Call / SMS / WhatsApp alert pill below OEM bar (y >= 68)
         if (!incomingCaller.isNullOrBlank()) {
             drawTopRightAlertPill(canvas, "CALL: $incomingCaller", Color.parseColor("#DC2626"))
         } else if (!whatsAppSender.isNullOrBlank()) {
-            drawTopRightAlertPill(canvas, "WA: $whatsAppSender", Color.parseColor("#059669"))
+            val isSms = whatsAppSender.startsWith("SMS:", ignoreCase = true)
+            val label = if (isSms || whatsAppSender.startsWith("WA:", ignoreCase = true)) {
+                whatsAppSender
+            } else {
+                "WA: $whatsAppSender"
+            }
+            val badgeColor = if (isSms) Color.parseColor("#0284C7") else Color.parseColor("#059669")
+            drawTopRightAlertPill(canvas, label, badgeColor)
         }
 
-        // Right-side map control pills (- / + / North-Up) aligned neatly without clutter
-        drawRightMapControls(canvas, w, daylightMode, state.headingUp)
+        // Right-side map control pills (+ / - / HDG) strictly above y=322 speedometer
+        drawRightMapControls(canvas, daylightMode, state.headingUp)
 
-        // Bottom telemetry ribbon (Speed • ETA/DTE • Clock • Motion)
-        drawBottomTelemetryStrip(canvas, w, h, daylightMode, state, clockText, batteryPct, isStationary)
+        // Compact lower-left telemetry strip inside pocket (x=34..412, y=326..376)
+        drawBottomTelemetryStrip(canvas, daylightMode, state, clockText, batteryPct, isStationary)
 
         if (!toastBanner.isNullOrBlank()) {
-            rectTmp.set(w * 0.25f, 12f, w * 0.75f, 44f)
+            rectTmp.set(220f, 68f, 580f, 100f)
             cardPaint.color = Color.parseColor("#E61D4ED8")
-            canvas.drawRoundRect(rectTmp, 16f, 16f, cardPaint)
+            canvas.drawRoundRect(rectTmp, 14f, 14f, cardPaint)
             textPaint.color = Color.WHITE
-            textPaint.textSize = 15f
+            textPaint.textSize = 14f
             textPaint.textAlign = Paint.Align.CENTER
             canvas.drawText(toastBanner.take(36), rectTmp.centerX(), rectTmp.centerY() + 5f, textPaint)
             textPaint.textAlign = Paint.Align.LEFT
@@ -1480,36 +1504,48 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         canvas.restore()
     }
 
-    private fun drawGridFallback(canvas: Canvas, w: Float, h: Float, daylight: Boolean) {
+    private fun drawGridFallback(canvas: Canvas, anchorX: Float, anchorY: Float, daylight: Boolean) {
         gridPaint.color = if (daylight) Color.parseColor("#D1D5DB") else Color.parseColor("#1E293B")
-        for (x in 0..800 step 40) canvas.drawLine(x.toFloat(), 0f, x.toFloat(), h, gridPaint)
-        for (y in 0..480 step 40) canvas.drawLine(0f, y.toFloat(), w, y.toFloat(), gridPaint)
-        canvas.drawCircle(w * 0.5f, h * 0.55f, 18f, markerHaloPaint)
-        canvas.drawCircle(w * 0.5f, h * 0.55f, 8f, markerPaint)
+        val left = TftWifiProtocol.NS400Z_SAFE_LEFT.toFloat()
+        val top = TftWifiProtocol.NS400Z_SAFE_TOP.toFloat()
+        val right = TftWifiProtocol.NS400Z_SAFE_RIGHT.toFloat()
+        val bottom = TftWifiProtocol.NS400Z_SAFE_BOTTOM.toFloat()
+        var x = TftWifiProtocol.NS400Z_SAFE_LEFT
+        while (x <= TftWifiProtocol.NS400Z_SAFE_RIGHT) {
+            canvas.drawLine(x.toFloat(), top, x.toFloat(), bottom, gridPaint)
+            x += 40
+        }
+        var y = TftWifiProtocol.NS400Z_SAFE_TOP
+        while (y <= TftWifiProtocol.NS400Z_SAFE_BOTTOM) {
+            canvas.drawLine(left, y.toFloat(), right, y.toFloat(), gridPaint)
+            y += 40
+        }
+        canvas.drawCircle(anchorX, anchorY, 18f, markerHaloPaint)
+        canvas.drawCircle(anchorX, anchorY, 8f, markerPaint)
     }
 
     private fun drawTbtCornerCard(canvas: Canvas, step: ParsedNavigationStep, daylight: Boolean) {
-        rectTmp.set(16f, 14f, 326f, 152f)
+        rectTmp.set(38f, 68f, 336f, 188f)
         cardPaint.color = if (daylight) Color.parseColor("#F20F172A") else Color.parseColor("#EA0D1B2A")
         borderPaint.color = Color.parseColor("#38BDF8")
-        canvas.drawRoundRect(rectTmp, 18f, 18f, cardPaint)
-        canvas.drawRoundRect(rectTmp, 18f, 18f, borderPaint)
+        canvas.drawRoundRect(rectTmp, 16f, 16f, cardPaint)
+        canvas.drawRoundRect(rectTmp, 16f, 16f, borderPaint)
 
         // Turn arrow badge on left
-        drawManeuverVector(canvas, step.maneuver, 58f, 68f, 24f, Color.parseColor("#38BDF8"))
+        drawManeuverVector(canvas, step.maneuver, 76f, 114f, 21f, Color.parseColor("#38BDF8"))
 
         val distStr = step.rawDistanceText.ifBlank { TftMapMathAndParser.formatDistanceMeters(step.distanceMeters) }
         textPaint.color = Color.WHITE
-        textPaint.textSize = 30f
-        canvas.drawText(distStr, 102f, 56f, textPaint)
+        textPaint.textSize = 27f
+        canvas.drawText(distStr, 116f, 102f, textPaint)
 
         subTextPaint.color = Color.parseColor("#CBD5E1")
-        subTextPaint.textSize = 17f
+        subTextPaint.textSize = 15f
         val street = step.streetName.ifBlank { step.maneuver.description }
         val wrapped = getWrappedStreetLines(street, 19)
-        canvas.drawText(wrapped.line1, 102f, 84f, subTextPaint)
+        canvas.drawText(wrapped.line1, 116f, 126f, subTextPaint)
         if (wrapped.line2.isNotEmpty()) {
-            canvas.drawText(wrapped.line2, 102f, 106f, subTextPaint)
+            canvas.drawText(wrapped.line2, 116f, 146f, subTextPaint)
         }
 
         val etaBadge = if (step.etaHour > 0) {
@@ -1520,33 +1556,32 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
                 ?: "Active Navigation"
         }
         textPaint.color = Color.parseColor("#34D399")
-        textPaint.textSize = 15f
-        canvas.drawText(etaBadge, 28f, 134f, textPaint)
+        textPaint.textSize = 14f
+        canvas.drawText(etaBadge, 48f, 174f, textPaint)
     }
 
     private fun drawStatusPill(canvas: Canvas, message: String, daylight: Boolean) {
-        rectTmp.set(16f, 14f, 340f, 60f)
+        rectTmp.set(38f, 68f, 360f, 108f)
         cardPaint.color = if (daylight) Color.parseColor("#E61E293B") else Color.parseColor("#DF111827")
         borderPaint.color = Color.parseColor("#475569")
-        canvas.drawRoundRect(rectTmp, 14f, 14f, cardPaint)
-        canvas.drawRoundRect(rectTmp, 14f, 14f, borderPaint)
+        canvas.drawRoundRect(rectTmp, 12f, 12f, cardPaint)
+        canvas.drawRoundRect(rectTmp, 12f, 12f, borderPaint)
         textPaint.color = Color.WHITE
-        textPaint.textSize = 15f
-        canvas.drawText(message.take(34), 30f, 43f, textPaint)
+        textPaint.textSize = 14f
+        canvas.drawText(message.take(34), 50f, 94f, textPaint)
     }
 
     private fun drawTopRightAlertPill(canvas: Canvas, label: String, colorInt: Int) {
-        rectTmp.set(470f, 14f, 784f, 58f)
+        rectTmp.set(464f, 68f, 784f, 108f)
         cardPaint.color = colorInt
-        canvas.drawRoundRect(rectTmp, 14f, 14f, cardPaint)
+        canvas.drawRoundRect(rectTmp, 12f, 12f, cardPaint)
         textPaint.color = Color.WHITE
-        textPaint.textSize = 17f
-        canvas.drawText(label.take(28), 486f, 42f, textPaint)
+        textPaint.textSize = 16f
+        canvas.drawText(label.take(28), 478f, 94f, textPaint)
     }
 
     private fun drawRightMapControls(
         canvas: Canvas,
-        w: Float,
         daylight: Boolean,
         headingUp: Boolean
     ) {
@@ -1555,9 +1590,10 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         val pillStroke = if (daylight) Color.parseColor("#94A3B8") else Color.parseColor("#334155")
 
         val btnLabels = if (headingUp) CONTROLS_HDG else CONTROLS_NORTH
+        val rightEdge = TftWifiProtocol.NS400Z_SAFE_RIGHT.toFloat()
         for (i in btnLabels.indices) {
-            val top = 140f + i * 56f
-            rectTmp.set(w - 64f, top, w - 14f, top + 46f)
+            val top = 122f + i * 54f
+            rectTmp.set(rightEdge - 50f, top, rightEdge, top + 44f)
             cardPaint.color = pillBg
             borderPaint.color = pillStroke
             canvas.drawRoundRect(rectTmp, 12f, 12f, cardPaint)
@@ -1572,43 +1608,45 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
     private fun drawBottomTelemetryStrip(
         canvas: Canvas,
-        w: Float,
-        h: Float,
         daylight: Boolean,
         state: TftLiveMapUiState,
         clockText: String,
         batteryPct: Int,
         isStationary: Boolean
     ) {
-        rectTmp.set(16f, h - 54f, w - 16f, h - 10f)
+        val left = TftWifiProtocol.NS400Z_POCKET_LEFT.toFloat()
+        val top = TftWifiProtocol.NS400Z_POCKET_TOP.toFloat()
+        val right = TftWifiProtocol.NS400Z_POCKET_RIGHT.toFloat()
+        val bottom = TftWifiProtocol.NS400Z_POCKET_BOTTOM.toFloat()
+        rectTmp.set(left, top, right, bottom)
         cardPaint.color = if (daylight) Color.parseColor("#F00F172A") else Color.parseColor("#E60B1120")
         borderPaint.color = Color.parseColor("#334155")
-        canvas.drawRoundRect(rectTmp, 14f, 14f, cardPaint)
-        canvas.drawRoundRect(rectTmp, 14f, 14f, borderPaint)
+        canvas.drawRoundRect(rectTmp, 12f, 12f, cardPaint)
+        canvas.drawRoundRect(rectTmp, 12f, 12f, borderPaint)
 
         val spd = state.speedKmh.roundToInt()
         textPaint.color = Color.parseColor("#38BDF8")
-        textPaint.textSize = 20f
-        canvas.drawText("$spd km/h", 32f, h - 25f, textPaint)
+        textPaint.textSize = 18f
+        canvas.drawText("$spd km/h", left + 14f, bottom - 17f, textPaint)
 
         val midLabel = when {
             state.routeActive && state.destinationLabel.isNotBlank() -> {
                 val eta = state.remainingEtaText.ifBlank { "--" }
                 val rem = state.remainingDistanceText.ifBlank { "--" }
-                "$rem • $eta • ${state.destinationLabel.take(18)}"
+                "$rem • $eta"
             }
-            state.hasGpsFix -> "MAPS LIVE  •  Z${state.zoomLevel}"
-            else -> "MAPS STANDALONE  •  GPS SEARCHING"
+            state.hasGpsFix -> "MAPS • Z${state.zoomLevel}"
+            else -> "GPS SEARCH"
         }
         subTextPaint.color = Color.parseColor("#E2E8F0")
-        subTextPaint.textSize = 15f
-        canvas.drawText(midLabel, 150f, h - 26f, subTextPaint)
+        subTextPaint.textSize = 14f
+        canvas.drawText(midLabel, left + 106f, bottom - 18f, subTextPaint)
 
         textPaint.color = Color.parseColor("#CBD5E1")
-        textPaint.textSize = 14f
+        textPaint.textSize = 13f
         textPaint.textAlign = Paint.Align.RIGHT
         val parkLabel = if (isStationary) "PARK" else "RIDE"
-        canvas.drawText("$parkLabel • ${batteryPct}% • $clockText", w - 30f, h - 26f, textPaint)
+        canvas.drawText("$parkLabel • ${batteryPct}% • $clockText", right - 12f, bottom - 18f, textPaint)
         textPaint.textAlign = Paint.Align.LEFT
     }
 

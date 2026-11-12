@@ -154,7 +154,12 @@ class MainActivity : AppCompatActivity() {
         val data = result.data
         if (result.resultCode == android.app.Activity.RESULT_OK && data != null) {
             BikeBleForegroundService.startForTftLiveCast(this, result.resultCode, data)
-            showFeedback("Starting 800×480 live screen cast to TFT cluster...")
+            if (appSettings.isTftCastAutoOpenMapsEnabled) {
+                showFeedback("Starting 800×480 live cast & opening Maps...")
+                mainUiHandler.postDelayed({ proceedWithGoogleMapsLaunch() }, 250L)
+            } else {
+                showFeedback("Starting 800×480 live screen cast to TFT cluster...")
+            }
         } else {
             showFeedback("Live screen cast cancelled")
         }
@@ -1139,10 +1144,19 @@ class MainActivity : AppCompatActivity() {
         binding.btnSimulateWhatsApp.setOnClickListener {
             provideHapticFeedback()
             val sampleSender = "Rahul Sharma"
-            bleManager.sendWhatsAppAlert(sampleSender)
+            bleManager.sendWhatsAppAlert(sampleSender, com.pulsarnav.app.protocol.AlertType.WHATSAPP)
             binding.tvWhatsAppAlertBanner.text = "WhatsApp Alert: $sampleSender (Showing 6s)"
             binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.accentColor)
             showFeedback("WhatsApp alert sent to cluster (6s preview)")
+        }
+
+        binding.btnSimulateSms.setOnClickListener {
+            provideHapticFeedback()
+            val sampleSender = "Vikram (+91 98765)"
+            bleManager.sendWhatsAppAlert(sampleSender, com.pulsarnav.app.protocol.AlertType.SMS)
+            binding.tvWhatsAppAlertBanner.text = "SMS Alert: $sampleSender (Showing 6s)"
+            binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.accentColor)
+            showFeedback("SMS alert (0410 type=1) sent to cluster (6s preview)")
         }
 
         binding.btnSimulateMissedCall.setOnClickListener {
@@ -3323,7 +3337,7 @@ class MainActivity : AppCompatActivity() {
 
         val testButtons = listOf(
             binding.btnTestLeft, binding.btnTestStraight, binding.btnTestRight, binding.btnTestRoundabout,
-            binding.btnSimulateCall, binding.btnSimulateWhatsApp, binding.btnSimulateMissedCall,
+            binding.btnSimulateCall, binding.btnSimulateWhatsApp, binding.btnSimulateSms, binding.btnSimulateMissedCall,
             binding.btnSyncPhonebookCalls, binding.btnGrantTelephonyPerms,
             binding.labsTftDebug.btnTftDbgFullscreen, binding.labsTftDebug.btnTftDbgNavV2Test,
             binding.labsTftDebug.btnTftDbgRecenter, binding.labsTftDebug.btnTftDbgDaylight,
@@ -5848,22 +5862,22 @@ class MainActivity : AppCompatActivity() {
             orientation = android.widget.RadioGroup.VERTICAL
         }
         val rbLiveMap = android.widget.RadioButton(this).apply {
-            text = "Live Maps + TBT (Maps Only • Works Locked)"
+            text = "PulsarNav Live Map (OSM + GPS test only)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
         val rbHud = android.widget.RadioButton(this).apply {
-            text = "Telemetry Cockpit HUD (Works Locked)"
+            text = "Cockpit HUD (Default • GMap TBT, lock-proof)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
-        rgMirrorMode.addView(rbLiveMap)
         rgMirrorMode.addView(rbHud)
-        if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) rbHud.isChecked = true else rbLiveMap.isChecked = true
+        rgMirrorMode.addView(rbLiveMap)
+        if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_LIVE_MAP) rbLiveMap.isChecked = true else rbHud.isChecked = true
         container.addView(rgMirrorMode)
 
         val tvCastHeader = android.widget.TextView(this).apply {
-            text = "Cast App Aspect & Orientation (800×480 Landscape):"
+            text = "Cast App NS400Z Safe Viewport & Landscape:"
             textSize = 12f
             setPadding(0, dpToPx(10), 0, dpToPx(4))
             setTextColor(currentTheme.textPrimaryColor)
@@ -5873,30 +5887,64 @@ class MainActivity : AppCompatActivity() {
         val rgCastLayout = android.widget.RadioGroup(this).apply {
             orientation = android.widget.RadioGroup.VERTICAL
         }
-        val rbCastFill = android.widget.RadioButton(this).apply {
-            text = "Fill 800×480 Landscape (Crop Black Bars)"
+        val rbCastFit = android.widget.RadioButton(this).apply {
+            text = "Fit Full App Inside NS400Z Safe Area (Uncropped)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
-        val rbCastFit = android.widget.RadioButton(this).apply {
-            text = "Fit Full App Inside 800×480 (Uncropped)"
+        val rbCastFill = android.widget.RadioButton(this).apply {
+            text = "Fill Top Panorama Above Speedo (754×256)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
         val rbCastRot90 = android.widget.RadioButton(this).apply {
-            text = "Rotate 90° Landscape + Fill"
+            text = "Rotate 90° into Top Panorama + Fill"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
-        rgCastLayout.addView(rbCastFill)
         rgCastLayout.addView(rbCastFit)
+        rgCastLayout.addView(rbCastFill)
         rgCastLayout.addView(rbCastRot90)
         when (appSettings.tftCastLayoutMode) {
-            AppSettings.CAST_LAYOUT_FIT -> rbCastFit.isChecked = true
+            AppSettings.CAST_LAYOUT_FILL -> rbCastFill.isChecked = true
             AppSettings.CAST_LAYOUT_ROT90 -> rbCastRot90.isChecked = true
-            else -> rbCastFill.isChecked = true
+            else -> rbCastFit.isChecked = true
         }
         container.addView(rgCastLayout)
+
+        val cbAutoOpenMaps = android.widget.CheckBox(this).apply {
+            text = "Auto-open Google Maps when starting Live Cast"
+            isChecked = appSettings.isTftCastAutoOpenMapsEnabled
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+            setPadding(0, dpToPx(8), 0, 0)
+        }
+        container.addView(cbAutoOpenMaps)
+
+        val canWriteRotation = android.provider.Settings.System.canWrite(this)
+        val cbForceLandscape = android.widget.CheckBox(this).apply {
+            text = if (canWriteRotation) {
+                "Auto-lock phone to Landscape during Live Cast"
+            } else {
+                "Auto-lock phone to Landscape during Cast (tap to allow)"
+            }
+            isChecked = appSettings.isTftCastForceLandscapeEnabled
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+            setOnClickListener {
+                if (isChecked && !android.provider.Settings.System.canWrite(this@MainActivity)) {
+                    try {
+                        startActivity(
+                            Intent(
+                                android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                Uri.parse("package:$packageName")
+                            )
+                        )
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+        container.addView(cbForceLandscape)
 
         val scrollWrapper = android.widget.ScrollView(this).apply {
             addView(container)
@@ -5909,13 +5957,15 @@ class MainActivity : AppCompatActivity() {
                 appSettings.tftWifiSsid = etSsid.text.toString().trim()
                 appSettings.tftWifiVin = etVin.text.toString().trim()
                 appSettings.tftWifiPassphrase = etPass.text.toString().trim()
-                val nextMode = if (rbHud.isChecked) AppSettings.TFT_MODE_HUD else AppSettings.TFT_MODE_LIVE_MAP
+                val nextMode = if (rbLiveMap.isChecked) AppSettings.TFT_MODE_LIVE_MAP else AppSettings.TFT_MODE_HUD
                 appSettings.tftMirrorMode = nextMode
                 appSettings.tftCastLayoutMode = when {
-                    rbCastFit.isChecked -> AppSettings.CAST_LAYOUT_FIT
+                    rbCastFill.isChecked -> AppSettings.CAST_LAYOUT_FILL
                     rbCastRot90.isChecked -> AppSettings.CAST_LAYOUT_ROT90
-                    else -> AppSettings.CAST_LAYOUT_FILL
+                    else -> AppSettings.CAST_LAYOUT_FIT
                 }
+                appSettings.isTftCastAutoOpenMapsEnabled = cbAutoOpenMaps.isChecked
+                appSettings.isTftCastForceLandscapeEnabled = cbForceLandscape.isChecked
                 TftWifiMirrorManager.getInstance(this).switchHeadlessModeIfActive(nextMode)
                 showFeedback("TFT settings saved")
             }
@@ -6228,10 +6278,15 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     GoogleMapsNotificationListener.lastWhatsAppAlert.collectLatest { alert ->
                         if (alert != null) {
-                            binding.tvWhatsAppAlertBanner.text = "WhatsApp Alert: ${alert.sender} (Showing on cluster)"
+                            val label = if (alert.alertType == com.pulsarnav.app.protocol.AlertType.SMS) {
+                                "SMS Alert"
+                            } else {
+                                "WhatsApp Alert"
+                            }
+                            binding.tvWhatsAppAlertBanner.text = "$label: ${alert.sender} (Showing on cluster)"
                             binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.accentColor)
                         } else {
-                            binding.tvWhatsAppAlertBanner.text = "WhatsApp Alerts: Listening (SMS excluded)"
+                            binding.tvWhatsAppAlertBanner.text = "Messaging Alerts: Listening (WhatsApp & SMS)"
                             binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.textSecondaryColor)
                         }
                     }

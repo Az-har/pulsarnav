@@ -13,6 +13,7 @@ import android.provider.CallLog
 import android.provider.ContactsContract
 import android.telecom.TelecomManager
 import android.telephony.SmsManager
+import android.telephony.SubscriptionManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.pulsarnav.app.data.AppSettings
@@ -282,13 +283,10 @@ class ClusterPhonebookManager private constructor(private val context: Context) 
 
         val message = settings.smsRejectMessage.trim().ifBlank { AppSettings.DEFAULT_REJECT_SMS_TEMPLATE }
         return try {
-            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                context.getSystemService(SmsManager::class.java)
-            } else {
-                SmsManager.getDefault()
-            }
+            val smsManager = resolveDefaultSmsManager()
             if (smsManager == null) {
                 Log.w(TAG, "SmsManager unavailable on device")
+                DebugLogRepository.error("SMS", "SmsManager unavailable on device")
                 return false
             }
             val parts = smsManager.divideMessage(message)
@@ -313,6 +311,23 @@ class ClusterPhonebookManager private constructor(private val context: Context) 
                 isSendingSms = false
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun resolveDefaultSmsManager(): SmsManager? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val base = context.getSystemService(SmsManager::class.java)
+            val defaultSubId = SubscriptionManager.getDefaultSmsSubscriptionId()
+            if (base != null && defaultSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                return base.createForSubscriptionId(defaultSubId)
+            }
+            return base
+        }
+        val defaultSubId = SubscriptionManager.getDefaultSmsSubscriptionId()
+        if (defaultSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            return SmsManager.getSmsManagerForSubscriptionId(defaultSubId)
+        }
+        return SmsManager.getDefault()
     }
 
     private fun mapCallType(callType: Int): RecentCallStatus {

@@ -184,14 +184,15 @@ class TftWifiProtocolTest {
 
     @Test
     fun `adaptive jpeg quality bounds and retry math behave deterministically`() {
-        assertEquals(49, TftUdpFrameEncoder.selectNextQuality(50, 26_000))
+        assertEquals(48, TftUdpFrameEncoder.selectNextQuality(50, 26_000))
         assertEquals(51, TftUdpFrameEncoder.selectNextQuality(50, 18_000))
+        assertEquals(53, TftUdpFrameEncoder.selectNextQuality(50, 15_000))
         assertEquals(25, TftUdpFrameEncoder.selectNextQuality(25, 29_000))
-        assertEquals(100, TftUdpFrameEncoder.selectNextQuality(100, 5_000))
+        assertEquals(95, TftUdpFrameEncoder.selectNextQuality(95, 5_000))
 
         val retryQ = TftUdpFrameEncoder.computeRetryQuality(currentQuality = 50, encodedSize = 35_000)
         assertTrue(retryQ in 25..45)
-        assertEquals(35, retryQ)
+        assertEquals(31, retryQ)
     }
 
     @Test

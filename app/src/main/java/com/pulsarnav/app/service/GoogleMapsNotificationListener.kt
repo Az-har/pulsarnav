@@ -4,6 +4,7 @@ import android.app.Notification
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Telephony
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -13,12 +14,14 @@ import com.pulsarnav.app.debug.DebugLogRepository
 import com.pulsarnav.app.parser.GoogleMapsNotificationParser
 import com.pulsarnav.app.parser.ManeuverMatcher
 import com.pulsarnav.app.parser.ParsedNavigationStep
+import com.pulsarnav.app.protocol.AlertType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 data class WhatsAppAlertInfo(
     val sender: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val alertType: AlertType = AlertType.WHATSAPP
 )
 
 data class NotificationListenerDiagnostics(
@@ -42,6 +45,24 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
         private const val WHATSAPP_BUSINESS_PACKAGE = "com.whatsapp.w4b"
         private const val WHATSAPP_REVERT_DELAY_MS = 6000L
+
+        private val SMS_PACKAGES = setOf(
+            "com.google.android.apps.messaging",
+            "com.android.mms",
+            "com.samsung.android.messaging",
+            "com.vivo.message",
+            "com.coloros.mms",
+            "com.oneplus.mms",
+            "com.xiaomi.mms",
+            "com.sonyericsson.conversations",
+            "com.asus.message"
+        )
+
+        internal fun isKnownSmsPackage(packageName: String?, defaultSmsPackage: String?): Boolean {
+            if (packageName.isNullOrBlank()) return false
+            if (!defaultSmsPackage.isNullOrBlank() && packageName == defaultSmsPackage) return true
+            return packageName in SMS_PACKAGES
+        }
 
         private val ICON_KEYS = arrayOf(
             Notification.EXTRA_LARGE_ICON,
@@ -153,7 +174,19 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
             }
             WHATSAPP_PACKAGE, WHATSAPP_BUSINESS_PACKAGE -> {
                 if (com.pulsarnav.app.data.AppSettings.getInstance(applicationContext).isWhatsAppAlertsEnabled) {
-                    handleWhatsAppNotification(sbn)
+                    handleMessagingNotification(sbn, AlertType.WHATSAPP)
+                }
+            }
+            else -> {
+                val defaultSmsPkg = try {
+                    Telephony.Sms.getDefaultSmsPackage(applicationContext)
+                } catch (_: Exception) {
+                    null
+                }
+                if (isKnownSmsPackage(sbn.packageName, defaultSmsPkg) &&
+                    com.pulsarnav.app.data.AppSettings.getInstance(applicationContext).isWhatsAppAlertsEnabled
+                ) {
+                    handleMessagingNotification(sbn, AlertType.SMS)
                 }
             }
         }
@@ -291,13 +324,13 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         }
     }
 
-    private fun handleWhatsAppNotification(sbn: StatusBarNotification) {
+    private fun handleMessagingNotification(sbn: StatusBarNotification, alertType: AlertType) {
         val notification = sbn.notification ?: return
         if ((notification.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_GROUP_SUMMARY)) != 0) return
 
         val extras = notification.extras ?: return
 
-        // Robust extraction: WhatsApp passes SpannableString (CharSequence), so extras.getString(...) returns null!
+        // Robust extraction: WhatsApp/Messages pass SpannableString (CharSequence), so extras.getString(...) returns null!
         val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
             ?: extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()
             ?: extras.getCharSequence("android.title")?.toString()
@@ -306,7 +339,10 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         // Filter system / background sync / call / generic notices
         if (rawTitle.isBlank() ||
             rawTitle.equals("WhatsApp", ignoreCase = true) ||
+            rawTitle.equals("Messages", ignoreCase = true) ||
             rawTitle.contains("Checking for new messages", ignoreCase = true) ||
+            rawTitle.contains("Messages is doing work", ignoreCase = true) ||
+            rawTitle.contains("Spam & blocked", ignoreCase = true) ||
             rawTitle.contains("messages from", ignoreCase = true) ||
             rawTitle.contains("WhatsApp Web", ignoreCase = true) ||
             rawTitle.contains("Calling", ignoreCase = true) ||
@@ -316,12 +352,16 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         }
 
         val senderTitle = rawTitle.trim()
-
-        Log.i(TAG, "WhatsApp message alert intercepted from: ${DebugLogRepository.maskPersonName(senderTitle)}")
-        _lastWhatsAppAlert.value = WhatsAppAlertInfo(senderTitle)
+        val channelTag = if (alertType == AlertType.SMS) "SMS" else "WhatsApp"
+        Log.i(TAG, "$channelTag alert intercepted from: ${DebugLogRepository.maskPersonName(senderTitle)}")
+        DebugLogRepository.telephony(
+            "$channelTag Alert",
+            "0410 queued from ${DebugLogRepository.maskPersonName(senderTitle)}"
+        )
+        _lastWhatsAppAlert.value = WhatsAppAlertInfo(senderTitle, alertType = alertType)
 
         val bleManager = BajajBleManager.getInstance(applicationContext)
-        bleManager.sendWhatsAppAlert(senderTitle)
+        bleManager.sendWhatsAppAlert(senderTitle, alertType)
 
         mainHandler.removeCallbacks(revertToNavigationRunnable)
         mainHandler.postDelayed(revertToNavigationRunnable, WHATSAPP_REVERT_DELAY_MS)

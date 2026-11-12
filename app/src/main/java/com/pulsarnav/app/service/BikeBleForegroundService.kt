@@ -192,11 +192,27 @@ class BikeBleForegroundService : Service {
 
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+    private var isScreenLockReceiverRegistered = false
+
+    private val screenLockReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                TftWifiMirrorManager.getInstance(this@BikeBleForegroundService).handleScreenLockedDuringCast()
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         acquireWakeLock()
         initCallManagerIfPermitted()
+        try {
+            val filter = android.content.IntentFilter(Intent.ACTION_SCREEN_OFF)
+            ContextCompat.registerReceiver(this, screenLockReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            isScreenLockReceiverRegistered = true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed registering screen lock receiver: ${e.message}")
+        }
         // Foreground promotion intentionally happens inside onStartCommand() once the Intent action
         // (BLE vs TFT Wi-Fi Mirror vs MediaProjection) is known, preventing premature BLUETOOTH_CONNECT
         // rejections or ForegroundServiceDidNotStartInTimeException during Wi-Fi-only launches.
@@ -531,6 +547,12 @@ class BikeBleForegroundService : Service {
         isWifiMirrorActive = false
         isMediaProjectionActive = false
         isNavLocationActive = false
+        if (isScreenLockReceiverRegistered) {
+            try {
+                unregisterReceiver(screenLockReceiver)
+            } catch (_: Exception) {}
+            isScreenLockReceiverRegistered = false
+        }
         try {
             TftWifiMirrorManager.getInstance(this).stopMirroring()
         } catch (_: Exception) {}

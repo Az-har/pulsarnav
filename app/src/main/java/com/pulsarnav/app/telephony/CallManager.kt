@@ -337,7 +337,11 @@ class CallManager private constructor(private val context: Context) {
             Log.e(TAG, "Failed ending call before reject SMS: ${e.message}")
         }
         val smsSent = ClusterPhonebookManager.getInstance(context).sendRejectSms(callerNumber)
-        DebugLogRepository.telephony("Call", "Reject+SMS action (smsSent=$smsSent)")
+        if (callerNumber.isNullOrBlank()) {
+            DebugLogRepository.error("SMS", "Reject+SMS skipped: caller number unavailable (grant Call Log/Contacts)")
+        } else {
+            DebugLogRepository.telephony("Call", "Reject+SMS action (smsSent=$smsSent)")
+        }
         bleManager.acknowledgeCallAction(reject = true, rejectSms = smsSent)
     }
 

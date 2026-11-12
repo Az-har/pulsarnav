@@ -84,6 +84,8 @@ class AppSettings(context: Context) {
         const val KEY_TFT_WIFI_PASSPHRASE = "tft_wifi_passphrase"
         const val KEY_TFT_MIRROR_MODE = "tft_mirror_mode"
         const val KEY_TFT_CAST_LAYOUT = "tft_cast_layout"
+        const val KEY_TFT_CAST_AUTO_OPEN_MAPS = "tft_cast_auto_open_maps"
+        const val KEY_TFT_CAST_FORCE_LANDSCAPE = "tft_cast_force_landscape"
         const val KEY_TFT_MAP_ZOOM = "tft_map_zoom"
         const val KEY_TFT_MAP_HEADING_UP = "tft_map_heading_up"
 
@@ -184,7 +186,8 @@ class AppSettings(context: Context) {
                 KEY_AUTO_PARK, KEY_RIDE_TRACKING, KEY_MEDIA_CONTROL, KEY_WHATSAPP_ALERTS,
                 KEY_MAINTENANCE_ALERTS, KEY_TELEMETRY_SYNC, KEY_TWO_WHEELER_MODE, KEY_AUTO_CONNECT,
                 KEY_DARK_MODE, KEY_IS_SETUP_COMPLETED, KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT,
-                KEY_SMS_REJECT_ENABLED, KEY_TFT_MAP_HEADING_UP -> RestoreAction.PutBoolean(asBoolean())
+                KEY_SMS_REJECT_ENABLED, KEY_TFT_MAP_HEADING_UP,
+                KEY_TFT_CAST_AUTO_OPEN_MAPS, KEY_TFT_CAST_FORCE_LANDSCAPE -> RestoreAction.PutBoolean(asBoolean())
                 else -> when (value) {
                     is Boolean -> RestoreAction.PutBoolean(value)
                     is Int -> RestoreAction.PutInt(value)
@@ -624,27 +627,39 @@ class AppSettings(context: Context) {
         }
 
     var tftMirrorMode: String
-        get() = when (getSafeString(KEY_TFT_MIRROR_MODE, TFT_MODE_LIVE_MAP)) {
-            TFT_MODE_HUD -> TFT_MODE_HUD
-            else -> TFT_MODE_LIVE_MAP
+        get() = when (getSafeString(KEY_TFT_MIRROR_MODE, TFT_MODE_HUD)) {
+            TFT_MODE_LIVE_MAP -> TFT_MODE_LIVE_MAP
+            else -> TFT_MODE_HUD
         }
         set(value) {
-            val normalized = if (value == TFT_MODE_HUD) TFT_MODE_HUD else TFT_MODE_LIVE_MAP
+            val normalized = if (value == TFT_MODE_LIVE_MAP) TFT_MODE_LIVE_MAP else TFT_MODE_HUD
             prefs.edit().putString(KEY_TFT_MIRROR_MODE, normalized).apply()
         }
 
     var tftCastLayoutMode: String
-        get() = when (getSafeString(KEY_TFT_CAST_LAYOUT, CAST_LAYOUT_FILL)) {
-            CAST_LAYOUT_FIT -> CAST_LAYOUT_FIT
+        get() = when (getSafeString(KEY_TFT_CAST_LAYOUT, CAST_LAYOUT_FIT)) {
+            CAST_LAYOUT_FILL -> CAST_LAYOUT_FILL
             CAST_LAYOUT_ROT90 -> CAST_LAYOUT_ROT90
-            else -> CAST_LAYOUT_FILL
+            else -> CAST_LAYOUT_FIT
         }
         set(value) {
             val normalized = when (value) {
-                CAST_LAYOUT_FIT, CAST_LAYOUT_ROT90 -> value
-                else -> CAST_LAYOUT_FILL
+                CAST_LAYOUT_FILL, CAST_LAYOUT_ROT90 -> value
+                else -> CAST_LAYOUT_FIT
             }
             prefs.edit().putString(KEY_TFT_CAST_LAYOUT, normalized).apply()
+        }
+
+    var isTftCastAutoOpenMapsEnabled: Boolean
+        get() = getSafeBoolean(KEY_TFT_CAST_AUTO_OPEN_MAPS, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_TFT_CAST_AUTO_OPEN_MAPS, value).apply()
+        }
+
+    var isTftCastForceLandscapeEnabled: Boolean
+        get() = getSafeBoolean(KEY_TFT_CAST_FORCE_LANDSCAPE, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_TFT_CAST_FORCE_LANDSCAPE, value).apply()
         }
 
     var tftMapZoom: Int

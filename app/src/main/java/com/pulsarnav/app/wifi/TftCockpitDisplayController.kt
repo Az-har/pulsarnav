@@ -27,6 +27,7 @@ import com.pulsarnav.app.data.AppSettings
 import com.pulsarnav.app.media.MediaControlManager
 import com.pulsarnav.app.model.Maneuver
 import com.pulsarnav.app.parser.ParsedNavigationStep
+import com.pulsarnav.app.protocol.AlertType
 import com.pulsarnav.app.protocol.CallState
 import com.pulsarnav.app.service.GoogleMapsNotificationListener
 import com.pulsarnav.app.telemetry.PhoneTelemetryManager
@@ -59,19 +60,19 @@ class TftCockpitDisplayController(
 
     companion object {
         private const val TAG = "TftCockpitDisplay"
-        private const val REDRAW_INTERVAL_MS = 75L
-        private const val LOCAL_PREVIEW_IDLE_REDRAW_MS = 250L
+        private const val REDRAW_INTERVAL_MS = 65L
+        private const val LOCAL_PREVIEW_IDLE_REDRAW_MS = 140L
 
-        // Unified 800x480 interactive hitboxes shared between CockpitHudCanvasRenderer and onClusterTouch()
-        const val FOOTER_THEME_LEFT = 14
-        const val FOOTER_THEME_TOP = 416
-        const val FOOTER_THEME_RIGHT = 280
-        const val FOOTER_THEME_BOTTOM = 468
+        // Unified 800x480 interactive hitboxes placed strictly inside NS400Z unobstructed safe zones
+        const val FOOTER_THEME_LEFT = TftWifiProtocol.NS400Z_POCKET_LEFT
+        const val FOOTER_THEME_TOP = TftWifiProtocol.NS400Z_POCKET_TOP
+        const val FOOTER_THEME_RIGHT = 286
+        const val FOOTER_THEME_BOTTOM = TftWifiProtocol.NS400Z_POCKET_BOTTOM
 
-        const val MEDIA_CARD_LEFT = 526
-        const val MEDIA_CARD_TOP = 238
-        const val MEDIA_CARD_RIGHT = TftWifiProtocol.TFT_WIDTH - 14
-        const val MEDIA_CARD_BOTTOM = 404
+        const val MEDIA_CARD_LEFT = 524
+        const val MEDIA_CARD_TOP = 220
+        const val MEDIA_CARD_RIGHT = TftWifiProtocol.NS400Z_SAFE_RIGHT
+        const val MEDIA_CARD_BOTTOM = 316
 
         fun resolveTouchZone(touchType: Int, x: Int, y: Int): ClusterTouchZone {
             if (touchType != 5 && touchType != 9) return ClusterTouchZone.NONE
@@ -87,10 +88,11 @@ class TftCockpitDisplayController(
         fun resolveLiveMapTouchZone(touchType: Int, x: Int, y: Int): LiveMapTouchZone {
             if (touchType != 5 && touchType != 9) return LiveMapTouchZone.NONE
             return when {
-                x >= TftWifiProtocol.TFT_WIDTH - 68 && y in 140..186 -> LiveMapTouchZone.ZOOM_IN
-                x >= TftWifiProtocol.TFT_WIDTH - 68 && y in 196..242 -> LiveMapTouchZone.ZOOM_OUT
-                x >= TftWifiProtocol.TFT_WIDTH - 68 && y in 252..298 -> LiveMapTouchZone.TOGGLE_HEADING
-                y >= 420 && x in 16..340 -> LiveMapTouchZone.TOGGLE_DAYLIGHT
+                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 56 && y in 120..168 -> LiveMapTouchZone.ZOOM_IN
+                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 56 && y in 174..222 -> LiveMapTouchZone.ZOOM_OUT
+                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 56 && y in 228..278 -> LiveMapTouchZone.TOGGLE_HEADING
+                y in TftWifiProtocol.NS400Z_POCKET_TOP..TftWifiProtocol.NS400Z_POCKET_BOTTOM &&
+                    x in TftWifiProtocol.NS400Z_POCKET_LEFT..TftWifiProtocol.NS400Z_POCKET_RIGHT -> LiveMapTouchZone.TOGGLE_DAYLIGHT
                 else -> LiveMapTouchZone.NONE
             }
         }
@@ -123,8 +125,11 @@ class TftCockpitDisplayController(
     private var frameBitmap: Bitmap? = null
     private var frameCanvas: Canvas? = null
     private var castRawBitmap: Bitmap? = null
-    private var castRawCanvas: Canvas? = null
     private var castPaddedBitmap: Bitmap? = null
+    private var cachedBoundsRect: IntRect? = null
+    private var cachedBoundsSrcW = 0
+    private var cachedBoundsSrcH = 0
+    private var cachedBoundsAgeFrames = 0
     private val castMatrix = Matrix()
     private val castFilterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val copySrcRect = Rect()
@@ -286,7 +291,7 @@ class TftCockpitDisplayController(
             val dm = context.resources.displayMetrics
             pt.set(dm.widthPixels, dm.heightPixels)
         }
-        return TftScreenCastTransform.computeCaptureDimensions(pt.x, pt.y, maxEdge = 960)
+        return TftScreenCastTransform.computeCaptureDimensions(pt.x, pt.y, maxEdge = 800)
     }
 
     private fun createCastImageReader(size: IntSize, handler: Handler): ImageReader {
@@ -462,11 +467,14 @@ class TftCockpitDisplayController(
                 frameCanvas = null
                 frameBitmap?.recycle()
                 frameBitmap = null
-                castRawCanvas = null
                 castRawBitmap?.recycle()
                 castRawBitmap = null
                 castPaddedBitmap?.recycle()
                 castPaddedBitmap = null
+                cachedBoundsRect = null
+                cachedBoundsSrcW = 0
+                cachedBoundsSrcH = 0
+                cachedBoundsAgeFrames = 0
             }
         }
     }
@@ -514,16 +522,16 @@ class TftCockpitDisplayController(
                 val srcH = image.height
                 if (pixelStride <= 0 || srcW <= 0 || srcH <= 0) return
 
-                val rawBmp = castRawBitmap?.takeIf { !it.isRecycled && it.width == srcW && it.height == srcH }
-                    ?: Bitmap.createBitmap(srcW, srcH, Bitmap.Config.ARGB_8888).also {
-                        castRawBitmap?.recycle()
-                        castRawBitmap = it
-                        castRawCanvas = Canvas(it)
-                    }
-
                 val rowPadding = rowStride - pixelStride * srcW
+                val srcBitmapForTransform: Bitmap
                 if (rowPadding == 0) {
+                    val rawBmp = castRawBitmap?.takeIf { !it.isRecycled && it.width == srcW && it.height == srcH }
+                        ?: Bitmap.createBitmap(srcW, srcH, Bitmap.Config.ARGB_8888).also {
+                            castRawBitmap?.recycle()
+                            castRawBitmap = it
+                        }
                     rawBmp.copyPixelsFromBuffer(buffer)
+                    srcBitmapForTransform = rawBmp
                 } else {
                     val paddedW = srcW + (rowPadding / pixelStride)
                     val padded = castPaddedBitmap?.takeIf {
@@ -533,23 +541,38 @@ class TftCockpitDisplayController(
                         castPaddedBitmap = it
                     }
                     padded.copyPixelsFromBuffer(buffer)
-                    val tmpCanvas = castRawCanvas ?: Canvas(rawBmp).also { castRawCanvas = it }
-                    copySrcRect.set(0, 0, srcW, srcH)
-                    copyDstRect.set(0, 0, srcW, srcH)
-                    tmpCanvas.drawBitmap(padded, copySrcRect, copyDstRect, null)
+                    srcBitmapForTransform = padded
+                }
+
+                val boundsNeedRefresh = cachedBoundsRect == null ||
+                    cachedBoundsSrcW != srcW ||
+                    cachedBoundsSrcH != srcH ||
+                    cachedBoundsAgeFrames >= 15
+                val contentBounds = if (boundsNeedRefresh) {
+                    cachedBoundsSrcW = srcW
+                    cachedBoundsSrcH = srcH
+                    cachedBoundsAgeFrames = 0
+                    TftScreenCastTransform.detectNonBlackBounds(srcBitmapForTransform).also {
+                        cachedBoundsRect = it
+                    }
+                } else {
+                    cachedBoundsAgeFrames++
+                    cachedBoundsRect
                 }
 
                 val dstBmp = ensureTargetBitmap(TftWifiProtocol.TFT_WIDTH, TftWifiProtocol.TFT_HEIGHT)
                 val dstCanvas = frameCanvas ?: Canvas(dstBmp).also { frameCanvas = it }
                 TftScreenCastTransform.renderIntoTarget(
-                    srcBitmap = rawBmp,
+                    srcBitmap = srcBitmapForTransform,
                     dstBitmap = dstBmp,
                     dstCanvas = dstCanvas,
                     layoutMode = appSettings.tftCastLayoutMode,
                     drawMatrix = castMatrix,
                     filterPaint = castFilterPaint,
                     srcRectTmp = copySrcRect,
-                    dstRectTmp = copyDstRect
+                    dstRectTmp = copyDstRect,
+                    srcClipRect = if (rowPadding > 0) IntRect(0, 0, srcW, srcH) else null,
+                    cachedContentBounds = contentBounds
                 )
 
                 val encoded = encodeAdaptiveJpeg(dstBmp) ?: return
@@ -565,7 +588,7 @@ class TftCockpitDisplayController(
 
     private fun ensureTargetBitmap(w: Int, h: Int): Bitmap {
         return frameBitmap?.takeIf { !it.isRecycled && it.width == w && it.height == h }
-            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+            ?: Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565).also {
                 frameBitmap?.recycle()
                 frameBitmap = it
                 frameCanvas = Canvas(it)
@@ -657,10 +680,20 @@ class TftCockpitDisplayController(
             val telemetry = telemetryManager.telemetryState.value
             val callInfo = callManager.callInfo.value
             val waAlert = GoogleMapsNotificationListener.lastWhatsAppAlert.value
-            val simAlertSender = bleManager.simulatedAlert.value?.takeIf {
+            val simAlert = bleManager.simulatedAlert.value?.takeIf {
                 System.currentTimeMillis() - it.timestampMs < 6000L
-            }?.sender
-            val resolvedWa = waAlert?.sender ?: simAlertSender
+            }
+            val resolvedAlertLabel = when {
+                waAlert != null -> {
+                    val prefix = if (waAlert.alertType == AlertType.SMS) "SMS" else "WA"
+                    "$prefix: ${waAlert.sender}"
+                }
+                simAlert != null -> {
+                    val prefix = if (simAlert.alertType == AlertType.SMS) "SMS" else "WA"
+                    "$prefix: ${simAlert.sender}"
+                }
+                else -> null
+            }
             val caller = if (callInfo.state != CallState.NO_CALL) {
                 callInfo.callerName?.ifBlank { callInfo.callerNumber } ?: "Incoming Call"
             } else null
@@ -678,7 +711,7 @@ class TftCockpitDisplayController(
                 clockText = currentClockString(),
                 activeNavStep = navStep,
                 incomingCaller = caller,
-                whatsAppSender = resolvedWa,
+                whatsAppSender = resolvedAlertLabel,
                 toastBanner = toast
             )
         }
@@ -705,59 +738,64 @@ class TftCockpitDisplayController(
             val media = mediaManager.getActiveMediaSnapshot()
             val stats = rideTracker.getLiveRideSnapshot()
 
+            val safeL = TftWifiProtocol.NS400Z_SAFE_LEFT.toFloat()
+            val safeR = TftWifiProtocol.NS400Z_SAFE_RIGHT.toFloat()
+
+            // Top Header strip placed cleanly below OEM status bar + BLE TBT line (y >= 66)
             cardPaint.color = cardColor
             borderPaint.color = borderColor
-            cardRect.set(14f, 10f, w - 14f, 58f)
-            canvas.drawRoundRect(cardRect, 12f, 12f, cardPaint)
-            canvas.drawRoundRect(cardRect, 12f, 12f, borderPaint)
+            cardRect.set(safeL, 66f, safeR, 102f)
+            canvas.drawRoundRect(cardRect, 10f, 10f, cardPaint)
+            canvas.drawRoundRect(cardRect, 10f, 10f, borderPaint)
 
             val bleConnected = bleManager.isLinkReady
             accentPaint.color = if (bleConnected) greenAccent else Color.rgb(245, 158, 11)
-            canvas.drawCircle(34f, 34f, 6f, accentPaint)
+            canvas.drawCircle(safeL + 18f, 84f, 5f, accentPaint)
 
             textPaint.typeface = boldTypeface
             textPaint.color = primaryText
-            textPaint.textSize = 20f
+            textPaint.textSize = 17f
             textPaint.textAlign = Paint.Align.LEFT
             val headerTitle = bleManager.getConnectedClusterName().ifBlank { "PULSAR TFT" }
-            canvas.drawText(headerTitle, 48f, 41f, textPaint)
+            canvas.drawText(headerTitle, safeL + 30f, 90f, textPaint)
 
             textPaint.textAlign = Paint.Align.RIGHT
             textPaint.typeface = normalTypeface
             textPaint.color = secondaryText
-            textPaint.textSize = 19f
+            textPaint.textSize = 16f
             val timeStr = currentClockString()
             val stateBadge = if (clusterStationary) "PARK" else "RIDE"
             canvas.drawText(
                 "$stateBadge  |  BAT ${telemetry.batteryPercent}%  |  $timeStr",
-                w - 28f,
-                41f,
+                safeR - 14f,
+                90f,
                 textPaint
             )
 
-            cardRect.set(14f, 70f, 512f, 404f)
-            canvas.drawRoundRect(cardRect, 18f, 18f, cardPaint)
-            canvas.drawRoundRect(cardRect, 18f, 18f, borderPaint)
+            // Main Left TBT / Ready Card (above y=322 speedometer line)
+            cardRect.set(safeL, 108f, 514f, 316f)
+            canvas.drawRoundRect(cardRect, 16f, 16f, cardPaint)
+            canvas.drawRoundRect(cardRect, 16f, 16f, borderPaint)
 
             val resolvedNavStep = navStep ?: bleManager.simulatedNavStep.value
             if (resolvedNavStep != null) {
-                radarRect.set(30f, 88f, 186f, 244f)
+                radarRect.set(safeL + 14f, 120f, safeL + 132f, 238f)
                 cardPaint.color = if (highContrast) Color.rgb(232, 238, 246) else Color.rgb(30, 36, 48)
-                canvas.drawRoundRect(radarRect, 20f, 20f, cardPaint)
+                canvas.drawRoundRect(radarRect, 16f, 16f, cardPaint)
                 drawManeuverVector(canvas, resolvedNavStep.maneuver, radarRect, accentColor, cyanAccent)
 
                 textPaint.textAlign = Paint.Align.LEFT
                 textPaint.typeface = boldTypeface
                 textPaint.color = primaryText
-                textPaint.textSize = 54f
+                textPaint.textSize = 44f
                 val distLabel = formatDistanceShort(resolvedNavStep.distanceMeters, resolvedNavStep.rawDistanceText)
-                canvas.drawText(distLabel, 204f, 152f, textPaint)
+                canvas.drawText(distLabel, safeL + 148f, 162f, textPaint)
 
-                textPaint.textSize = 22f
+                textPaint.textSize = 19f
                 textPaint.color = cyanAccent
-                canvas.drawText(resolvedNavStep.maneuver.description.uppercase(Locale.US), 204f, 188f, textPaint)
+                canvas.drawText(resolvedNavStep.maneuver.description.uppercase(Locale.US), safeL + 148f, 192f, textPaint)
 
-                textPaint.textSize = 21f
+                textPaint.textSize = 18f
                 textPaint.color = secondaryText
                 textPaint.typeface = normalTypeface
                 val etaStr = if (resolvedNavStep.etaHour in 1..12) {
@@ -772,15 +810,15 @@ class TftCockpitDisplayController(
                     val tenths = resolvedNavStep.totalDistanceMeters / 100
                     "  •  ${tenths / 10}.${tenths % 10} km left"
                 } else ""
-                canvas.drawText("$etaStr$remKm", 204f, 224f, textPaint)
+                canvas.drawText("$etaStr$remKm", safeL + 148f, 224f, textPaint)
 
                 textPaint.typeface = boldTypeface
                 textPaint.color = primaryText
-                textPaint.textSize = 30f
+                textPaint.textSize = 24f
                 val street = resolvedNavStep.streetName.ifBlank { "Follow Route" }
-                drawWrappedTwoLines(canvas, street, 32f, 294f, 464f, 38f, textPaint)
+                drawWrappedTwoLines(canvas, street, safeL + 14f, 272f, 452f, 30f, textPaint)
             } else {
-                radarRect.set(34f, 94f, 174f, 234f)
+                radarRect.set(safeL + 14f, 122f, safeL + 124f, 232f)
                 borderPaint.color = cyanAccent
                 borderPaint.strokeWidth = 3f
                 canvas.drawOval(radarRect, borderPaint)
@@ -792,18 +830,18 @@ class TftCockpitDisplayController(
                 textPaint.textAlign = Paint.Align.LEFT
                 textPaint.typeface = boldTypeface
                 textPaint.color = primaryText
-                textPaint.textSize = 36f
-                canvas.drawText("TFT Cockpit Ready", 196f, 152f, textPaint)
+                textPaint.textSize = 30f
+                canvas.drawText("TFT Cockpit Ready", safeL + 142f, 160f, textPaint)
 
                 textPaint.typeface = normalTypeface
                 textPaint.color = secondaryText
-                textPaint.textSize = 21f
-                canvas.drawText("Share a place to PulsarNav for Live Map", 196f, 192f, textPaint)
-                canvas.drawText("Or open Config -> Switch to Map Mirror", 196f, 224f, textPaint)
+                textPaint.textSize = 18f
+                canvas.drawText("Waiting for Google Maps TBT or Live Cast", safeL + 142f, 192f, textPaint)
+                canvas.drawText("Or select Live Map (OSM) in TFT Config", safeL + 142f, 218f, textPaint)
 
                 textPaint.typeface = boldTypeface
                 textPaint.color = primaryText
-                textPaint.textSize = 26f
+                textPaint.textSize = 22f
                 val speedText = if (stats.isTracking) "${stats.currentSpeedKmh.toInt()} km/h" else "IDLE"
                 val tripText = if (stats.isTracking) {
                     val hundredths = (stats.distanceKm * 100.0).toInt().coerceAtLeast(0)
@@ -812,136 +850,149 @@ class TftCockpitDisplayController(
                 } else {
                     "${stats.lifetimeTrips} trips"
                 }
-                canvas.drawText("SPEED: $speedText    •    TRIP: $tripText", 34f, 322f, textPaint)
+                canvas.drawText("SPEED: $speedText    •    TRIP: $tripText", safeL + 16f, 272f, textPaint)
 
                 textPaint.typeface = normalTypeface
                 textPaint.color = secondaryText
-                textPaint.textSize = 18f
+                textPaint.textSize = 15f
                 canvas.drawText(
-                    "Handlebar button recenter • Tap bottom-left for Day/Night",
-                    34f,
-                    368f,
+                    "Handlebar button recenter • Tap pill below for Day/Night",
+                    safeL + 16f,
+                    300f,
                     textPaint
                 )
             }
 
+            // Top-Right Card: Call / SMS / WhatsApp / Live Speed (y=108..212)
             cardPaint.color = cardColor
-            cardRect.set(526f, 70f, w - 14f, 226f)
-            canvas.drawRoundRect(cardRect, 18f, 18f, cardPaint)
-            canvas.drawRoundRect(cardRect, 18f, 18f, borderPaint)
+            cardRect.set(524f, 108f, safeR, 212f)
+            canvas.drawRoundRect(cardRect, 16f, 16f, cardPaint)
+            canvas.drawRoundRect(cardRect, 16f, 16f, borderPaint)
 
-            val simAlertSender = bleManager.simulatedAlert.value?.takeIf {
+            val simAlertInfo = bleManager.simulatedAlert.value?.takeIf {
                 System.currentTimeMillis() - it.timestampMs < 6000L
-            }?.sender
-            val resolvedAlertSender = waAlert?.sender ?: simAlertSender
+            }
+            val resolvedAlertSender = waAlert?.sender ?: simAlertInfo?.sender
+            val resolvedAlertType = when {
+                waAlert != null -> waAlert.alertType
+                simAlertInfo != null -> simAlertInfo.alertType
+                else -> AlertType.WHATSAPP
+            }
 
             if (callInfo.state != CallState.NO_CALL) {
                 accentPaint.color = accentColor
-                cardRect.set(538f, 82f, w - 26f, 118f)
-                canvas.drawRoundRect(cardRect, 10f, 10f, accentPaint)
+                cardRect.set(534f, 118f, safeR - 10f, 146f)
+                canvas.drawRoundRect(cardRect, 8f, 8f, accentPaint)
                 textPaint.color = Color.WHITE
-                textPaint.textSize = 18f
+                textPaint.textSize = 15f
                 textPaint.typeface = boldTypeface
-                canvas.drawText(callInfo.state.name.replace('_', ' '), 550f, 106f, textPaint)
+                canvas.drawText(callInfo.state.name.replace('_', ' '), 544f, 138f, textPaint)
 
                 textPaint.color = primaryText
-                textPaint.textSize = 23f
+                textPaint.textSize = 20f
                 val caller = callInfo.callerName?.ifBlank { callInfo.callerNumber } ?: "Incoming Call"
-                canvas.drawText(ellipsizeText(caller, 210f, textPaint), 542f, 164f, textPaint)
+                canvas.drawText(ellipsizeText(caller, 230f, textPaint), 538f, 176f, textPaint)
                 textPaint.color = secondaryText
-                textPaint.textSize = 17f
+                textPaint.textSize = 15f
                 textPaint.typeface = normalTypeface
-                canvas.drawText("Missed: ${callInfo.missedCallCount}", 542f, 200f, textPaint)
+                canvas.drawText("Missed: ${callInfo.missedCallCount}", 538f, 200f, textPaint)
             } else if (!resolvedAlertSender.isNullOrBlank()) {
-                textPaint.color = greenAccent
-                textPaint.textSize = 17f
+                val isSms = resolvedAlertType == AlertType.SMS
+                textPaint.color = if (isSms) cyanAccent else greenAccent
+                textPaint.textSize = 15f
                 textPaint.typeface = boldTypeface
-                canvas.drawText("WHATSAPP ALERT", 544f, 104f, textPaint)
+                canvas.drawText(if (isSms) "SMS ALERT" else "WHATSAPP ALERT", 538f, 136f, textPaint)
                 textPaint.color = primaryText
-                textPaint.textSize = 23f
-                canvas.drawText(ellipsizeText(resolvedAlertSender, 218f, textPaint), 544f, 146f, textPaint)
+                textPaint.textSize = 22f
+                canvas.drawText(ellipsizeText(resolvedAlertSender, 232f, textPaint), 538f, 174f, textPaint)
             } else {
                 textPaint.color = secondaryText
-                textPaint.textSize = 16f
+                textPaint.textSize = 14f
                 textPaint.typeface = boldTypeface
-                canvas.drawText("LIVE SPEED", 544f, 102f, textPaint)
+                canvas.drawText("LIVE SPEED", 538f, 132f, textPaint)
                 textPaint.color = primaryText
-                textPaint.textSize = 54f
+                textPaint.textSize = 42f
                 val spd = if (stats.isTracking) stats.currentSpeedKmh.toInt().toString() else "0"
-                canvas.drawText(spd, 544f, 166f, textPaint)
+                canvas.drawText(spd, 538f, 180f, textPaint)
                 textPaint.color = secondaryText
-                textPaint.textSize = 20f
-                canvas.drawText("km/h", 632f, 166f, textPaint)
+                textPaint.textSize = 18f
+                canvas.drawText("km/h", 616f, 180f, textPaint)
                 textPaint.typeface = normalTypeface
-                textPaint.textSize = 17f
+                textPaint.textSize = 14f
                 val tenths = (stats.distanceKm * 10.0).toInt().coerceAtLeast(0)
-                canvas.drawText(
-                    "Trip ${tenths / 10}.${tenths % 10} km",
-                    544f,
-                    204f,
-                    textPaint
-                )
+                canvas.drawText("Trip ${tenths / 10}.${tenths % 10} km", 538f, 202f, textPaint)
             }
 
+            // Bottom-Right Media Card (strictly y=220..316, clear of y=322 speedometer!)
             cardPaint.color = cardColor
-            cardRect.set(526f, 238f, w - 14f, 404f)
-            canvas.drawRoundRect(cardRect, 18f, 18f, cardPaint)
-            canvas.drawRoundRect(cardRect, 18f, 18f, borderPaint)
+            cardRect.set(
+                MEDIA_CARD_LEFT.toFloat(),
+                MEDIA_CARD_TOP.toFloat(),
+                MEDIA_CARD_RIGHT.toFloat(),
+                MEDIA_CARD_BOTTOM.toFloat()
+            )
+            canvas.drawRoundRect(cardRect, 14f, 14f, cardPaint)
+            canvas.drawRoundRect(cardRect, 14f, 14f, borderPaint)
 
             textPaint.typeface = boldTypeface
             textPaint.color = cyanAccent
-            textPaint.textSize = 16f
+            textPaint.textSize = 13f
             val playLabel = when (media.playStatus) {
-                2 -> "PLAYING  •  TAP TO PAUSE"
-                1 -> "PAUSED  •  TAP TO PLAY"
+                2 -> "PLAYING  •  TAP"
+                1 -> "PAUSED  •  TAP"
                 else -> "MEDIA IDLE"
             }
-            canvas.drawText(playLabel, 544f, 268f, textPaint)
+            canvas.drawText(playLabel, MEDIA_CARD_LEFT + 14f, MEDIA_CARD_TOP + 22f, textPaint)
 
             textPaint.color = primaryText
-            textPaint.textSize = 22f
+            textPaint.textSize = 18f
             val trackTitle = media.title.ifBlank { "No Active Track" }
-            canvas.drawText(ellipsizeText(trackTitle, 224f, textPaint), 544f, 308f, textPaint)
+            canvas.drawText(ellipsizeText(trackTitle, 232f, textPaint), MEDIA_CARD_LEFT + 14f, MEDIA_CARD_TOP + 48f, textPaint)
 
             textPaint.typeface = normalTypeface
             textPaint.color = secondaryText
-            textPaint.textSize = 18f
+            textPaint.textSize = 15f
             val trackArtist = media.artist.ifBlank { "Audio synced via PulsarNav" }
-            canvas.drawText(ellipsizeText(trackArtist, 224f, textPaint), 544f, 340f, textPaint)
+            canvas.drawText(ellipsizeText(trackArtist, 232f, textPaint), MEDIA_CARD_LEFT + 14f, MEDIA_CARD_TOP + 70f, textPaint)
 
             if (media.durationSeconds > 0) {
-                val barLeft = 544f
-                val barRight = w - 30f
-                val barTop = 368f
+                val barLeft = MEDIA_CARD_LEFT + 14f
+                val barRight = MEDIA_CARD_RIGHT - 14f
+                val barTop = MEDIA_CARD_BOTTOM - 14f
                 val progress = (media.elapsedSeconds.toFloat() / media.durationSeconds.toFloat()).coerceIn(0f, 1f)
                 cardPaint.color = borderColor
-                tmpRect.set(barLeft, barTop, barRight, barTop + 8f)
-                canvas.drawRoundRect(tmpRect, 4f, 4f, cardPaint)
+                tmpRect.set(barLeft, barTop, barRight, barTop + 6f)
+                canvas.drawRoundRect(tmpRect, 3f, 3f, cardPaint)
                 accentPaint.color = accentColor
-                tmpRect.set(barLeft, barTop, barLeft + (barRight - barLeft) * progress, barTop + 8f)
-                canvas.drawRoundRect(tmpRect, 4f, 4f, accentPaint)
+                tmpRect.set(barLeft, barTop, barLeft + (barRight - barLeft) * progress, barTop + 6f)
+                canvas.drawRoundRect(tmpRect, 3f, 3f, accentPaint)
             }
 
+            // Unobstructed Lower-Left Pocket Pill (x=34..412, y=326..376 — above ETD, left of Speedo)
             cardPaint.color = cardColor
-            cardRect.set(14f, 416f, w - 14f, 468f)
+            cardRect.set(
+                TftWifiProtocol.NS400Z_POCKET_LEFT.toFloat(),
+                TftWifiProtocol.NS400Z_POCKET_TOP.toFloat(),
+                TftWifiProtocol.NS400Z_POCKET_RIGHT.toFloat(),
+                TftWifiProtocol.NS400Z_POCKET_BOTTOM.toFloat()
+            )
             canvas.drawRoundRect(cardRect, 12f, 12f, cardPaint)
             canvas.drawRoundRect(cardRect, 12f, 12f, borderPaint)
 
             textPaint.color = secondaryText
-            textPaint.textSize = 18f
+            textPaint.textSize = 15f
             textPaint.textAlign = Paint.Align.LEFT
-            val modeChip = if (highContrast) "DAYLIGHT MODE (TAP)" else "NIGHT COCKPIT (TAP)"
-            canvas.drawText(modeChip, 30f, 449f, textPaint)
-
-            textPaint.textAlign = Paint.Align.RIGHT
             val nowMs = SystemClock.elapsedRealtime()
-            val footerStatus = if (nowMs < recenterToastUntilMs) {
-                "RECENTER TRIGGERED"
-            } else {
-                "PulsarNav Wi-Fi Mirror • 800x480"
+            val pocketLabel = when {
+                nowMs < recenterToastUntilMs -> "RECENTER TRIGGERED"
+                highContrast -> "DAYLIGHT MODE (TAP)"
+                else -> "NIGHT COCKPIT (TAP)"
             }
-            textPaint.color = if (nowMs < recenterToastUntilMs) greenAccent else secondaryText
-            canvas.drawText(footerStatus, w - 28f, 449f, textPaint)
+            if (nowMs < recenterToastUntilMs) textPaint.color = greenAccent
+            canvas.drawText(pocketLabel, TftWifiProtocol.NS400Z_POCKET_LEFT + 14f, TftWifiProtocol.NS400Z_POCKET_TOP + 30f, textPaint)
+            textPaint.color = secondaryText
+            textPaint.textAlign = Paint.Align.RIGHT
+            canvas.drawText("SAFE HUD", TftWifiProtocol.NS400Z_POCKET_RIGHT - 14f, TftWifiProtocol.NS400Z_POCKET_TOP + 30f, textPaint)
 
             if (debugOverlayEnabled) {
                 borderPaint.color = Color.argb(140, 245, 158, 11)

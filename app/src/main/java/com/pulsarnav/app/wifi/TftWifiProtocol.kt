@@ -24,6 +24,18 @@ object TftWifiProtocol {
     const val TFT_HEIGHT = 480
     const val TFT_DPI = 240
 
+    // Bajaj NS400Z cluster draws fixed OEM overlays (top status + BLE TBT y=0..64, left tab x=0..34,
+    // bottom-left ETD/TBT y=380..480, bottom-right speedometer/fuel gauge x=416..800 y=322..480).
+    // Keeping rendered UI inside these bounds prevents OEM overlap and cuts JPEG payload entropy.
+    const val NS400Z_SAFE_LEFT = 34
+    const val NS400Z_SAFE_TOP = 66
+    const val NS400Z_SAFE_RIGHT = 788
+    const val NS400Z_SAFE_BOTTOM = 322
+    const val NS400Z_POCKET_LEFT = 34
+    const val NS400Z_POCKET_TOP = 326
+    const val NS400Z_POCKET_RIGHT = 412
+    const val NS400Z_POCKET_BOTTOM = 376
+
     const val DEFAULT_CLUSTER_HOST = "192.168.4.1"
     const val TCP_PORT = 5558
     const val UDP_PORT = 5556
@@ -34,12 +46,12 @@ object TftWifiProtocol {
     const val UDP_FIRST_CHUNK_BYTES = 1006
     const val UDP_NEXT_CHUNK_BYTES = 1008
     const val UDP_MAX_JPEG_BYTES = 30_000
-    const val UDP_TARGET_JPEG_BYTES = 25_000
+    const val UDP_TARGET_JPEG_BYTES = 22_000
     const val UDP_MIN_JPEG_QUALITY = 25
-    const val UDP_DEFAULT_JPEG_QUALITY = 50
-    const val UDP_MAX_REENCODE_ATTEMPTS = 2
-    const val UDP_MIN_CAPTURE_INTERVAL_MS = 70L
-    const val UDP_TX_PACING_MS = 3L
+    const val UDP_DEFAULT_JPEG_QUALITY = 60
+    const val UDP_MAX_REENCODE_ATTEMPTS = 1
+    const val UDP_MIN_CAPTURE_INTERVAL_MS = 50L
+    const val UDP_TX_PACING_MS = 1L
 
     const val AES_TRANSFORMATION = "AES/CBC/PKCS5Padding"
     const val AES_KEY_STRING = "Z7in5HGAGFdXXU6ZfDc8lIff4iwLY01o"
@@ -277,7 +289,12 @@ object TftTcpCodec {
         val needMoreData: Boolean
     )
 
-    fun decodeNextFrame(buffer: ByteArray, length: Int): DecodeResult {
+    fun decodeNextFrame(
+        buffer: ByteArray,
+        length: Int,
+        expectedFrameType: Int = TftWifiProtocol.TYPE_CLUSTER_REQUEST,
+        maxPayloadBytes: Int = TftWifiProtocol.MAX_CLUSTER_REQUEST_PAYLOAD
+    ): DecodeResult {
         if (length < TftWifiProtocol.TCP_HEADER_SIZE) {
             return DecodeResult(frame = null, consumedBytes = 0, needMoreData = true)
         }
@@ -286,7 +303,7 @@ object TftTcpCodec {
         val cmd = buffer[2].toInt() and 0xFF
         val payloadLen = ((buffer[3].toInt() and 0xFF) shl 8) or (buffer[4].toInt() and 0xFF)
 
-        if (frameType != TftWifiProtocol.TYPE_CLUSTER_REQUEST || payloadLen > TftWifiProtocol.MAX_CLUSTER_REQUEST_PAYLOAD) {
+        if (frameType != expectedFrameType || payloadLen > maxPayloadBytes) {
             return DecodeResult(frame = null, consumedBytes = 1, needMoreData = false)
         }
 
@@ -789,12 +806,13 @@ object TftUdpFrameEncoder {
         return packets
     }
 
-    fun selectNextQuality(currentQuality: Int, encodedSize: Int): Int =
-        if (encodedSize > TftWifiProtocol.UDP_TARGET_JPEG_BYTES) {
-            max(TftWifiProtocol.UDP_MIN_JPEG_QUALITY, currentQuality - 1)
-        } else {
-            min(100, currentQuality + 1)
-        }
+    fun selectNextQuality(currentQuality: Int, encodedSize: Int): Int = when {
+        encodedSize > TftWifiProtocol.UDP_TARGET_JPEG_BYTES ->
+            max(TftWifiProtocol.UDP_MIN_JPEG_QUALITY, currentQuality - 2)
+        encodedSize < (TftWifiProtocol.UDP_TARGET_JPEG_BYTES - 4_500) ->
+            min(95, currentQuality + 3)
+        else -> min(95, currentQuality + 1)
+    }
 
     fun computeRetryQuality(currentQuality: Int, encodedSize: Int): Int {
         if (encodedSize <= 0) return TftWifiProtocol.UDP_MIN_JPEG_QUALITY

@@ -94,14 +94,47 @@ object TftScreenCastTransform {
         srcW: Int,
         srcH: Int,
         targetW: Int = TftWifiProtocol.TFT_WIDTH,
-        targetH: Int = TftWifiProtocol.TFT_HEIGHT
+        targetH: Int = TftWifiProtocol.TFT_HEIGHT,
+        viewport: IntRect = IntRect(0, 0, targetW, targetH)
     ): IntRect {
-        val scale = min(targetW.toFloat() / srcW.coerceAtLeast(1), targetH.toFloat() / srcH.coerceAtLeast(1))
-        val drawW = (srcW * scale).roundToInt().coerceIn(1, targetW)
-        val drawH = (srcH * scale).roundToInt().coerceIn(1, targetH)
-        val left = (targetW - drawW) / 2
-        val top = (targetH - drawH) / 2
+        val vpW = viewport.width
+        val vpH = viewport.height
+        val scale = min(vpW.toFloat() / srcW.coerceAtLeast(1), vpH.toFloat() / srcH.coerceAtLeast(1))
+        val drawW = (srcW * scale).roundToInt().coerceIn(1, vpW)
+        val drawH = (srcH * scale).roundToInt().coerceIn(1, vpH)
+        val left = viewport.left + (vpW - drawW) / 2
+        val top = viewport.top + (vpH - drawH) / 2
         return IntRect(left, top, left + drawW, top + drawH)
+    }
+
+    /**
+     * Returns the unobstructed Bajaj NS400Z 800x480 viewport so casted Google Maps content
+     * is never covered by the OEM top status strip, left drawer arrow, bottom-left OEM TBT bar,
+     * or bottom-right speedometer/fuel trapezoid.
+     */
+    fun computeSafeViewport(
+        srcW: Int,
+        srcH: Int,
+        layoutMode: String
+    ): IntRect {
+        val isPortraitSource = srcH > srcW
+        return if (layoutMode == AppSettings.CAST_LAYOUT_FIT && isPortraitSource) {
+            // Tall left-column pocket: 380x312 gives 22% more height for uncropped portrait navigation
+            IntRect(
+                left = TftWifiProtocol.NS400Z_SAFE_LEFT,
+                top = TftWifiProtocol.NS400Z_SAFE_TOP,
+                right = TftWifiProtocol.NS400Z_POCKET_RIGHT,
+                bottom = TftWifiProtocol.NS400Z_POCKET_BOTTOM
+            )
+        } else {
+            // Wide top safe panorama: 754x256 completely above speedo (y=324) & below OEM strip (y=64)
+            IntRect(
+                left = TftWifiProtocol.NS400Z_SAFE_LEFT,
+                top = TftWifiProtocol.NS400Z_SAFE_TOP,
+                right = TftWifiProtocol.NS400Z_SAFE_RIGHT,
+                bottom = TftWifiProtocol.NS400Z_SAFE_BOTTOM
+            )
+        }
     }
 
     private val rowScratch = ThreadLocal<IntArray?>()
@@ -178,47 +211,67 @@ object TftScreenCastTransform {
         drawMatrix: Matrix,
         filterPaint: Paint,
         srcRectTmp: android.graphics.Rect,
-        dstRectTmp: android.graphics.Rect
+        dstRectTmp: android.graphics.Rect,
+        srcClipRect: IntRect? = null,
+        cachedContentBounds: IntRect? = null
     ) {
         val dstW = dstBitmap.width
         val dstH = dstBitmap.height
-        val content = detectNonBlackBounds(srcBitmap)
+        val rawContent = cachedContentBounds ?: detectNonBlackBounds(srcBitmap)
+        val content = if (srcClipRect != null) {
+            IntRect(
+                left = rawContent.left.coerceIn(srcClipRect.left, srcClipRect.right - 1),
+                top = rawContent.top.coerceIn(srcClipRect.top, srcClipRect.bottom - 1),
+                right = rawContent.right.coerceIn(srcClipRect.left + 1, srcClipRect.right),
+                bottom = rawContent.bottom.coerceIn(srcClipRect.top + 1, srcClipRect.bottom)
+            )
+        } else {
+            rawContent
+        }
+        val safeViewport = computeSafeViewport(content.width, content.height, layoutMode)
         dstCanvas.drawColor(Color.rgb(10, 12, 16))
 
         when (layoutMode) {
             AppSettings.CAST_LAYOUT_FIT -> {
-                val dstRect = computeFitDestinationRect(content.width, content.height, dstW, dstH)
+                val dstRect = computeFitDestinationRect(content.width, content.height, dstW, dstH, safeViewport)
                 srcRectTmp.set(content.left, content.top, content.right, content.bottom)
                 dstRectTmp.set(dstRect.left, dstRect.top, dstRect.right, dstRect.bottom)
                 dstCanvas.drawBitmap(srcBitmap, srcRectTmp, dstRectTmp, filterPaint)
             }
             AppSettings.CAST_LAYOUT_ROT90 -> {
                 // Rotate content -90 deg (counter-clockwise so top of phone lands on left of TFT)
-                // and aspect-fill into 800x480, clipped strictly to the transformed content bounds.
+                // and aspect-fill strictly inside the NS400Z unobstructed safe viewport.
                 val rotW = content.height.toFloat()
                 val rotH = content.width.toFloat()
-                val scale = max(dstW / rotW, dstH / rotH)
-                val halfW = rotW * scale * 0.5f
-                val halfH = rotH * scale * 0.5f
+                val vpW = safeViewport.width.toFloat()
+                val vpH = safeViewport.height.toFloat()
+                val scale = max(vpW / rotW, vpH / rotH)
+                val vpCenterX = (safeViewport.left + safeViewport.right) * 0.5f
+                val vpCenterY = (safeViewport.top + safeViewport.bottom) * 0.5f
                 drawMatrix.reset()
                 drawMatrix.postTranslate(-content.left - content.width * 0.5f, -content.top - content.height * 0.5f)
                 drawMatrix.postRotate(-90f)
                 drawMatrix.postScale(scale, scale)
-                drawMatrix.postTranslate(dstW * 0.5f, dstH * 0.5f)
+                drawMatrix.postTranslate(vpCenterX, vpCenterY)
                 dstCanvas.save()
                 dstCanvas.clipRect(
-                    (dstW * 0.5f - halfW).coerceAtLeast(0f),
-                    (dstH * 0.5f - halfH).coerceAtLeast(0f),
-                    (dstW * 0.5f + halfW).coerceAtMost(dstW.toFloat()),
-                    (dstH * 0.5f + halfH).coerceAtMost(dstH.toFloat())
+                    safeViewport.left.toFloat(),
+                    safeViewport.top.toFloat(),
+                    safeViewport.right.toFloat(),
+                    safeViewport.bottom.toFloat()
                 )
                 dstCanvas.drawBitmap(srcBitmap, drawMatrix, filterPaint)
                 dstCanvas.restore()
             }
             else -> {
-                val crop = computeSourceCropRect(content, dstW, dstH, AppSettings.CAST_LAYOUT_FILL)
+                val crop = computeSourceCropRect(
+                    contentRect = content,
+                    targetW = safeViewport.width,
+                    targetH = safeViewport.height,
+                    layoutMode = AppSettings.CAST_LAYOUT_FILL
+                )
                 srcRectTmp.set(crop.left, crop.top, crop.right, crop.bottom)
-                dstRectTmp.set(0, 0, dstW, dstH)
+                dstRectTmp.set(safeViewport.left, safeViewport.top, safeViewport.right, safeViewport.bottom)
                 dstCanvas.drawBitmap(srcBitmap, srcRectTmp, dstRectTmp, filterPaint)
             }
         }

@@ -243,11 +243,11 @@ class TftNavigationMapEngineTest {
 
     @Test
     fun resolveLiveMapTouchZone_mapsRightRailAndDaylightStrip() {
-        assertEquals(LiveMapTouchZone.NONE, TftCockpitDisplayController.resolveLiveMapTouchZone(0, 760, 160))
-        assertEquals(LiveMapTouchZone.ZOOM_IN, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 760, 160))
-        assertEquals(LiveMapTouchZone.ZOOM_OUT, TftCockpitDisplayController.resolveLiveMapTouchZone(5, 760, 220))
-        assertEquals(LiveMapTouchZone.TOGGLE_HEADING, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 760, 275))
-        assertEquals(LiveMapTouchZone.TOGGLE_DAYLIGHT, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 120, 445))
+        assertEquals(LiveMapTouchZone.NONE, TftCockpitDisplayController.resolveLiveMapTouchZone(0, 760, 144))
+        assertEquals(LiveMapTouchZone.ZOOM_IN, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 760, 144))
+        assertEquals(LiveMapTouchZone.ZOOM_OUT, TftCockpitDisplayController.resolveLiveMapTouchZone(5, 760, 198))
+        assertEquals(LiveMapTouchZone.TOGGLE_HEADING, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 760, 252))
+        assertEquals(LiveMapTouchZone.TOGGLE_DAYLIGHT, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 120, 350))
         assertEquals(LiveMapTouchZone.NONE, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 300, 200))
     }
 
