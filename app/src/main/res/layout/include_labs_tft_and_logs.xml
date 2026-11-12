@@ -454,7 +454,6 @@
                 android:layout_height="220dp"
                 android:layout_marginTop="8dp"
                 android:background="@drawable/rounded_box"
-                android:nestedScrollingEnabled="true"
                 android:padding="10dp">
 
                 <TextView
