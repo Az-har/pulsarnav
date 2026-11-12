@@ -64,12 +64,12 @@ object TftScreenCastTransform {
         }
 
         return if (srcAspect < targetAspect) {
-            // Portrait or taller than 5:3: take full width and slice a 5:3 window centered slightly
-            // above geometric center (bias=0.44) to capture the map & turn card while skipping top status bar & bottom sheet.
+            // Portrait or taller than 5:3: take full width and slice a top-biased 5:3 window
+            // (bias=0.15) so the top turn-by-turn banner in navigation apps stays inside the crop.
             val rawCropH = (cw / targetAspect).roundToInt().coerceIn(1, ch)
             val slack = ch - rawCropH
             val isTallPortrait = ch > cw * 1.35f
-            val bias = if (isTallPortrait) 0.44f else 0.50f
+            val bias = if (isTallPortrait) 0.15f else 0.50f
             val topOffset = (slack * bias).roundToInt().coerceIn(0, slack)
             IntRect(
                 left = contentRect.left,
@@ -104,6 +104,9 @@ object TftScreenCastTransform {
         return IntRect(left, top, left + drawW, top + drawH)
     }
 
+    private val rowScratch = ThreadLocal<IntArray?>()
+    private val colScratch = ThreadLocal<IntArray?>()
+
     /**
      * Scans sparse scanlines on [bitmap] to locate non-black active content bounds when
      * Android SurfaceFlinger or OEM overlays insert black pillarbox/letterbox bars.
@@ -117,35 +120,42 @@ object TftScreenCastTransform {
         val sampleYs = intArrayOf(h / 5, (h * 2) / 5, h / 2, (h * 3) / 5, (h * 4) / 5)
         val sampleXs = intArrayOf(w / 5, (w * 2) / 5, w / 2, (w * 3) / 5, (w * 4) / 5)
 
+        var rowBuf = rowScratch.get()
+        if (rowBuf == null || rowBuf.size < w) {
+            rowBuf = IntArray(w)
+            rowScratch.set(rowBuf)
+        }
+        var colBuf = colScratch.get()
+        if (colBuf == null || colBuf.size < h) {
+            colBuf = IntArray(h)
+            colScratch.set(colBuf)
+        }
+
         var left = w
         var right = -1
-        for (x in 0 until w step 8) {
-            var lit = false
-            for (y in sampleYs) {
-                if (isNonBlackPixel(bitmap.getPixel(x, y))) {
-                    lit = true
-                    break
+        for (y in sampleYs) {
+            bitmap.getPixels(rowBuf, 0, w, 0, y, w, 1)
+            var x = 0
+            while (x < w) {
+                if (isNonBlackPixel(rowBuf[x])) {
+                    if (x < left) left = x
+                    if (x > right) right = x
                 }
-            }
-            if (lit) {
-                if (x < left) left = x
-                if (x > right) right = x
+                x += 8
             }
         }
 
         var top = h
         var bottom = -1
-        for (y in 0 until h step 8) {
-            var lit = false
-            for (x in sampleXs) {
-                if (isNonBlackPixel(bitmap.getPixel(x, y))) {
-                    lit = true
-                    break
+        for (x in sampleXs) {
+            bitmap.getPixels(colBuf, 0, 1, x, 0, 1, h)
+            var y = 0
+            while (y < h) {
+                if (isNonBlackPixel(colBuf[y])) {
+                    if (y < top) top = y
+                    if (y > bottom) bottom = y
                 }
-            }
-            if (lit) {
-                if (y < top) top = y
-                if (y > bottom) bottom = y
+                y += 8
             }
         }
 
@@ -184,16 +194,26 @@ object TftScreenCastTransform {
             }
             AppSettings.CAST_LAYOUT_ROT90 -> {
                 // Rotate content -90 deg (counter-clockwise so top of phone lands on left of TFT)
-                // and aspect-fill into 800x480.
+                // and aspect-fill into 800x480, clipped strictly to the transformed content bounds.
                 val rotW = content.height.toFloat()
                 val rotH = content.width.toFloat()
                 val scale = max(dstW / rotW, dstH / rotH)
+                val halfW = rotW * scale * 0.5f
+                val halfH = rotH * scale * 0.5f
                 drawMatrix.reset()
                 drawMatrix.postTranslate(-content.left - content.width * 0.5f, -content.top - content.height * 0.5f)
                 drawMatrix.postRotate(-90f)
                 drawMatrix.postScale(scale, scale)
                 drawMatrix.postTranslate(dstW * 0.5f, dstH * 0.5f)
+                dstCanvas.save()
+                dstCanvas.clipRect(
+                    (dstW * 0.5f - halfW).coerceAtLeast(0f),
+                    (dstH * 0.5f - halfH).coerceAtLeast(0f),
+                    (dstW * 0.5f + halfW).coerceAtMost(dstW.toFloat()),
+                    (dstH * 0.5f + halfH).coerceAtMost(dstH.toFloat())
+                )
                 dstCanvas.drawBitmap(srcBitmap, drawMatrix, filterPaint)
+                dstCanvas.restore()
             }
             else -> {
                 val crop = computeSourceCropRect(content, dstW, dstH, AppSettings.CAST_LAYOUT_FILL)

@@ -30,20 +30,25 @@ import com.pulsarnav.app.debug.DebugLogRepository
 import com.pulsarnav.app.model.Maneuver
 import com.pulsarnav.app.navigation.NavigationIntentLauncher
 import com.pulsarnav.app.parser.ParsedNavigationStep
+import com.pulsarnav.app.service.BikeBleForegroundService
 import com.pulsarnav.app.service.GoogleMapsNotificationListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.URLDecoder
 import java.net.URLEncoder
-import java.util.Calendar
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -86,7 +91,20 @@ data class ActiveRoutePlan(
     val steps: List<RouteStepPlan>,
     val totalDistanceMeters: Double,
     val totalDurationSeconds: Double,
-    val createdAtMs: Long = System.currentTimeMillis()
+    val createdAtMs: Long = System.currentTimeMillis(),
+    val normMercatorX: DoubleArray = DoubleArray(polyline.size) { i ->
+        TftMapMathAndParser.lngToNormX(polyline[i].lng)
+    },
+    val normMercatorY: DoubleArray = DoubleArray(polyline.size) { i ->
+        TftMapMathAndParser.latToNormY(polyline[i].lat)
+    },
+    val destNormX: Double = TftMapMathAndParser.lngToNormX(destination.lng),
+    val destNormY: Double = TftMapMathAndParser.latToNormY(destination.lat)
+)
+
+data class PendingRouteTarget(
+    val destination: GeoPoint,
+    val label: String
 )
 
 data class ParsedMapTarget(
@@ -111,6 +129,8 @@ data class TftLiveMapUiState(
     val hasGpsFix: Boolean = false,
     val lat: Double = 0.0,
     val lng: Double = 0.0,
+    val previewLat: Double? = null,
+    val previewLng: Double? = null,
     val bearingDeg: Float = 0f,
     val speedKmh: Float = 0f,
     val zoomLevel: Int = 16,
@@ -148,13 +168,17 @@ object TftMapMathAndParser {
         return ((Math.toDegrees(atan2(y, x)) + 360.0) % 360.0).toFloat()
     }
 
-    fun latLngToWorldPixel(lat: Double, lng: Double, zoom: Int): Pair<Double, Double> {
+    fun lngToNormX(lng: Double): Double = (lng + 180.0) / 360.0
+
+    fun latToNormY(lat: Double): Double {
         val clampedLat = lat.coerceIn(-85.05112878, 85.05112878)
-        val scale = 256.0 * (1 shl zoom.coerceIn(1, 20))
-        val x = ((lng + 180.0) / 360.0) * scale
         val rad = Math.toRadians(clampedLat)
-        val y = (1.0 - ln(tan(rad) + 1.0 / cos(rad)) / PI) / 2.0 * scale
-        return x to y
+        return (1.0 - ln(tan(rad) + 1.0 / cos(rad)) / PI) / 2.0
+    }
+
+    fun latLngToWorldPixel(lat: Double, lng: Double, zoom: Int): Pair<Double, Double> {
+        val scale = 256.0 * (1 shl zoom.coerceIn(1, 20))
+        return (lngToNormX(lng) * scale) to (latToNormY(lat) * scale)
     }
 
     fun decodePolyline6(encoded: String, precision: Double = 1e6): List<GeoPoint> {
@@ -493,12 +517,11 @@ object TftMapMathAndParser {
             osrmRemainingSec
         }
 
-        val cal = Calendar.getInstance().apply {
-            timeInMillis = nowMs + liveRemainingSec * 1000L
-        }
-        val hr12 = cal.get(Calendar.HOUR).let { if (it == 0) 12 else it }
-        val min = cal.get(Calendar.MINUTE)
-        val isAm = cal.get(Calendar.AM_PM) == Calendar.AM
+        val etaZoned = Instant.ofEpochMilli(nowMs + liveRemainingSec * 1000L).atZone(ZoneId.systemDefault())
+        val hr24 = etaZoned.hour
+        val hr12 = (hr24 % 12).let { if (it == 0) 12 else it }
+        val min = etaZoned.minute
+        val isAm = hr24 < 12
 
         val streetLabel = if (arrived) {
             route.destinationLabel
@@ -590,13 +613,20 @@ object TftMapMathAndParser {
 
 class OsmTileCache(private val context: Context) {
 
+    private data class TileFailure(
+        val attempts: Int,
+        val retryAfterElapsedMs: Long
+    )
+
     private val ramCache = object : LruCache<String, Bitmap>(48) {}
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
+    private val failedTiles = ConcurrentHashMap<String, TileFailure>()
     private val fetchExecutor = Executors.newFixedThreadPool(3) { r ->
         Thread(r, "OsmTileFetchThread").apply { isDaemon = true }
     }
     private val diskDir = File(context.cacheDir, "osm_tiles_v2").apply { mkdirs() }
     private val lastPruneMs = java.util.concurrent.atomic.AtomicLong(0L)
+    private val diskPruneLock = Any()
 
     fun getOrRequestTile(
         zoom: Int,
@@ -610,6 +640,12 @@ class OsmTileCache(private val context: Context) {
         val key = "osm_${zoom}_${wrappedX}_${tileY}"
 
         ramCache.get(key)?.takeIf { !it.isRecycled }?.let { return it }
+
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val failure = failedTiles[key]
+        if (failure != null && nowElapsed < failure.retryAfterElapsedMs) {
+            return null
+        }
 
         if (inFlight.add(key)) {
             fetchExecutor.execute {
@@ -632,11 +668,16 @@ class OsmTileCache(private val context: Context) {
                             maxBytes = 512 * 1024
                         )
                         if (fetched != null && fetched.size > 100) {
-                            try {
-                                file.writeBytes(fetched)
-                                pruneDiskCacheIfNeeded()
-                            } catch (_: Exception) {
-                            }
+                            failedTiles.remove(key)
+                            writeTileAtomically(file, fetched)
+                            pruneDiskCacheIfNeeded()
+                        } else {
+                            val nextAttempts = (failedTiles[key]?.attempts ?: 0) + 1
+                            val backoffMs = (5_000L shl (nextAttempts - 1).coerceAtMost(4)).coerceAtMost(60_000L)
+                            failedTiles[key] = TileFailure(
+                                attempts = nextAttempts,
+                                retryAfterElapsedMs = SystemClock.elapsedRealtime() + backoffMs
+                            )
                         }
                         fetched
                     }
@@ -644,6 +685,7 @@ class OsmTileCache(private val context: Context) {
                     if (bytes != null) {
                         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                         if (decoded != null) {
+                            failedTiles.remove(key)
                             ramCache.put(key, decoded)
                             onTileLoaded()
                         }
@@ -657,21 +699,39 @@ class OsmTileCache(private val context: Context) {
         return null
     }
 
-    private fun pruneDiskCacheIfNeeded() {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastPruneMs.get() < 30_000L) return
-        lastPruneMs.set(now)
+    private fun writeTileAtomically(target: File, data: ByteArray) {
+        val tmp = File(diskDir, "${target.name}.tmp.${Thread.currentThread().id}")
         try {
-            val files = diskDir.listFiles() ?: return
-            var totalBytes = files.sumOf { it.length() }
-            if (totalBytes <= 14L * 1024L * 1024L) return
-            val sorted = files.sortedBy { it.lastModified() }
-            for (f in sorted) {
-                if (totalBytes <= 10L * 1024L * 1024L) break
-                val len = f.length()
-                if (f.delete()) totalBytes -= len
+            tmp.writeBytes(data)
+            if (target.exists()) target.delete()
+            if (!tmp.renameTo(target)) {
+                tmp.delete()
             }
         } catch (_: Exception) {
+            try {
+                tmp.delete()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun pruneDiskCacheIfNeeded() {
+        val prev = lastPruneMs.get()
+        val now = SystemClock.elapsedRealtime()
+        if (now - prev < 30_000L || !lastPruneMs.compareAndSet(prev, now)) return
+        synchronized(diskPruneLock) {
+            try {
+                val files = diskDir.listFiles() ?: return
+                var totalBytes = files.sumOf { it.length() }
+                if (totalBytes <= 14L * 1024L * 1024L) return
+                val sorted = files.sortedBy { it.lastModified() }
+                for (f in sorted) {
+                    if (totalBytes <= 10L * 1024L * 1024L) break
+                    val len = f.length()
+                    if (f.delete()) totalBytes -= len
+                }
+            } catch (_: Exception) {
+            }
         }
     }
 }
@@ -681,6 +741,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     companion object {
         private const val TAG = "TftNavMapEngine"
         private const val REROUTE_COOLDOWN_MS = 12_000L
+        private const val ARRIVAL_CLEAR_DELAY_MS = 8_000L
+        private val CONTROLS_HDG = arrayOf("+", "-", "HDG")
+        private val CONTROLS_NORTH = arrayOf("+", "-", "N↑")
 
         @Volatile
         private var instance: TftNavigationMapEngine? = null
@@ -691,6 +754,12 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             }
         }
     }
+
+    private data class WrappedTwoLines(
+        val src: String,
+        val line1: String,
+        val line2: String
+    )
 
     private val appSettings = AppSettings.getInstance(context)
     private val bleManager = BajajBleManager.getInstance(context)
@@ -710,12 +779,19 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     @Volatile
     private var lastRouteSnapshot: RouteProgressSnapshot? = null
     @Volatile
+    private var pendingRouteTarget: PendingRouteTarget? = null
+    @Volatile
     private var lastRerouteAttemptMs = 0L
     @Volatile
     private var ownsBleTbtStream = false
     @Volatile
     private var gpsListening = false
+    @Volatile
+    private var arrivalClearJob: Job? = null
+    @Volatile
+    private var cachedWrappedStreet: WrappedTwoLines? = null
 
+    @Volatile
     private var onMapInvalidated: (() -> Unit)? = null
 
     private val routePath = Path()
@@ -819,7 +895,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (!hasFine && !hasCoarse) {
-            _uiState.value = _uiState.value.copy(statusMessage = "Grant Location permission for Live Map")
+            _uiState.update { it.copy(statusMessage = "Grant Location permission for Live Map") }
             return
         }
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
@@ -867,24 +943,47 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
     private fun onNewLocation(loc: Location) {
         val speedKmh = if (loc.hasSpeed()) (loc.speed * 3.6f).coerceIn(0f, 199f) else 0f
-        val prev = _uiState.value
-        val bearing = when {
-            loc.hasBearing() && loc.bearing != 0f -> loc.bearing
-            prev.hasGpsFix && TftMapMathAndParser.haversineMeters(prev.lat, prev.lng, loc.latitude, loc.longitude) > 4.0 -> {
-                TftMapMathAndParser.bearingDegrees(prev.lat, prev.lng, loc.latitude, loc.longitude)
+        _uiState.update { prev ->
+            val bearing = when {
+                loc.hasBearing() && loc.bearing != 0f -> loc.bearing
+                prev.hasGpsFix && TftMapMathAndParser.haversineMeters(prev.lat, prev.lng, loc.latitude, loc.longitude) > 4.0 -> {
+                    TftMapMathAndParser.bearingDegrees(prev.lat, prev.lng, loc.latitude, loc.longitude)
+                }
+                else -> prev.bearingDeg
             }
-            else -> prev.bearingDeg
+            prev.copy(
+                hasGpsFix = true,
+                lat = loc.latitude,
+                lng = loc.longitude,
+                previewLat = null,
+                previewLng = null,
+                bearingDeg = bearing,
+                speedKmh = speedKmh
+            )
         }
-        _uiState.value = prev.copy(
-            hasGpsFix = true,
-            lat = loc.latitude,
-            lng = loc.longitude,
-            bearingDeg = bearing,
-            speedKmh = speedKmh
-        )
 
+        val pending = pendingRouteTarget
         val route = activeRoutePlan
-        if (route != null) {
+        if (route == null && pending != null) {
+            pendingRouteTarget = null
+            _uiState.update { it.copy(isLoadingRoute = true, statusMessage = "GPS locked — routing...") }
+            scope.launch {
+                val computed = startRouteWithResult(
+                    origin = GeoPoint(loc.latitude, loc.longitude),
+                    dest = pending.destination,
+                    label = pending.label
+                )
+                if (computed == null) {
+                    _uiState.update {
+                        it.copy(
+                            isLoadingRoute = false,
+                            statusMessage = "OSRM offline — showing destination pin"
+                        )
+                    }
+                    onMapInvalidated?.invoke()
+                }
+            }
+        } else if (route != null) {
             val snap = TftMapMathAndParser.computeRouteProgress(
                 route = route,
                 lat = loc.latitude,
@@ -892,15 +991,18 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
                 speedMps = if (loc.hasSpeed()) loc.speed else 0f
             )
             lastRouteSnapshot = snap
-            _uiState.value = _uiState.value.copy(
-                routeActive = !snap.arrived,
-                remainingDistanceText = TftMapMathAndParser.formatDistanceMeters(snap.remainingTotalMeters),
-                remainingEtaText = TftMapMathAndParser.formatEtaDuration(snap.remainingDurationSeconds),
-                statusMessage = if (snap.arrived) "Arrived at ${route.destinationLabel}" else ""
-            )
+            _uiState.update {
+                it.copy(
+                    routeActive = !snap.arrived,
+                    remainingDistanceText = TftMapMathAndParser.formatDistanceMeters(snap.remainingTotalMeters),
+                    remainingEtaText = TftMapMathAndParser.formatEtaDuration(snap.remainingDurationSeconds),
+                    statusMessage = if (snap.arrived) "Arrived at ${route.destinationLabel}" else ""
+                )
+            }
             pushInternalTbtIfPreferred(snap.nextStep)
             if (snap.arrived) {
                 activeRoutePlan = null
+                scheduleArrivalClear()
             } else if (snap.offRouteMeters > TftMapMathAndParser.OFF_ROUTE_REROUTE_THRESHOLD_M) {
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastRerouteAttemptMs > REROUTE_COOLDOWN_MS) {
@@ -913,6 +1015,20 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         }
         onMapInvalidated?.invoke()
     }
+
+    private fun scheduleArrivalClear() {
+        arrivalClearJob?.cancel()
+        arrivalClearJob = scope.launch {
+            delay(ARRIVAL_CLEAR_DELAY_MS)
+            if (activeRoutePlan == null && lastRouteSnapshot?.arrived == true) {
+                clearActiveRoute()
+            }
+        }
+    }
+
+    fun hasPendingRoute(): Boolean = pendingRouteTarget != null
+
+    fun hasActiveTbtOwner(): Boolean = ownsBleTbtStream && (activeRoutePlan != null || lastRouteSnapshot != null)
 
     private fun pushInternalTbtIfPreferred(step: ParsedNavigationStep) {
         if (GoogleMapsNotificationListener.hasActiveExternalNavigation() || bleManager.isSimulationRunning.value) {
@@ -927,36 +1043,50 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     }
 
     fun adjustZoom(delta: Int): Int {
-        val next = (_uiState.value.zoomLevel + delta).coerceIn(12, 18)
-        appSettings.tftMapZoom = next
-        _uiState.value = _uiState.value.copy(zoomLevel = next)
+        var nextZoom = 16
+        _uiState.update { prev ->
+            nextZoom = (prev.zoomLevel + delta).coerceIn(12, 18)
+            prev.copy(zoomLevel = nextZoom)
+        }
+        appSettings.tftMapZoom = nextZoom
         onMapInvalidated?.invoke()
-        return next
+        return nextZoom
     }
 
     fun toggleHeadingUp(): Boolean {
-        val next = !_uiState.value.headingUp
-        appSettings.tftMapHeadingUp = next
-        _uiState.value = _uiState.value.copy(headingUp = next)
+        var nextHeading = true
+        _uiState.update { prev ->
+            nextHeading = !prev.headingUp
+            prev.copy(headingUp = nextHeading)
+        }
+        appSettings.tftMapHeadingUp = nextHeading
         onMapInvalidated?.invoke()
-        return next
+        return nextHeading
     }
 
     fun clearActiveRoute() {
+        arrivalClearJob?.cancel()
+        arrivalClearJob = null
+        pendingRouteTarget = null
         activeRoutePlan = null
         lastRouteSnapshot = null
-        _uiState.value = _uiState.value.copy(
-            routeActive = false,
-            destinationLabel = "",
-            remainingDistanceText = "",
-            remainingEtaText = "",
-            isLoadingRoute = false,
-            statusMessage = ""
-        )
+        _uiState.update {
+            it.copy(
+                routeActive = false,
+                destinationLabel = "",
+                previewLat = null,
+                previewLng = null,
+                remainingDistanceText = "",
+                remainingEtaText = "",
+                isLoadingRoute = false,
+                statusMessage = ""
+            )
+        }
         if (ownsBleTbtStream && !GoogleMapsNotificationListener.hasActiveExternalNavigation()) {
             ownsBleTbtStream = false
             bleManager.stopNavigation()
         }
+        BikeBleForegroundService.stopForLocationNavigation(context)
         onMapInvalidated?.invoke()
     }
 
@@ -970,12 +1100,17 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             onResult?.invoke(false, "Could not parse destination")
             return
         }
+        arrivalClearJob?.cancel()
+        arrivalClearJob = null
+        pendingRouteTarget = null
         startLocationTracking()
-        _uiState.value = _uiState.value.copy(
-            isLoadingRoute = true,
-            destinationLabel = initial.label,
-            statusMessage = "Resolving destination..."
-        )
+        _uiState.update {
+            it.copy(
+                isLoadingRoute = true,
+                destinationLabel = initial.label,
+                statusMessage = "Resolving destination..."
+            )
+        }
         onMapInvalidated?.invoke()
 
         scope.launch {
@@ -1008,62 +1143,85 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
                 }
 
                 if (destLat == null || destLng == null || !NavigationIntentLauncher.hasValidCoordinates(destLat, destLng)) {
-                    _uiState.value = _uiState.value.copy(
-                        isLoadingRoute = false,
-                        statusMessage = "Location not found — check mobile data"
-                    )
+                    _uiState.update {
+                        it.copy(
+                            isLoadingRoute = false,
+                            statusMessage = "Location not found — check mobile data"
+                        )
+                    }
                     onMapInvalidated?.invoke()
                     onResult?.invoke(false, "Could not find coordinates for \"$destLabel\"")
                     return@launch
                 }
 
-                val originLat = _uiState.value.lat
-                val originLng = _uiState.value.lng
-                if (!_uiState.value.hasGpsFix || !NavigationIntentLauncher.hasValidCoordinates(originLat, originLng)) {
-                    // Center map preview on destination until GPS fix arrives
-                    _uiState.value = _uiState.value.copy(
-                        isLoadingRoute = false,
-                        destinationLabel = destLabel,
-                        lat = destLat,
-                        lng = destLng,
-                        statusMessage = "Waiting for GPS lock ($destLabel)"
-                    )
+                val currentState = _uiState.value
+                val originLat = currentState.lat
+                val originLng = currentState.lng
+                if (!currentState.hasGpsFix || !NavigationIntentLauncher.hasValidCoordinates(originLat, originLng)) {
+                    // Queue pending target and preview on destination without overwriting real GPS coordinates.
+                    pendingRouteTarget = PendingRouteTarget(GeoPoint(destLat, destLng), destLabel)
+                    _uiState.update {
+                        it.copy(
+                            isLoadingRoute = false,
+                            destinationLabel = destLabel,
+                            previewLat = destLat,
+                            previewLng = destLng,
+                            statusMessage = "Waiting for GPS lock ($destLabel)"
+                        )
+                    }
                     onMapInvalidated?.invoke()
-                    onResult?.invoke(false, "Waiting for GPS fix; centered on $destLabel")
+                    onResult?.invoke(true, "Waiting for GPS lock; route queued for $destLabel")
                     return@launch
                 }
 
-                val route = computeOsrmRoute(GeoPoint(originLat, originLng), GeoPoint(destLat, destLng), destLabel)
-                if (route != null) {
-                    val snap = TftMapMathAndParser.computeRouteProgress(route, originLat, originLng, 0f)
-                    lastRouteSnapshot = snap
-                    pushInternalTbtIfPreferred(snap.nextStep)
-                    DebugLogRepository.logRateLimited(
-                        key = "osrm_route_ok",
-                        minIntervalMs = 2000L,
-                        category = DebugCategory.MAPS,
-                        tag = "LiveMap",
-                        summary = "Route ready -> $destLabel (${TftMapMathAndParser.formatDistanceMeters(snap.remainingTotalMeters)})"
-                    )
+                val snap = startRouteWithResult(
+                    origin = GeoPoint(originLat, originLng),
+                    dest = GeoPoint(destLat, destLng),
+                    label = destLabel
+                )
+                if (snap != null) {
                     onResult?.invoke(true, "TFT Map Route started: $destLabel (${TftMapMathAndParser.formatDistanceMeters(snap.remainingTotalMeters)})")
                 } else {
-                    _uiState.value = _uiState.value.copy(
-                        isLoadingRoute = false,
-                        statusMessage = "OSRM offline — showing destination pin"
-                    )
+                    _uiState.update {
+                        it.copy(
+                            isLoadingRoute = false,
+                            statusMessage = "OSRM offline — showing destination pin"
+                        )
+                    }
                     onMapInvalidated?.invoke()
                     onResult?.invoke(false, "Could not fetch route (check mobile data)")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Route resolution failed: ${e.message}")
-                _uiState.value = _uiState.value.copy(
-                    isLoadingRoute = false,
-                    statusMessage = "Route lookup error"
-                )
+                _uiState.update {
+                    it.copy(
+                        isLoadingRoute = false,
+                        statusMessage = "Route lookup error"
+                    )
+                }
                 onMapInvalidated?.invoke()
                 onResult?.invoke(false, "Route lookup failed: ${e.message}")
             }
         }
+    }
+
+    private fun startRouteWithResult(
+        origin: GeoPoint,
+        dest: GeoPoint,
+        label: String
+    ): RouteProgressSnapshot? {
+        val route = computeOsrmRoute(origin, dest, label) ?: return null
+        val snap = TftMapMathAndParser.computeRouteProgress(route, origin.lat, origin.lng, 0f)
+        lastRouteSnapshot = snap
+        pushInternalTbtIfPreferred(snap.nextStep)
+        DebugLogRepository.logRateLimited(
+            key = "osrm_route_ok",
+            minIntervalMs = 2000L,
+            category = DebugCategory.MAPS,
+            tag = "LiveMap",
+            summary = "Route ready -> $label (${TftMapMathAndParser.formatDistanceMeters(snap.remainingTotalMeters)})"
+        )
+        return snap
     }
 
     private fun computeOsrmRoute(origin: GeoPoint, dest: GeoPoint, label: String): ActiveRoutePlan? {
@@ -1075,15 +1233,21 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         val raw = CellularNetworkHttp.getText(context, url, connectTimeoutMs = 5000, readTimeoutMs = 6500)
             ?: return null
         val route = TftMapMathAndParser.parseOsrmRouteResponse(raw, label, origin, dest) ?: return null
+        arrivalClearJob?.cancel()
+        arrivalClearJob = null
         activeRoutePlan = route
-        _uiState.value = _uiState.value.copy(
-            routeActive = true,
-            isLoadingRoute = false,
-            destinationLabel = label,
-            remainingDistanceText = TftMapMathAndParser.formatDistanceMeters(route.totalDistanceMeters.roundToInt()),
-            remainingEtaText = TftMapMathAndParser.formatEtaDuration(route.totalDurationSeconds.roundToInt()),
-            statusMessage = ""
-        )
+        _uiState.update {
+            it.copy(
+                routeActive = true,
+                isLoadingRoute = false,
+                destinationLabel = label,
+                previewLat = null,
+                previewLng = null,
+                remainingDistanceText = TftMapMathAndParser.formatDistanceMeters(route.totalDistanceMeters.roundToInt()),
+                remainingEtaText = TftMapMathAndParser.formatEtaDuration(route.totalDurationSeconds.roundToInt()),
+                statusMessage = ""
+            )
+        }
         onMapInvalidated?.invoke()
         return route
     }
@@ -1154,15 +1318,17 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         val anchorX = if (step != null) w * 0.60f else w * 0.50f
         val anchorY = if (state.headingUp) h * 0.62f else h * 0.50f
 
-        if (state.hasGpsFix || (state.lat != 0.0 && state.lng != 0.0)) {
+        val camLat = if (state.hasGpsFix) state.lat else (state.previewLat ?: state.lat)
+        val camLng = if (state.hasGpsFix) state.lng else (state.previewLng ?: state.lng)
+        if (state.hasGpsFix || (state.previewLat != null && state.previewLng != null)) {
             drawMapTilesAndRoute(
                 canvas = canvas,
                 w = w,
                 h = h,
                 anchorX = anchorX,
                 anchorY = anchorY,
-                centerLat = state.lat,
-                centerLng = state.lng,
+                centerLat = camLat,
+                centerLng = camLng,
                 bearingDeg = if (state.headingUp) state.bearingDeg else 0f,
                 zoom = zoom,
                 darkMode = !daylightMode
@@ -1215,7 +1381,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         zoom: Int,
         darkMode: Boolean
     ) {
-        val (centerWx, centerWy) = TftMapMathAndParser.latLngToWorldPixel(centerLat, centerLng, zoom)
+        val worldScale = 256.0 * (1 shl zoom.coerceIn(1, 20))
+        val centerWx = TftMapMathAndParser.lngToNormX(centerLng) * worldScale
+        val centerWy = TftMapMathAndParser.latToNormY(centerLat) * worldScale
         canvas.save()
         canvas.translate(anchorX, anchorY)
         if (bearingDeg != 0f) {
@@ -1266,25 +1434,31 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             }
         }
 
-        // Draw active OSRM route polyline
+        // Draw active OSRM route polyline using precomputed normalized Mercator coordinates
         val route = activeRoutePlan
-        if (route != null && route.polyline.size >= 2) {
+        if (route != null && route.normMercatorX.size >= 2) {
             routePath.reset()
-            for (i in route.polyline.indices) {
-                val pt = route.polyline[i]
-                val (px, py) = TftMapMathAndParser.latLngToWorldPixel(pt.lat, pt.lng, zoom)
-                val sx = (px - centerWx).toFloat()
-                val sy = (py - centerWy).toFloat()
+            val normX = route.normMercatorX
+            val normY = route.normMercatorY
+            for (i in normX.indices) {
+                val sx = (normX[i] * worldScale - centerWx).toFloat()
+                val sy = (normY[i] * worldScale - centerWy).toFloat()
                 if (i == 0) routePath.moveTo(sx, sy) else routePath.lineTo(sx, sy)
             }
             canvas.drawPath(routePath, routeCasingPaint)
             canvas.drawPath(routePath, routeFillPaint)
 
-            val (destX, destY) = TftMapMathAndParser.latLngToWorldPixel(route.destination.lat, route.destination.lng, zoom)
-            val dsx = (destX - centerWx).toFloat()
-            val dsy = (destY - centerWy).toFloat()
+            val dsx = (route.destNormX * worldScale - centerWx).toFloat()
+            val dsy = (route.destNormY * worldScale - centerWy).toFloat()
             canvas.drawCircle(dsx, dsy, 11f, markerBorderPaint)
             canvas.drawCircle(dsx, dsy, 9f, destPinPaint)
+        } else {
+            pendingRouteTarget?.destination?.let { dest ->
+                val dsx = (TftMapMathAndParser.lngToNormX(dest.lng) * worldScale - centerWx).toFloat()
+                val dsy = (TftMapMathAndParser.latToNormY(dest.lat) * worldScale - centerWy).toFloat()
+                canvas.drawCircle(dsx, dsy, 11f, markerBorderPaint)
+                canvas.drawCircle(dsx, dsy, 9f, destPinPaint)
+            }
         }
 
         // Rotate bike cursor back to actual heading relative to map
@@ -1332,10 +1506,10 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         subTextPaint.color = Color.parseColor("#CBD5E1")
         subTextPaint.textSize = 17f
         val street = step.streetName.ifBlank { step.maneuver.description }
-        val streetLines = wrapMaxTwoLines(street, 19)
-        canvas.drawText(streetLines.first(), 102f, 84f, subTextPaint)
-        if (streetLines.size > 1) {
-            canvas.drawText(streetLines[1], 102f, 106f, subTextPaint)
+        val wrapped = getWrappedStreetLines(street, 19)
+        canvas.drawText(wrapped.line1, 102f, 84f, subTextPaint)
+        if (wrapped.line2.isNotEmpty()) {
+            canvas.drawText(wrapped.line2, 102f, 106f, subTextPaint)
         }
 
         val etaBadge = if (step.etaHour > 0) {
@@ -1380,7 +1554,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         val pillFg = if (daylight) Color.parseColor("#0F172A") else Color.WHITE
         val pillStroke = if (daylight) Color.parseColor("#94A3B8") else Color.parseColor("#334155")
 
-        val btnLabels = arrayOf("+", "-", if (headingUp) "HDG" else "N↑")
+        val btnLabels = if (headingUp) CONTROLS_HDG else CONTROLS_NORTH
         for (i in btnLabels.indices) {
             val top = 140f + i * 56f
             rectTmp.set(w - 64f, top, w - 14f, top + 46f)
@@ -1454,12 +1628,20 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         )
     }
 
-    private fun wrapMaxTwoLines(text: String, maxCharsPerLine: Int): List<String> {
+    private fun getWrappedStreetLines(text: String, maxCharsPerLine: Int): WrappedTwoLines {
+        cachedWrappedStreet?.let { cached ->
+            if (cached.src == text) return cached
+        }
         val clean = text.trim()
-        if (clean.length <= maxCharsPerLine) return listOf(clean)
-        val splitIdx = clean.lastIndexOf(' ', maxCharsPerLine).takeIf { it > 4 } ?: maxCharsPerLine
-        val l1 = clean.substring(0, splitIdx).trim()
-        val l2 = clean.substring(splitIdx).trim().take(maxCharsPerLine)
-        return listOf(l1, l2)
+        val computed = if (clean.length <= maxCharsPerLine) {
+            WrappedTwoLines(text, clean, "")
+        } else {
+            val splitIdx = clean.lastIndexOf(' ', maxCharsPerLine).takeIf { it > 4 } ?: maxCharsPerLine
+            val l1 = clean.substring(0, splitIdx).trim()
+            val l2 = clean.substring(splitIdx).trim().take(maxCharsPerLine)
+            WrappedTwoLines(text, l1, l2)
+        }
+        cachedWrappedStreet = computed
+        return computed
     }
 }

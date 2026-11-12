@@ -30,7 +30,6 @@
 -keep public class * extends android.service.notification.NotificationListenerService
 -keep public class * extends android.content.BroadcastReceiver
 -keep public class * extends android.content.ContentProvider
--keep public class * extends android.app.Presentation
 
 # Optional desktop AWT classes referenced in some ZXing helpers
 -dontwarn java.awt.**

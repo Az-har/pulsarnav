@@ -71,8 +71,9 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
 
     private val revertToNavigationRunnable = Runnable {
         _lastWhatsAppAlert.value = null
-        val activeStep = _currentNavStep.value
         val bleManager = BajajBleManager.getInstance(applicationContext)
+        val activeStep = _currentNavStep.value
+            ?: com.pulsarnav.app.wifi.TftNavigationMapEngine.getInstance(applicationContext).getCurrentStepForHud()
         if (activeStep != null) {
             Log.d(TAG, "Reverting cluster display back to active navigation stream")
             bleManager.updateNavigationStep(activeStep)
@@ -342,9 +343,17 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
             activeNavPackage = null
             _currentNavStep.value = null
             _diagnostics.value = _diagnostics.value.copy(mapsActiveInShade = false)
-            Log.i(TAG, "Navigation session ended ($pkg) -> sending stop frame")
-            val bleManager = BajajBleManager.getInstance(applicationContext)
-            bleManager.stopNavigation()
+            val mapEngine = com.pulsarnav.app.wifi.TftNavigationMapEngine.getInstance(applicationContext)
+            if (mapEngine.hasActiveTbtOwner()) {
+                mapEngine.getCurrentStepForHud()?.let { step ->
+                    Log.i(TAG, "External Maps notification removed ($pkg) -> keeping internal Live Map TBT active")
+                    BajajBleManager.getInstance(applicationContext).updateNavigationStep(step)
+                }
+            } else {
+                Log.i(TAG, "Navigation session ended ($pkg) -> sending stop frame")
+                val bleManager = BajajBleManager.getInstance(applicationContext)
+                bleManager.stopNavigation()
+            }
         }
     }
 }

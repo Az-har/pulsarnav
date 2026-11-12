@@ -13,9 +13,11 @@ import java.io.InputStream
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Shared HTTP helper that routes requests over Cellular mobile data even when the phone is
@@ -23,10 +25,14 @@ import java.util.concurrent.TimeUnit
  */
 object CellularNetworkHttp {
 
-    const val USER_AGENT = "PulsarNav-Android/1.2.3 (https://github.com/Az-har/pulsarnav)"
+    const val USER_AGENT = "PulsarNav-Android/1.2.4 (https://github.com/Az-har/pulsarnav)"
 
     @Volatile
     private var cachedCellularNetwork: Network? = null
+
+    private val pinLock = Any()
+    private var persistentCellCallback: ConnectivityManager.NetworkCallback? = null
+    private var persistentCellCm: ConnectivityManager? = null
 
     fun hasInternetPath(context: Context): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
@@ -112,7 +118,9 @@ object CellularNetworkHttp {
                     val code = conn.responseCode
                     if (code in 300..399) {
                         val location = conn.getHeaderField("Location")?.trim() ?: break
-                        current = URL(u, location).toString()
+                        val (nextTarget, continueHttp) = resolveRedirectTarget(current, location)
+                        current = nextTarget
+                        if (!continueHttp) break
                         continue
                     }
                     if (code in 200..299) {
@@ -149,6 +157,60 @@ object CellularNetworkHttp {
         val canonicalRegex = Regex("""<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
         canonicalRegex.find(html)?.groupValues?.getOrNull(1)?.let { return it }
         return null
+    }
+
+    internal fun extractIntentFallbackOrGeoUri(intentUri: String): String? {
+        if (!intentUri.startsWith("intent://", ignoreCase = true)) return null
+        val fragmentIndex = intentUri.indexOf("#Intent", ignoreCase = true)
+        val authorityAndPath = if (fragmentIndex >= 0) {
+            intentUri.substring("intent://".length, fragmentIndex)
+        } else {
+            intentUri.removePrefix("intent://")
+        }
+        val intentMeta = if (fragmentIndex >= 0) intentUri.substring(fragmentIndex + "#Intent".length) else ""
+
+        val fallbackMatch = Regex("""(?:^|;)S\.browser_fallback_url=([^;]+)""").find(intentMeta)
+        val rawFallback = fallbackMatch?.groupValues?.getOrNull(1)
+        if (!rawFallback.isNullOrBlank()) {
+            val decoded = try {
+                URLDecoder.decode(rawFallback, StandardCharsets.UTF_8.name())
+            } catch (_: Exception) {
+                rawFallback
+            }.trim()
+            if (decoded.isNotEmpty()) return decoded
+        }
+
+        val schemeMatch = Regex("""(?:^|;)scheme=([a-zA-Z0-9+.-]+)""").find(intentMeta)
+        val scheme = schemeMatch?.groupValues?.getOrNull(1)?.lowercase()
+        if (!scheme.isNullOrBlank() && authorityAndPath.isNotBlank()) {
+            return "$scheme://$authorityAndPath"
+        }
+        if (authorityAndPath.isNotBlank() && authorityAndPath.contains('.')) {
+            return "https://$authorityAndPath"
+        }
+        return null
+    }
+
+    internal fun resolveRedirectTarget(baseUrl: String, location: String): Pair<String, Boolean> {
+        val trimmed = location.trim()
+        if (trimmed.startsWith("geo:", ignoreCase = true) ||
+            trimmed.startsWith("google.navigation:", ignoreCase = true)
+        ) {
+            return trimmed to false
+        }
+        if (trimmed.startsWith("intent://", ignoreCase = true)) {
+            val extracted = extractIntentFallbackOrGeoUri(trimmed)
+            if (!extracted.isNullOrBlank()) {
+                val isHttp = extracted.startsWith("http://", ignoreCase = true) ||
+                    extracted.startsWith("https://", ignoreCase = true)
+                return extracted to isHttp
+            }
+            return trimmed to false
+        }
+        val resolved = URL(URL(baseUrl), trimmed).toString()
+        val isHttp = resolved.startsWith("http://", ignoreCase = true) ||
+            resolved.startsWith("https://", ignoreCase = true)
+        return resolved to isHttp
     }
 
     private fun <T> withHttpConnection(
@@ -194,24 +256,42 @@ object CellularNetworkHttp {
         }
     }
 
+    fun releaseCellularPin() {
+        synchronized(pinLock) {
+            val cb = persistentCellCallback
+            val cm = persistentCellCm
+            persistentCellCallback = null
+            persistentCellCm = null
+            cachedCellularNetwork = null
+            if (cb != null && cm != null) {
+                try {
+                    cm.unregisterNetworkCallback(cb)
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
     private fun <T> withPreferredNetwork(context: Context, block: (Network?) -> T): T {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return block(null)
 
         // Fast path: if default network already has validated internet (normal home Wi-Fi or cellular),
         // use it directly unless we are currently on an unvalidated/internetless Wi-Fi SoftAP.
-        val existingCell = findExistingCellularInternet(cm)
         if (hasUsableDefaultInternet(cm) && !isDefaultInternetlessWifi(cm)) {
+            releaseCellularPin()
             return block(null)
         }
+        val existingCell = findExistingCellularInternet(cm)
         if (existingCell != null) {
             cachedCellularNetwork = existingCell
             return block(existingCell)
         }
 
-        // Slow path: SoftAP is active while cellular hasn't been pinned yet; request cellular for this call.
+        // Slow path: SoftAP is active while cellular hasn't been pinned yet; keep a single shared
+        // cellular request alive instead of churning the PDN up and down on every tile/route call.
         var temporaryCallback: ConnectivityManager.NetworkCallback? = null
-        var requestedNet: Network? = null
+        val requestedNet = AtomicReference<Network?>(null)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CHANGE_NETWORK_STATE) ==
             PackageManager.PERMISSION_GRANTED
         ) {
@@ -223,27 +303,41 @@ object CellularNetworkHttp {
                     .build()
                 val cb = object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
-                        requestedNet = network
+                        requestedNet.compareAndSet(null, network)
                         cachedCellularNetwork = network
                         latch.countDown()
+                    }
+
+                    override fun onLost(network: Network) {
+                        if (cachedCellularNetwork == network) {
+                            cachedCellularNetwork = null
+                        }
                     }
 
                     override fun onUnavailable() {
                         latch.countDown()
                     }
                 }
-                temporaryCallback = cb
-                cm.requestNetwork(req, cb, 2000)
+                synchronized(pinLock) {
+                    if (persistentCellCallback == null) {
+                        cm.requestNetwork(req, cb, 2500)
+                        persistentCellCallback = cb
+                        persistentCellCm = cm
+                    } else {
+                        temporaryCallback = cb
+                        cm.requestNetwork(req, cb, 2000)
+                    }
+                }
                 latch.await(2200L, TimeUnit.MILLISECONDS)
             } catch (_: Exception) {
             }
         }
         return try {
-            block(requestedNet ?: cachedCellularNetwork)
+            block(requestedNet.get() ?: cachedCellularNetwork ?: findExistingCellularInternet(cm))
         } finally {
-            if (temporaryCallback != null) {
+            temporaryCallback?.let { cb ->
                 try {
-                    cm.unregisterNetworkCallback(temporaryCallback)
+                    cm.unregisterNetworkCallback(cb)
                 } catch (_: Exception) {
                 }
             }
@@ -257,7 +351,8 @@ object CellularNetworkHttp {
             val caps = cm.getNetworkCapabilities(cached)
             if (caps != null &&
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
             ) {
                 return cached
             }
@@ -268,15 +363,23 @@ object CellularNetworkHttp {
         } catch (_: Exception) {
             emptyArray()
         }
+        var fallbackCandidate: Network? = null
         for (net in all) {
             val caps = cm.getNetworkCapabilities(net) ?: continue
-            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
             ) {
+                continue
+            }
+            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
                 return net
             }
+            if (fallbackCandidate == null) {
+                fallbackCandidate = net
+            }
         }
-        return null
+        return fallbackCandidate
     }
 
     private fun isDefaultInternetlessWifi(cm: ConnectivityManager): Boolean {

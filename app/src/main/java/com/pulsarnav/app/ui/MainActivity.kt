@@ -5304,35 +5304,6 @@ class MainActivity : AppCompatActivity() {
             showFeedback("Debug log buffer cleared")
         }
 
-        suspend fun decodeSlotBitmap(
-            frame: com.pulsarnav.app.wifi.TftDebugFrame,
-            slots: Array<Bitmap?>,
-            targetSlot: Int
-        ): Bitmap? = withContext(Dispatchers.Default) {
-            synchronized(previewDecodeLock) {
-                val reusable = slots[targetSlot]
-                val opts = BitmapFactory.Options().apply {
-                    inMutable = true
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                    if (reusable != null && !reusable.isRecycled &&
-                        reusable.width == frame.width && reusable.height == frame.height
-                    ) {
-                        inBitmap = reusable
-                    }
-                }
-                val decoded = try {
-                    BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
-                } catch (_: IllegalArgumentException) {
-                    opts.inBitmap = null
-                    BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
-                }
-                if (decoded != null) {
-                    slots[targetSlot] = decoded
-                }
-                decoded
-            }
-        }
-
         suspend fun renderFrameIfVisible(
             frame: com.pulsarnav.app.wifi.TftDebugFrame?,
             mirrorState: com.pulsarnav.app.wifi.TftMirrorState,
@@ -5390,22 +5361,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Collect 800x480 TFT frames, auto-refresh triggers & debug logs only while UI is STARTED
+        // Collect 800x480 TFT controls/stats and frame decodes independently so 1s FPS updates do not cancel bitmap decodes
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
                     combine(
-                        wifiMgr.latestDebugFrame,
                         wifiMgr.mirrorState,
-                        wifiMgr.isLocalPreviewActiveFlow,
-                        isAccountTabVisible
-                    ) { frame, mirrorState, localActive, accountVisible ->
-                        listOf(frame, mirrorState, localActive, accountVisible)
-                    }.collectLatest { tuple ->
-                        val frame = tuple[0] as com.pulsarnav.app.wifi.TftDebugFrame?
-                        val mirrorState = tuple[1] as com.pulsarnav.app.wifi.TftMirrorState
-                        val localActive = tuple[2] as Boolean
-                        val accountVisible = tuple[3] as Boolean
+                        wifiMgr.isLocalPreviewActiveFlow
+                    ) { mirrorState, localActive ->
+                        mirrorState to localActive
+                    }.collect { (mirrorState, localActive) ->
                         val liveWifi = mirrorState.status != TftMirrorStatus.IDLE &&
                             mirrorState.status != TftMirrorStatus.ERROR
                         val anyActive = liveWifi || localActive
@@ -5430,6 +5395,24 @@ class MainActivity : AppCompatActivity() {
                         dbg.tvTftDbgTouchInfo.text = "Last Cluster Input: $touchSummary"
                         fullscreenTftTouchView?.text = "Input: $touchSummary"
 
+                        if (!anyActive) {
+                            renderFrameIfVisible(null, mirrorState, anyActive = false, accountVisible = isAccountTabVisible.value)
+                        }
+                    }
+                }
+
+                launch {
+                    combine(
+                        wifiMgr.latestDebugFrame,
+                        isAccountTabVisible,
+                        wifiMgr.isLocalPreviewActiveFlow
+                    ) { frame, accountVisible, localActive ->
+                        Triple(frame, accountVisible, localActive)
+                    }.collectLatest { (frame, accountVisible, localActive) ->
+                        val mirrorState = wifiMgr.mirrorState.value
+                        val liveWifi = mirrorState.status != TftMirrorStatus.IDLE &&
+                            mirrorState.status != TftMirrorStatus.ERROR
+                        val anyActive = liveWifi || localActive
                         renderFrameIfVisible(frame, mirrorState, anyActive, accountVisible)
                     }
                 }
@@ -5501,6 +5484,35 @@ class MainActivity : AppCompatActivity() {
                 }
                 else -> false
             }
+        }
+    }
+
+    private suspend fun decodeSlotBitmap(
+        frame: com.pulsarnav.app.wifi.TftDebugFrame,
+        slots: Array<Bitmap?>,
+        targetSlot: Int
+    ): Bitmap? = withContext(Dispatchers.Default) {
+        synchronized(previewDecodeLock) {
+            val reusable = slots[targetSlot]
+            val opts = BitmapFactory.Options().apply {
+                inMutable = true
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+                if (reusable != null && !reusable.isRecycled &&
+                    reusable.width == frame.width && reusable.height == frame.height
+                ) {
+                    inBitmap = reusable
+                }
+            }
+            val decoded = try {
+                BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
+            } catch (_: IllegalArgumentException) {
+                opts.inBitmap = null
+                BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
+            }
+            if (decoded != null) {
+                slots[targetSlot] = decoded
+            }
+            decoded
         }
     }
 
@@ -5623,14 +5635,14 @@ class MainActivity : AppCompatActivity() {
             tvTouch.text = "Touch @ ($x, $y)"
         }
 
-        // Seed currently cached frame asynchronously off Main thread before next frame arrives
+        // Seed currently cached frame asynchronously using the fullscreen bitmap pool
         wifiMgr.latestDebugFrame.value?.let { frame ->
             lifecycleScope.launch {
-                val seeded = withContext(Dispatchers.Default) {
-                    BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size)
-                }
+                val targetFullSlot = (fullscreenBitmapSlotIdx + 1) % fullscreenBitmapSlots.size
+                val seeded = decodeSlotBitmap(frame, fullscreenBitmapSlots, targetFullSlot)
                 if (seeded != null && dialog.isShowing && ivFull === fullscreenTftImageView) {
                     ivFull.setImageBitmap(seeded)
+                    fullscreenBitmapSlotIdx = targetFullSlot
                     lastFullscreenFrameIndex = frame.frameIndex
                 }
             }
@@ -5920,11 +5932,12 @@ class MainActivity : AppCompatActivity() {
     private fun startTftRouteFromSharedInput(rawInput: String) {
         val mapEngine = TftNavigationMapEngine.getInstance(this)
         val wifiMgr = TftWifiMirrorManager.getInstance(this)
-        if (!wifiMgr.isLocalPreviewActiveFlow.value &&
-            wifiMgr.mirrorState.value.status == TftMirrorStatus.IDLE
-        ) {
+        BikeBleForegroundService.startForLocationNavigation(this)
+        if (wifiMgr.mirrorState.value.status == TftMirrorStatus.IDLE) {
             appSettings.tftMirrorMode = AppSettings.TFT_MODE_LIVE_MAP
-            wifiMgr.startLocalDebugPreview()
+            if (isAccountTabVisible.value || fullscreenTftDialog?.isShowing == true) {
+                wifiMgr.startLocalDebugPreview()
+            }
         }
         showFeedback("Resolving destination for PulsarNav Live Map...")
         mapEngine.startRouteFromInput(rawInput) { ok, message ->
@@ -5968,7 +5981,7 @@ class MainActivity : AppCompatActivity() {
             .setNeutralButton("Open Google Maps") { _, _ ->
                 launchGoogleMapsRide()
             }
-        if (activeState.routeActive) {
+        if (activeState.routeActive || mapEngine.hasPendingRoute()) {
             builder.setNegativeButton("Stop Route") { _, _ ->
                 mapEngine.clearActiveRoute()
                 showFeedback("PulsarNav Live Map route cleared")

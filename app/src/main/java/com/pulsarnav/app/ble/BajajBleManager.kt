@@ -28,8 +28,8 @@ import com.pulsarnav.app.telephony.CallManager
 import com.pulsarnav.app.telephony.ClusterPhonebookManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.time.LocalTime
 import java.util.ArrayDeque
-import java.util.Calendar
 import java.util.UUID
 
 sealed class BleConnectionState {
@@ -1754,9 +1754,9 @@ class BajajBleManager private constructor(private val context: Context) {
         _isSimulationRunning.value = true
         _currentActiveManeuver.value = maneuver
 
-        val cal = Calendar.getInstance()
-        var h = cal.get(Calendar.HOUR)
-        if (h == 0) h = 12
+        val eta = LocalTime.now().plusMinutes(6)
+        val rawHour = eta.hour % 12
+        val h = if (rawHour == 0) 12 else rawHour
 
         val simStep = ParsedNavigationStep(
             maneuver = maneuver,
@@ -1765,8 +1765,8 @@ class BajajBleManager private constructor(private val context: Context) {
             streetName = streetText,
             rawDistanceText = "${distanceMeters}m",
             etaHour = h,
-            etaMinute = (cal.get(Calendar.MINUTE) + 6) % 60,
-            etaIsAm = (cal.get(Calendar.AM_PM) == Calendar.AM),
+            etaMinute = eta.minute,
+            etaIsAm = eta.hour < 12,
             roundaboutExit = roundaboutExit
         )
         activeNavStep = simStep

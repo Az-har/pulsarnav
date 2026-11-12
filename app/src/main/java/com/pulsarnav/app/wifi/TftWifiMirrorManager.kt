@@ -243,7 +243,9 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         isLocalPreviewActive.set(false)
         _isLocalPreviewActiveFlow.value = false
         displayController.stop()
-        mapEngine.stopLocationTracking()
+        if (!mapEngine.uiState.value.routeActive && !mapEngine.hasPendingRoute()) {
+            mapEngine.stopLocationTracking()
+        }
         unregisterWifiCallback()
         closeSockets()
         tcpSessionJob?.cancel()
@@ -659,16 +661,18 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         latestEncodedQuality = quality
         latestEncodedBytes = bytes
 
-        _latestDebugFrame.value = TftDebugFrame(
-            jpegBytes = jpeg,
-            width = TftWifiProtocol.TFT_WIDTH,
-            height = TftWifiProtocol.TFT_HEIGHT,
-            quality = quality,
-            byteSize = bytes,
-            frameIndex = debugFrameSeq.incrementAndGet(),
-            timestampMs = System.currentTimeMillis(),
-            isLiveWifi = liveSession
-        )
+        if (localPreview || _latestDebugFrame.subscriptionCount.value > 0) {
+            _latestDebugFrame.value = TftDebugFrame(
+                jpegBytes = jpeg,
+                width = TftWifiProtocol.TFT_WIDTH,
+                height = TftWifiProtocol.TFT_HEIGHT,
+                quality = quality,
+                byteSize = bytes,
+                frameIndex = debugFrameSeq.incrementAndGet(),
+                timestampMs = System.currentTimeMillis(),
+                isLiveWifi = liveSession
+            )
+        }
 
         if (liveSession) {
             pendingJpegRef.set(jpeg)
@@ -788,6 +792,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
             }
             is ClusterTcpRequest.StopNavigation -> {
                 Log.i(TAG, "Cluster requested navigation stop / pause")
+                mapEngine.clearActiveRoute()
                 BajajBleManager.getInstance(context).stopNavigation()
                 _mirrorState.value = _mirrorState.value.copy(lastTouchInfo = "Cluster Stop Nav")
             }
@@ -947,7 +952,9 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         _isLocalPreviewActiveFlow.value = false
         if (wasActive && !isActiveSession.get()) {
             displayController.stop()
-            mapEngine.stopLocationTracking()
+            if (!mapEngine.uiState.value.routeActive && !mapEngine.hasPendingRoute()) {
+                mapEngine.stopLocationTracking()
+            }
             com.pulsarnav.app.debug.DebugLogRepository.wifi(
                 "TFT_DBG",
                 "Stopped offline 800x480 TFT Cockpit bench preview"

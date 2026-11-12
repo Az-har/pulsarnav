@@ -214,9 +214,9 @@ class TftNavigationMapEngineTest {
             layoutMode = AppSettings.CAST_LAYOUT_FILL
         )
         assertEquals(432, portraitCrop.width)
-        // 432 / (800/480) = 259.2 -> 259
+        // 432 / (800/480) = 259.2 -> 259; top-biased 0.15 keeps top turn banner in view (~105px)
         assertEquals(259, portraitCrop.height)
-        assertTrue(portraitCrop.top > 0)
+        assertTrue(portraitCrop.top in 80..130)
 
         val ultraWideCrop = TftScreenCastTransform.computeSourceCropRect(
             contentRect = IntRect(0, 0, 960, 432),
@@ -249,5 +249,54 @@ class TftNavigationMapEngineTest {
         assertEquals(LiveMapTouchZone.TOGGLE_HEADING, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 760, 275))
         assertEquals(LiveMapTouchZone.TOGGLE_DAYLIGHT, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 120, 445))
         assertEquals(LiveMapTouchZone.NONE, TftCockpitDisplayController.resolveLiveMapTouchZone(9, 300, 200))
+    }
+
+    @Test
+    fun cellularNetworkHttp_resolvesGeoAndIntentRedirectsWithoutThrowing() {
+        val (geoTarget, continueGeo) = CellularNetworkHttp.resolveRedirectTarget(
+            "https://maps.app.goo.gl/abc",
+            "geo:12.9716,77.5946?q=Cubbon+Park"
+        )
+        assertEquals("geo:12.9716,77.5946?q=Cubbon+Park", geoTarget)
+        assertFalse(continueGeo)
+
+        val (fallbackUrl, continueFallback) = CellularNetworkHttp.resolveRedirectTarget(
+            "https://maps.app.goo.gl/abc",
+            "intent://maps.google.com/maps?q=12.9716,77.5946#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=https%3A%2F%2Fwww.google.com%2Fmaps%3Fq%3D12.9716%2C77.5946;end"
+        )
+        assertEquals("https://www.google.com/maps?q=12.9716,77.5946", fallbackUrl)
+        assertTrue(continueFallback)
+
+        val (schemeRebuilt, continueScheme) = CellularNetworkHttp.resolveRedirectTarget(
+            "https://maps.app.goo.gl/abc",
+            "intent://www.google.com/maps/@12.9716,77.5946,16z#Intent;scheme=https;end"
+        )
+        assertEquals("https://www.google.com/maps/@12.9716,77.5946,16z", schemeRebuilt)
+        assertTrue(continueScheme)
+    }
+
+    @Test
+    fun activeRoutePlan_precomputedMercatorCoordsMatchLatLngToWorldPixel() {
+        val pts = listOf(GeoPoint(12.9716, 77.5946), GeoPoint(12.9760, 77.5900))
+        val plan = ActiveRoutePlan(
+            destinationLabel = "Cubbon",
+            destination = pts.last(),
+            origin = pts.first(),
+            polyline = pts,
+            cumulativeMeters = doubleArrayOf(0.0, 700.0),
+            steps = emptyList(),
+            totalDistanceMeters = 700.0,
+            totalDurationSeconds = 90.0
+        )
+        val zoom = 16
+        val worldScale = 256.0 * (1 shl zoom)
+        for (i in pts.indices) {
+            val (expectedX, expectedY) = TftMapMathAndParser.latLngToWorldPixel(pts[i].lat, pts[i].lng, zoom)
+            assertEquals(expectedX, plan.normMercatorX[i] * worldScale, 1e-6)
+            assertEquals(expectedY, plan.normMercatorY[i] * worldScale, 1e-6)
+        }
+        val (destX, destY) = TftMapMathAndParser.latLngToWorldPixel(pts.last().lat, pts.last().lng, zoom)
+        assertEquals(destX, plan.destNormX * worldScale, 1e-6)
+        assertEquals(destY, plan.destNormY * worldScale, 1e-6)
     }
 }

@@ -118,9 +118,12 @@ class TftCockpitDisplayController(
     @Volatile
     private var displayGeneration = 0L
 
+    private data class TouchMarker(val x: Int, val y: Int, val timestampMs: Long)
+
     private var frameBitmap: Bitmap? = null
     private var frameCanvas: Canvas? = null
     private var castRawBitmap: Bitmap? = null
+    private var castRawCanvas: Canvas? = null
     private var castPaddedBitmap: Bitmap? = null
     private val castMatrix = Matrix()
     private val castFilterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -137,11 +140,7 @@ class TftCockpitDisplayController(
     @Volatile
     private var clusterStationary = true
     @Volatile
-    private var lastTouchX = -1
-    @Volatile
-    private var lastTouchY = -1
-    @Volatile
-    private var lastTouchTimestampMs = 0L
+    private var lastTouchMarker: TouchMarker? = null
     @Volatile
     private var recenterToastUntilMs = 0L
     @Volatile
@@ -154,6 +153,10 @@ class TftCockpitDisplayController(
     private var debugOverlayEnabled = false
     @Volatile
     private var currentCaptureSize = IntSize(TftWifiProtocol.TFT_WIDTH, TftWifiProtocol.TFT_HEIGHT)
+
+    private val immediateRefreshRunnable = Runnable {
+        renderAndEmitHeadlessFrame()
+    }
 
     private val headlessTickRunnable = object : Runnable {
         override fun run() {
@@ -262,7 +265,7 @@ class TftCockpitDisplayController(
                         }
                     }
                     displayListener = dListener
-                    displayManager.registerDisplayListener(dListener, mainHandler)
+                    displayManager.registerDisplayListener(dListener, handler)
                 }
                 Log.i(TAG, "Started Live MediaProjection ${initialSize.width}x${initialSize.height} -> 800x480 (created=$created)")
             }
@@ -350,17 +353,15 @@ class TftCockpitDisplayController(
 
     fun refreshFrameNow() {
         if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST || previewPaused) return
-        workerHandler?.post {
-            renderAndEmitHeadlessFrame()
-        }
+        val handler = workerHandler ?: return
+        handler.removeCallbacks(immediateRefreshRunnable)
+        handler.post(immediateRefreshRunnable)
     }
 
     fun onClusterTouch(touchType: Int, x: Int, y: Int) {
         val clampedX = x.coerceIn(0, TftWifiProtocol.TFT_WIDTH)
         val clampedY = y.coerceIn(0, TftWifiProtocol.TFT_HEIGHT)
-        lastTouchX = clampedX
-        lastTouchY = clampedY
-        lastTouchTimestampMs = SystemClock.elapsedRealtime()
+        lastTouchMarker = TouchMarker(clampedX, clampedY, SystemClock.elapsedRealtime())
 
         if (activeSource == TftMirrorSource.LIVE_MAP) {
             when (resolveLiveMapTouchZone(touchType, clampedX, clampedY)) {
@@ -398,6 +399,7 @@ class TftCockpitDisplayController(
             var oldReader: ImageReader?
             synchronized(lifecycleLock) {
                 workerHandler?.removeCallbacks(headlessTickRunnable)
+                workerHandler?.removeCallbacks(immediateRefreshRunnable)
                 workerHandler = null
 
                 displayListener?.let { dl ->
@@ -460,6 +462,7 @@ class TftCockpitDisplayController(
                 frameCanvas = null
                 frameBitmap?.recycle()
                 frameBitmap = null
+                castRawCanvas = null
                 castRawBitmap?.recycle()
                 castRawBitmap = null
                 castPaddedBitmap?.recycle()
@@ -490,15 +493,15 @@ class TftCockpitDisplayController(
 
     private fun processCastImage(reader: ImageReader) {
         if (!running) return
-        val image = try {
-            reader.acquireLatestImage()
-        } catch (_: Exception) {
-            null
-        } ?: return
+        synchronized(lifecycleLock) {
+            if (!running || reader !== imageReader) return
+            val image = try {
+                reader.acquireLatestImage()
+            } catch (_: Exception) {
+                null
+            } ?: return
 
-        try {
-            synchronized(lifecycleLock) {
-                if (!running || reader !== imageReader) return
+            try {
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastCaptureTimestampMs < TftWifiProtocol.UDP_MIN_CAPTURE_INTERVAL_MS) {
                     return
@@ -515,6 +518,7 @@ class TftCockpitDisplayController(
                     ?: Bitmap.createBitmap(srcW, srcH, Bitmap.Config.ARGB_8888).also {
                         castRawBitmap?.recycle()
                         castRawBitmap = it
+                        castRawCanvas = Canvas(it)
                     }
 
                 val rowPadding = rowStride - pixelStride * srcW
@@ -529,7 +533,7 @@ class TftCockpitDisplayController(
                         castPaddedBitmap = it
                     }
                     padded.copyPixelsFromBuffer(buffer)
-                    val tmpCanvas = Canvas(rawBmp)
+                    val tmpCanvas = castRawCanvas ?: Canvas(rawBmp).also { castRawCanvas = it }
                     copySrcRect.set(0, 0, srcW, srcH)
                     copyDstRect.set(0, 0, srcW, srcH)
                     tmpCanvas.drawBitmap(padded, copySrcRect, copyDstRect, null)
@@ -551,11 +555,11 @@ class TftCockpitDisplayController(
                 val encoded = encodeAdaptiveJpeg(dstBmp) ?: return
                 lastCaptureTimestampMs = now
                 onEncodedFrameReady(encoded, currentQuality, encoded.size)
+            } catch (e: Exception) {
+                Log.w(TAG, "Frame capture/encode skipped: ${e.message}")
+            } finally {
+                image.close()
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Frame capture/encode skipped: ${e.message}")
-        } finally {
-            image.close()
         }
     }
 
@@ -758,12 +762,15 @@ class TftCockpitDisplayController(
                 textPaint.typeface = normalTypeface
                 val etaStr = if (resolvedNavStep.etaHour in 1..12) {
                     val amPm = if (resolvedNavStep.etaIsAm) "AM" else "PM"
-                    String.format(Locale.US, "ETA %d:%02d %s", resolvedNavStep.etaHour, resolvedNavStep.etaMinute, amPm)
+                    val min = resolvedNavStep.etaMinute.coerceIn(0, 59)
+                    if (min < 10) "ETA ${resolvedNavStep.etaHour}:0$min $amPm"
+                    else "ETA ${resolvedNavStep.etaHour}:$min $amPm"
                 } else {
                     "ACTIVE ROUTE"
                 }
                 val remKm = if (resolvedNavStep.totalDistanceMeters > 0) {
-                    String.format(Locale.US, "  •  %.1f km left", resolvedNavStep.totalDistanceMeters / 1000f)
+                    val tenths = resolvedNavStep.totalDistanceMeters / 100
+                    "  •  ${tenths / 10}.${tenths % 10} km left"
                 } else ""
                 canvas.drawText("$etaStr$remKm", 204f, 224f, textPaint)
 
@@ -799,9 +806,11 @@ class TftCockpitDisplayController(
                 textPaint.textSize = 26f
                 val speedText = if (stats.isTracking) "${stats.currentSpeedKmh.toInt()} km/h" else "IDLE"
                 val tripText = if (stats.isTracking) {
-                    String.format(Locale.US, "%.2f km", stats.distanceKm)
+                    val hundredths = (stats.distanceKm * 100.0).toInt().coerceAtLeast(0)
+                    val frac = hundredths % 100
+                    if (frac < 10) "${hundredths / 100}.0$frac km" else "${hundredths / 100}.$frac km"
                 } else {
-                    String.format(Locale.US, "%d trips", stats.lifetimeTrips)
+                    "${stats.lifetimeTrips} trips"
                 }
                 canvas.drawText("SPEED: $speedText    •    TRIP: $tripText", 34f, 322f, textPaint)
 
@@ -865,8 +874,9 @@ class TftCockpitDisplayController(
                 canvas.drawText("km/h", 632f, 166f, textPaint)
                 textPaint.typeface = normalTypeface
                 textPaint.textSize = 17f
+                val tenths = (stats.distanceKm * 10.0).toInt().coerceAtLeast(0)
                 canvas.drawText(
-                    String.format(Locale.US, "Trip %.1f km", stats.distanceKm),
+                    "Trip ${tenths / 10}.${tenths % 10} km",
                     544f,
                     204f,
                     textPaint
@@ -958,22 +968,22 @@ class TftCockpitDisplayController(
                 borderPaint.color = borderColor
             }
 
-            val touchAgeMs = nowMs - lastTouchTimestampMs
+            val marker = lastTouchMarker
             val touchVisibleMs = if (debugOverlayEnabled) 2500L else 900L
-            if (lastTouchX >= 0 && touchAgeMs < touchVisibleMs) {
+            if (marker != null && nowMs - marker.timestampMs < touchVisibleMs) {
                 borderPaint.color = cyanAccent
                 borderPaint.strokeWidth = 3f
-                canvas.drawCircle(lastTouchX.toFloat(), lastTouchY.toFloat(), 20f, borderPaint)
+                canvas.drawCircle(marker.x.toFloat(), marker.y.toFloat(), 20f, borderPaint)
                 if (debugOverlayEnabled) {
-                    canvas.drawLine((lastTouchX - 28).toFloat(), lastTouchY.toFloat(), (lastTouchX + 28).toFloat(), lastTouchY.toFloat(), borderPaint)
-                    canvas.drawLine(lastTouchX.toFloat(), (lastTouchY - 28).toFloat(), lastTouchX.toFloat(), (lastTouchY + 28).toFloat(), borderPaint)
+                    canvas.drawLine((marker.x - 28).toFloat(), marker.y.toFloat(), (marker.x + 28).toFloat(), marker.y.toFloat(), borderPaint)
+                    canvas.drawLine(marker.x.toFloat(), (marker.y - 28).toFloat(), marker.x.toFloat(), (marker.y + 28).toFloat(), borderPaint)
                     textPaint.textAlign = Paint.Align.LEFT
                     textPaint.textSize = 14f
                     textPaint.typeface = monoBoldTypeface
                     textPaint.color = cyanAccent
-                    val tx = (lastTouchX + 24).coerceAtMost(w.toInt() - 130).toFloat()
-                    val ty = (lastTouchY - 10).coerceAtLeast(24).toFloat()
-                    canvas.drawText("(${lastTouchX},${lastTouchY})", tx, ty, textPaint)
+                    val tx = (marker.x + 24).coerceAtMost(w.toInt() - 130).toFloat()
+                    val ty = (marker.y - 10).coerceAtLeast(24).toFloat()
+                    canvas.drawText("(${marker.x},${marker.y})", tx, ty, textPaint)
                 }
                 borderPaint.strokeWidth = 2f
             }
@@ -982,9 +992,10 @@ class TftCockpitDisplayController(
         private fun formatDistanceShort(meters: Int, rawText: String): String {
             if (meters <= 0) return rawText.ifBlank { "--" }
             return if (meters >= 1000) {
-                String.format(Locale.US, "%.1f km", meters / 1000f)
+                val tenths = meters / 100
+                "${tenths / 10}.${tenths % 10} km"
             } else {
-                "${meters} m"
+                "$meters m"
             }
         }
 
