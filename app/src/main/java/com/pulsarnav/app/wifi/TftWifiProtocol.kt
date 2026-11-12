@@ -52,6 +52,7 @@ object TftWifiProtocol {
     const val UDP_MAX_REENCODE_ATTEMPTS = 1
     const val UDP_MIN_CAPTURE_INTERVAL_MS = 50L
     const val UDP_TX_PACING_MS = 1L
+    const val UDP_TX_BURST_PACKETS = 4
 
     const val AES_TRANSFORMATION = "AES/CBC/PKCS5Padding"
     const val AES_KEY_STRING = "Z7in5HGAGFdXXU6ZfDc8lIff4iwLY01o"
@@ -739,9 +740,18 @@ object TftNavV2Codec {
 object TftUdpFrameEncoder {
 
     private val zeroIv = IvParameterSpec(ByteArray(16))
+    private val crcThreadLocal = object : ThreadLocal<CRC32>() {
+        override fun initialValue(): CRC32 = CRC32()
+    }
+    private val scratchPlainThreadLocal = object : ThreadLocal<ByteArray>() {
+        override fun initialValue(): ByteArray = ByteArray(
+            max(4 + TftWifiProtocol.UDP_FIRST_CHUNK_BYTES, TftWifiProtocol.UDP_NEXT_CHUNK_BYTES + 4)
+        )
+    }
 
     fun computeCrc32Int(data: ByteArray): Int {
-        val crc = CRC32()
+        val crc = crcThreadLocal.get() ?: CRC32().also { crcThreadLocal.set(it) }
+        crc.reset()
         crc.update(data)
         return crc.value.toInt()
     }
@@ -785,7 +795,9 @@ object TftUdpFrameEncoder {
 
         // Chunk 0: 4-byte BE total length + first 1006 bytes (1010 plaintext -> 1024 encrypted).
         // Middle full chunks encrypt directly from [jpeg] without copyOfRange allocations.
-        val scratchPlain = ByteArray(max(4 + TftWifiProtocol.UDP_FIRST_CHUNK_BYTES, TftWifiProtocol.UDP_NEXT_CHUNK_BYTES + 4))
+        val minScratchSize = max(4 + TftWifiProtocol.UDP_FIRST_CHUNK_BYTES, TftWifiProtocol.UDP_NEXT_CHUNK_BYTES + 4)
+        val scratchPlain = scratchPlainThreadLocal.get()?.takeIf { it.size >= minScratchSize }
+            ?: ByteArray(minScratchSize).also { scratchPlainThreadLocal.set(it) }
         writeIntBE(scratchPlain, 0, totalLen)
         System.arraycopy(jpeg, 0, scratchPlain, 4, TftWifiProtocol.UDP_FIRST_CHUNK_BYTES)
         packets.add(cipher.doFinal(scratchPlain, 0, 4 + TftWifiProtocol.UDP_FIRST_CHUNK_BYTES))

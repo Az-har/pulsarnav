@@ -102,4 +102,28 @@ class TftV125FixesTest {
         assertFalse(GoogleMapsNotificationListener.isKnownSmsPackage(null, "com.google.android.apps.messaging"))
         assertFalse(GoogleMapsNotificationListener.isKnownSmsPackage("   ", null))
     }
+
+    @Test
+    fun udpEncoderThreadLocalBuffers_produceDeterministicChunksAcrossFrames() {
+        assertEquals(4, TftWifiProtocol.UDP_TX_BURST_PACKETS)
+        val cipher = TftUdpFrameEncoder.createEncryptCipher()
+        val frameA = ByteArray(2_600) { (it * 7).toByte() }
+        val frameB = ByteArray(1_500) { (it * 13).toByte() }
+
+        val crcA1 = TftUdpFrameEncoder.computeCrc32Int(frameA)
+        val crcB = TftUdpFrameEncoder.computeCrc32Int(frameB)
+        val crcA2 = TftUdpFrameEncoder.computeCrc32Int(frameA)
+        assertEquals(crcA1, crcA2)
+        assertTrue(crcA1 != crcB)
+
+        val chunksA1 = TftUdpFrameEncoder.encodeJpegFrameChunks(frameA, cipher)
+        val chunksB = TftUdpFrameEncoder.encodeJpegFrameChunks(frameB, cipher)
+        val chunksA2 = TftUdpFrameEncoder.encodeJpegFrameChunks(frameA, cipher)
+        assertEquals(chunksA1.size, chunksA2.size)
+        assertEquals(3, chunksA1.size)
+        assertEquals(2, chunksB.size)
+        for (i in chunksA1.indices) {
+            assertTrue(chunksA1[i].contentEquals(chunksA2[i]))
+        }
+    }
 }

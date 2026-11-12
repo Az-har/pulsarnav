@@ -131,7 +131,7 @@ class TftCockpitDisplayController(
     private var cachedBoundsSrcH = 0
     private var cachedBoundsAgeFrames = 0
     private val castMatrix = Matrix()
-    private val castFilterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val castFilterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val copySrcRect = Rect()
     private val copyDstRect = Rect()
     private val jpegBuffer = ByteArrayOutputStream(32_768)
@@ -552,7 +552,7 @@ class TftCockpitDisplayController(
                     cachedBoundsSrcW = srcW
                     cachedBoundsSrcH = srcH
                     cachedBoundsAgeFrames = 0
-                    TftScreenCastTransform.detectNonBlackBounds(srcBitmapForTransform).also {
+                    TftScreenCastTransform.detectNonBlackBounds(srcBitmapForTransform, maxWidth = srcW).also {
                         cachedBoundsRect = it
                     }
                 } else {
@@ -611,7 +611,12 @@ class TftCockpitDisplayController(
         }
 
         if (size >= TftWifiProtocol.UDP_MAX_JPEG_BYTES) {
-            size = compressJpegSize(bitmap, 16)
+            val emergencyQ = TftUdpFrameEncoder.computeRetryQuality(q, size)
+                .coerceIn(16, TftWifiProtocol.UDP_MIN_JPEG_QUALITY)
+            size = compressJpegSize(bitmap, emergencyQ)
+            if (size >= TftWifiProtocol.UDP_MAX_JPEG_BYTES && emergencyQ > 16) {
+                size = compressJpegSize(bitmap, 16)
+            }
             if (size >= TftWifiProtocol.UDP_MAX_JPEG_BYTES) {
                 currentQuality = TftWifiProtocol.UDP_MIN_JPEG_QUALITY
                 return null

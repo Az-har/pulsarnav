@@ -627,6 +627,11 @@ class OsmTileCache(private val context: Context) {
     private val diskDir = File(context.cacheDir, "osm_tiles_v2").apply { mkdirs() }
     private val lastPruneMs = java.util.concurrent.atomic.AtomicLong(0L)
     private val diskPruneLock = Any()
+    private val decodeOptionsThreadLocal = object : ThreadLocal<BitmapFactory.Options>() {
+        override fun initialValue(): BitmapFactory.Options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+    }
 
     fun getOrRequestTile(
         zoom: Int,
@@ -651,8 +656,11 @@ class OsmTileCache(private val context: Context) {
             fetchExecutor.execute {
                 try {
                     val file = File(diskDir, "$key.png")
-                    val bytes: ByteArray? = if (file.exists() && file.length() > 100L) {
-                        file.readBytes()
+                    val decodeOpts = decodeOptionsThreadLocal.get() ?: BitmapFactory.Options().apply {
+                        inPreferredConfig = Bitmap.Config.RGB_565
+                    }
+                    val decoded = if (file.exists() && file.length() > 100L) {
+                        BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                     } else {
                         val fetched = CellularNetworkHttp.getBytes(
                             context = context,
@@ -671,6 +679,7 @@ class OsmTileCache(private val context: Context) {
                             failedTiles.remove(key)
                             writeTileAtomically(file, fetched)
                             pruneDiskCacheIfNeeded()
+                            BitmapFactory.decodeByteArray(fetched, 0, fetched.size, decodeOpts)
                         } else {
                             val nextAttempts = (failedTiles[key]?.attempts ?: 0) + 1
                             val backoffMs = (5_000L shl (nextAttempts - 1).coerceAtMost(4)).coerceAtMost(60_000L)
@@ -678,17 +687,14 @@ class OsmTileCache(private val context: Context) {
                                 attempts = nextAttempts,
                                 retryAfterElapsedMs = SystemClock.elapsedRealtime() + backoffMs
                             )
+                            null
                         }
-                        fetched
                     }
 
-                    if (bytes != null) {
-                        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        if (decoded != null) {
-                            failedTiles.remove(key)
-                            ramCache.put(key, decoded)
-                            onTileLoaded()
-                        }
+                    if (decoded != null) {
+                        failedTiles.remove(key)
+                        ramCache.put(key, decoded)
+                        onTileLoaded()
                     }
                 } catch (_: Exception) {
                 } finally {

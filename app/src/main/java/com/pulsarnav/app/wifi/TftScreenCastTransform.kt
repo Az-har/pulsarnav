@@ -144,8 +144,8 @@ object TftScreenCastTransform {
      * Scans sparse scanlines on [bitmap] to locate non-black active content bounds when
      * Android SurfaceFlinger or OEM overlays insert black pillarbox/letterbox bars.
      */
-    fun detectNonBlackBounds(bitmap: Bitmap): IntRect {
-        val w = bitmap.width
+    fun detectNonBlackBounds(bitmap: Bitmap, maxWidth: Int = bitmap.width): IntRect {
+        val w = maxWidth.coerceIn(1, bitmap.width)
         val h = bitmap.height
         val fallback = IntRect(0, 0, w, h)
         if (w < 64 || h < 64) return fallback
@@ -217,7 +217,7 @@ object TftScreenCastTransform {
     ) {
         val dstW = dstBitmap.width
         val dstH = dstBitmap.height
-        val rawContent = cachedContentBounds ?: detectNonBlackBounds(srcBitmap)
+        val rawContent = cachedContentBounds ?: detectNonBlackBounds(srcBitmap, srcClipRect?.right ?: srcBitmap.width)
         val content = if (srcClipRect != null) {
             IntRect(
                 left = rawContent.left.coerceIn(srcClipRect.left, srcClipRect.right - 1),
@@ -229,7 +229,7 @@ object TftScreenCastTransform {
             rawContent
         }
         val safeViewport = computeSafeViewport(content.width, content.height, layoutMode)
-        dstCanvas.drawColor(Color.rgb(10, 12, 16))
+        dstCanvas.drawColor(Color.BLACK)
 
         when (layoutMode) {
             AppSettings.CAST_LAYOUT_FIT -> {

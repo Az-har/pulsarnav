@@ -687,7 +687,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                         val packetBytes = chunks[i]
                         reusablePacket.setData(packetBytes, 0, packetBytes.size)
                         sock.send(reusablePacket)
-                        if (i < chunks.lastIndex) {
+                        if ((i + 1) % TftWifiProtocol.UDP_TX_BURST_PACKETS == 0 && i < chunks.lastIndex) {
                             Thread.sleep(TftWifiProtocol.UDP_TX_PACING_MS)
                         }
                     }
