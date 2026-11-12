@@ -117,6 +117,10 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+        aidl = false
+        renderScript = false
+        resValues = false
+        shaders = false
     }
 
     lint {

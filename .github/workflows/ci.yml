@@ -7,6 +7,17 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
+    inputs:
+      publish_build_scan:
+        description: 'Publish Gradle Build Scan to scans.gradle.com'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -15,6 +26,7 @@ jobs:
   build-and-test:
     name: Build & Verify APK
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
     steps:
       - name: Checkout Code
@@ -28,6 +40,10 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          build-scan-publish: ${{ inputs.publish_build_scan == true }}
+          build-scan-terms-of-use-url: ${{ inputs.publish_build_scan == true && 'https://gradle.com/terms-of-service' || '' }}
+          build-scan-terms-of-use-agree: ${{ inputs.publish_build_scan == true && 'yes' || '' }}
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew

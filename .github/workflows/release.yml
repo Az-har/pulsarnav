@@ -12,6 +12,7 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
 
     steps:
       - name: Checkout Code
@@ -28,9 +29,6 @@ jobs:
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
-
-      - name: Run Unit Tests & Lint
-        run: ./gradlew testDebugUnitTest lintDebug --stacktrace
 
       - name: Configure Release Signing
         env:
@@ -60,10 +58,10 @@ jobs:
             echo "::warning::RELEASE_KEYSTORE_BASE64 not set; release build will use the repository fallback keystore (app/keystore/pulsarnav-release.jks). Configure signing secrets and vars.REQUIRE_PRIVATE_SIGNING=true for private distribution."
           fi
 
-      - name: Build Release APK
+      - name: Test, Lint & Build Release APK
         env:
           REQUIRE_PRIVATE_RELEASE_SIGNING: ${{ vars.REQUIRE_PRIVATE_SIGNING }}
-        run: ./gradlew assembleRelease --stacktrace
+        run: ./gradlew testDebugUnitTest lintDebug assembleRelease --stacktrace
 
       - name: Cleanup Ephemeral Keystore
         if: always()
