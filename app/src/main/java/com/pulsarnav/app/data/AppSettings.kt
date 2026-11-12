@@ -109,6 +109,81 @@ class AppSettings(context: Context) {
         const val KEY_CUSTOM_ACCENT_GREEN = "custom_accent_green"
         const val KEY_CUSTOM_ACCENT_BLUE = "custom_accent_blue"
         const val KEY_LAST_ACTIVE_TAB = "last_active_tab"
+        const val KEY_ACTIVE_TAB_KEY = "active_tab_key"
+
+        const val TAB_HOME = "home"
+        const val TAB_FUEL = "fuel"
+        const val TAB_SUPPORT = "support"
+        const val TAB_ACCOUNT = "account"
+
+        fun normalizeTabKey(raw: String?): String {
+            return when (raw?.lowercase(Locale.US)) {
+                TAB_FUEL -> TAB_FUEL
+                TAB_SUPPORT -> TAB_SUPPORT
+                TAB_ACCOUNT -> TAB_ACCOUNT
+                else -> TAB_HOME
+            }
+        }
+
+        internal fun coerceRestoreValue(
+            key: String,
+            value: Any,
+            fileExists: (String) -> Boolean
+        ): RestoreAction {
+            if (key == KEY_LAST_ACTIVE_TAB || key == KEY_ACTIVE_TAB_KEY) {
+                return RestoreAction.Skip
+            }
+            fun asInt(def: Int = 0): Int = when (value) {
+                is Number -> value.toInt()
+                is String -> value.toIntOrNull() ?: value.toDoubleOrNull()?.toInt() ?: def
+                else -> def
+            }
+            fun asFloat(def: Float = 0f): Float = when (value) {
+                is Number -> value.toFloat()
+                is String -> value.toFloatOrNull() ?: def
+                else -> def
+            }
+            fun asLong(def: Long = 0L): Long = when (value) {
+                is Number -> value.toLong()
+                is String -> value.toLongOrNull() ?: def
+                else -> def
+            }
+            fun asBoolean(def: Boolean = false): Boolean = when (value) {
+                is Boolean -> value
+                is String -> value.equals("true", ignoreCase = true) || value == "1"
+                is Number -> value.toInt() != 0
+                else -> def
+            }
+            return when (key) {
+                KEY_PETROL_PRICE, KEY_FUEL_LITERS -> RestoreAction.PutFloat(asFloat())
+                KEY_PROJECTED_DTE, KEY_FUEL_PERCENT, KEY_DAYS_OF_OWNERSHIP -> RestoreAction.PutInt(asInt())
+                KEY_CUSTOM_ACCENT_RED, KEY_CUSTOM_ACCENT_GREEN, KEY_CUSTOM_ACCENT_BLUE ->
+                    RestoreAction.PutInt(asInt().coerceIn(0, 255))
+                KEY_NAV_V2_ROUTE_MODE -> RestoreAction.PutInt(asInt().coerceIn(0, 3))
+                KEY_NAV_V2_UNITS -> RestoreAction.PutInt(asInt().coerceIn(0, 1))
+                KEY_NAV_V2_AVOID_BITMASK -> RestoreAction.PutInt(asInt() and 0x0F)
+                KEY_LAST_SYNC_MS, KEY_PURCHASE_DATE_MS -> RestoreAction.PutLong(asLong())
+                KEY_DOC_RC_PATH, KEY_DOC_INSURANCE_PATH, KEY_DOC_PUC_PATH -> {
+                    val path = value.toString()
+                    if (path.isNotBlank() && fileExists(path)) RestoreAction.PutString(path) else RestoreAction.Remove
+                }
+                KEY_HOME_LAT, KEY_HOME_LNG, KEY_WORK_LAT, KEY_WORK_LNG,
+                KEY_FAV_PLACE_LAT, KEY_FAV_PLACE_LNG, KEY_SMS_REJECT_MESSAGE ->
+                    RestoreAction.PutString(value.toString())
+                KEY_AUTO_PARK, KEY_RIDE_TRACKING, KEY_MEDIA_CONTROL, KEY_WHATSAPP_ALERTS,
+                KEY_MAINTENANCE_ALERTS, KEY_TELEMETRY_SYNC, KEY_TWO_WHEELER_MODE, KEY_AUTO_CONNECT,
+                KEY_DARK_MODE, KEY_IS_SETUP_COMPLETED, KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT,
+                KEY_SMS_REJECT_ENABLED -> RestoreAction.PutBoolean(asBoolean())
+                else -> when (value) {
+                    is Boolean -> RestoreAction.PutBoolean(value)
+                    is Int -> RestoreAction.PutInt(value)
+                    is Long -> RestoreAction.PutLong(value)
+                    is Float -> RestoreAction.PutFloat(value)
+                    is Double -> RestoreAction.PutFloat(value.toFloat())
+                    else -> RestoreAction.PutString(value.toString())
+                }
+            }
+        }
 
         @Volatile
         private var instance: AppSettings? = null
@@ -178,6 +253,20 @@ class AppSettings(context: Context) {
                     else -> defValue
                 }
                 prefs.edit().putBoolean(key, parsed).apply()
+                parsed
+            } catch (_: Exception) {
+                defValue
+            }
+        }
+    }
+
+    fun getSafeString(key: String, defValue: String): String {
+        return try {
+            prefs.getString(key, defValue) ?: defValue
+        } catch (_: ClassCastException) {
+            try {
+                val parsed = prefs.all[key]?.toString() ?: defValue
+                prefs.edit().putString(key, parsed).apply()
                 parsed
             } catch (_: Exception) {
                 defValue
@@ -269,12 +358,26 @@ class AppSettings(context: Context) {
             prefs.edit().putInt(KEY_CUSTOM_ACCENT_BLUE, value.coerceIn(0, 255)).apply()
         }
 
+    fun setCustomAccentRgb(red: Int, green: Int, blue: Int) {
+        prefs.edit()
+            .putInt(KEY_CUSTOM_ACCENT_RED, red.coerceIn(0, 255))
+            .putInt(KEY_CUSTOM_ACCENT_GREEN, green.coerceIn(0, 255))
+            .putInt(KEY_CUSTOM_ACCENT_BLUE, blue.coerceIn(0, 255))
+            .apply()
+    }
+
     fun getCustomAccentColor(): Int = android.graphics.Color.rgb(customAccentRed, customAccentGreen, customAccentBlue)
 
     var isDarkMode: Boolean
         get() = getSafeBoolean(KEY_DARK_MODE, true)
         set(value) {
             prefs.edit().putBoolean(KEY_DARK_MODE, value).apply()
+        }
+
+    var activeTabKey: String
+        get() = normalizeTabKey(getSafeString(KEY_ACTIVE_TAB_KEY, TAB_HOME))
+        set(value) {
+            prefs.edit().putString(KEY_ACTIVE_TAB_KEY, normalizeTabKey(value)).apply()
         }
 
     var lastActiveTab: Int
@@ -529,27 +632,27 @@ class AppSettings(context: Context) {
         }
 
     var homeLat: Double
-        get() = prefs.getString(KEY_HOME_LAT, "0.0")?.toDoubleOrNull() ?: 0.0
+        get() = getSafeString(KEY_HOME_LAT, "0.0").toDoubleOrNull() ?: 0.0
         set(value) { prefs.edit().putString(KEY_HOME_LAT, value.toString()).apply() }
 
     var homeLng: Double
-        get() = prefs.getString(KEY_HOME_LNG, "0.0")?.toDoubleOrNull() ?: 0.0
+        get() = getSafeString(KEY_HOME_LNG, "0.0").toDoubleOrNull() ?: 0.0
         set(value) { prefs.edit().putString(KEY_HOME_LNG, value.toString()).apply() }
 
     var workLat: Double
-        get() = prefs.getString(KEY_WORK_LAT, "0.0")?.toDoubleOrNull() ?: 0.0
+        get() = getSafeString(KEY_WORK_LAT, "0.0").toDoubleOrNull() ?: 0.0
         set(value) { prefs.edit().putString(KEY_WORK_LAT, value.toString()).apply() }
 
     var workLng: Double
-        get() = prefs.getString(KEY_WORK_LNG, "0.0")?.toDoubleOrNull() ?: 0.0
+        get() = getSafeString(KEY_WORK_LNG, "0.0").toDoubleOrNull() ?: 0.0
         set(value) { prefs.edit().putString(KEY_WORK_LNG, value.toString()).apply() }
 
     var favPlaceLat: Double
-        get() = prefs.getString(KEY_FAV_PLACE_LAT, "0.0")?.toDoubleOrNull() ?: 0.0
+        get() = getSafeString(KEY_FAV_PLACE_LAT, "0.0").toDoubleOrNull() ?: 0.0
         set(value) { prefs.edit().putString(KEY_FAV_PLACE_LAT, value.toString()).apply() }
 
     var favPlaceLng: Double
-        get() = prefs.getString(KEY_FAV_PLACE_LNG, "0.0")?.toDoubleOrNull() ?: 0.0
+        get() = getSafeString(KEY_FAV_PLACE_LNG, "0.0").toDoubleOrNull() ?: 0.0
         set(value) { prefs.edit().putString(KEY_FAV_PLACE_LNG, value.toString()).apply() }
 
     var navV2RouteMode: Int
@@ -631,67 +734,32 @@ class AppSettings(context: Context) {
     }
 
     fun getAllSettingsMap(): Map<String, *> = prefs.all
+        .filterKeys { it != KEY_LAST_ACTIVE_TAB && it != KEY_ACTIVE_TAB_KEY }
 
     fun restoreSettingsMap(map: Map<String, *>) {
         val editor = prefs.edit()
         for ((k, v) in map) {
             if (v == null || v == org.json.JSONObject.NULL) continue
-            when (k) {
-                KEY_PETROL_PRICE, KEY_FUEL_LITERS -> {
-                    val floatVal = when (v) {
-                        is Number -> v.toFloat()
-                        is String -> v.toFloatOrNull() ?: 0f
-                        else -> 0f
-                    }
-                    editor.putFloat(k, floatVal)
-                }
-                KEY_PROJECTED_DTE, KEY_FUEL_PERCENT, KEY_DAYS_OF_OWNERSHIP -> {
-                    val intVal = when (v) {
-                        is Number -> v.toInt()
-                        is String -> v.toIntOrNull() ?: 0
-                        else -> 0
-                    }
-                    editor.putInt(k, intVal)
-                }
-                KEY_LAST_SYNC_MS, KEY_PURCHASE_DATE_MS -> {
-                    val longVal = when (v) {
-                        is Number -> v.toLong()
-                        is String -> v.toLongOrNull() ?: 0L
-                        else -> 0L
-                    }
-                    editor.putLong(k, longVal)
-                }
-                KEY_DOC_RC_PATH, KEY_DOC_INSURANCE_PATH, KEY_DOC_PUC_PATH -> {
-                    val path = v.toString()
-                    if (path.isNotBlank() && java.io.File(path).exists()) {
-                        editor.putString(k, path)
-                    } else {
-                        editor.remove(k)
-                    }
-                }
-                KEY_AUTO_PARK, KEY_RIDE_TRACKING, KEY_MEDIA_CONTROL, KEY_WHATSAPP_ALERTS,
-                KEY_MAINTENANCE_ALERTS, KEY_TELEMETRY_SYNC, KEY_TWO_WHEELER_MODE, KEY_AUTO_CONNECT,
-                KEY_DARK_MODE, KEY_IS_SETUP_COMPLETED, KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT -> {
-                    val boolVal = when (v) {
-                        is Boolean -> v
-                        is String -> v.toBoolean()
-                        is Number -> v.toInt() != 0
-                        else -> false
-                    }
-                    editor.putBoolean(k, boolVal)
-                }
-                else -> {
-                    when (v) {
-                        is Boolean -> editor.putBoolean(k, v)
-                        is Int -> editor.putInt(k, v)
-                        is Long -> editor.putLong(k, v)
-                        is Float -> editor.putFloat(k, v)
-                        is Double -> editor.putFloat(k, v.toFloat())
-                        else -> editor.putString(k, v.toString())
-                    }
-                }
+            when (val coerced = coerceRestoreValue(k, v) { path -> java.io.File(path).exists() }) {
+                is RestoreAction.Skip -> continue
+                is RestoreAction.Remove -> editor.remove(k)
+                is RestoreAction.PutFloat -> editor.putFloat(k, coerced.value)
+                is RestoreAction.PutInt -> editor.putInt(k, coerced.value)
+                is RestoreAction.PutLong -> editor.putLong(k, coerced.value)
+                is RestoreAction.PutBoolean -> editor.putBoolean(k, coerced.value)
+                is RestoreAction.PutString -> editor.putString(k, coerced.value)
             }
         }
         editor.apply()
+    }
+
+    internal sealed class RestoreAction {
+        object Skip : RestoreAction()
+        object Remove : RestoreAction()
+        data class PutFloat(val value: Float) : RestoreAction()
+        data class PutInt(val value: Int) : RestoreAction()
+        data class PutLong(val value: Long) : RestoreAction()
+        data class PutBoolean(val value: Boolean) : RestoreAction()
+        data class PutString(val value: String) : RestoreAction()
     }
 }

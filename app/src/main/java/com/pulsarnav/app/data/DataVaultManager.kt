@@ -120,7 +120,9 @@ class DataVaultManager private constructor(private val context: Context) {
         private val EXCLUDED_SETTINGS_KEYS = setOf(
             AppSettings.KEY_DOC_RC_PATH,
             AppSettings.KEY_DOC_INSURANCE_PATH,
-            AppSettings.KEY_DOC_PUC_PATH
+            AppSettings.KEY_DOC_PUC_PATH,
+            AppSettings.KEY_LAST_ACTIVE_TAB,
+            AppSettings.KEY_ACTIVE_TAB_KEY
         )
 
         @Volatile

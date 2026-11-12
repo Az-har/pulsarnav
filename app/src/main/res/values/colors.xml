@@ -10,20 +10,20 @@
 
     <!-- Pulsar Glossy Wine Red Color System -->
     <color name="wine_red">#9E1B32</color>
-    <color name="wine_red_light">#C92A45</color>
-    <color name="wine_red_subtle">#2C1218</color>
-    <color name="wine_red_border">#541B26</color>
+    <color name="wine_red_light">#B31B36</color>
+    <color name="wine_red_subtle">#FDEBEF</color>
+    <color name="wine_red_border">#F3C4CE</color>
 
     <!-- Theme 2: Stealth Carbon Mono -->
     <color name="stealth_primary">#475569</color>
 
     <!-- Theme 3: Racing Amber / Cocktail Neon -->
-    <color name="amber_primary">#D97706</color>
-    <color name="amber_accent">#F59E0B</color>
+    <color name="amber_primary">#B45309</color>
+    <color name="amber_accent">#B45309</color>
 
     <!-- Theme 4: Hyper Mint (Ather Electric) -->
-    <color name="mint_primary">#059669</color>
-    <color name="mint_accent">#10B981</color>
+    <color name="mint_primary">#047857</color>
+    <color name="mint_accent">#047857</color>
 
     <!-- Theme 5: DTS-i Liquid Blue -->
     <color name="blue_primary">#0284C7</color>

@@ -22,4 +22,9 @@
 
     <color name="status_disconnected">#9E1B32</color>
     <color name="status_disconnected_subtle">#2C1218</color>
+    <color name="wine_red_light">#E23D59</color>
+    <color name="wine_red_subtle">#2C1218</color>
+    <color name="wine_red_border">#541B26</color>
+    <color name="amber_accent">#F59E0B</color>
+    <color name="mint_accent">#10B981</color>
 </resources>

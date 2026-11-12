@@ -60,6 +60,7 @@ class TftCockpitDisplayController(
     companion object {
         private const val TAG = "TftCockpitDisplay"
         private const val REDRAW_INTERVAL_MS = 75L
+        private const val LOCAL_PREVIEW_IDLE_REDRAW_MS = 250L
 
         // Unified 800x480 interactive hitboxes shared between TftCockpitView.onDraw() and onClusterTouch()
         const val FOOTER_THEME_LEFT = 14
@@ -129,11 +130,29 @@ class TftCockpitDisplayController(
     @Volatile
     private var activeSource = TftMirrorSource.COCKPIT_HUD
 
+    @Volatile
+    private var previewPaused = false
+
+    fun setPreviewPaused(paused: Boolean) {
+        previewPaused = paused
+        mainHandler.removeCallbacks(redrawRunnable)
+        if (!paused && running && activeSource == TftMirrorSource.COCKPIT_HUD) {
+            mainHandler.post(redrawRunnable)
+        }
+    }
+
     private val redrawRunnable = object : Runnable {
         override fun run() {
-            if (!running || activeSource != TftMirrorSource.COCKPIT_HUD) return
+            if (!running || activeSource != TftMirrorSource.COCKPIT_HUD || previewPaused) return
             presentation?.refreshFrame()
-            mainHandler.postDelayed(this, REDRAW_INTERVAL_MS)
+            val delayMs = if (virtualDisplay != null && activeProjection != null) {
+                REDRAW_INTERVAL_MS
+            } else if (clusterStationary) {
+                LOCAL_PREVIEW_IDLE_REDRAW_MS
+            } else {
+                REDRAW_INTERVAL_MS
+            }
+            mainHandler.postDelayed(this, delayMs)
         }
     }
 

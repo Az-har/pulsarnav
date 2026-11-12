@@ -220,14 +220,22 @@ class MainActivity : AppCompatActivity() {
     private var fullscreenTftImageView: ImageView? = null
     private var fullscreenTftMetricsView: TextView? = null
     private var fullscreenTftTouchView: TextView? = null
-    private var refreshTftPreviewCallback: (() -> Unit)? = null
+    private val isAccountTabVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
+    private var currentActiveTabId: Int = R.id.nav_home
+    private var isRestoringTabSelection = false
+    private var fuelListThemeDirty = true
+    private var isUpdatingHexText = false
+    private var pendingSeekThemeRunnable: Runnable? = null
+    private val mainUiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var renderLogJob: kotlinx.coroutines.Job? = null
+    private var lastRenderedLogText: String? = null
     private val previewDecodeLock = Any()
-    private val previewBitmapSlots = arrayOfNulls<Bitmap>(2)
+    private val previewBitmapSlots = arrayOfNulls<Bitmap>(3)
     private var previewBitmapSlotIdx = 0
-
-    private fun renderLatestTftPreviewIfVisible() {
-        refreshTftPreviewCallback?.invoke()
-    }
+    private var lastDecodedFrameIndex = -1L
+    private val fullscreenBitmapSlots = arrayOfNulls<Bitmap>(3)
+    private var fullscreenBitmapSlotIdx = 0
+    private var lastFullscreenFrameIndex = -1L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         appSettings = AppSettings.getInstance(this)
@@ -236,8 +244,10 @@ class MainActivity : AppCompatActivity() {
             else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
         )
         super.onCreate(savedInstanceState)
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        setupEdgeToEdgeInsets()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -289,9 +299,10 @@ class MainActivity : AppCompatActivity() {
         applyTheme(appSettings.appTheme)
 
         // Restore active tab (handles theme recreation / configuration changes)
-        val savedTab = savedInstanceState?.getInt("active_tab_id")
-            ?: if (appSettings.lastActiveTab != 0) appSettings.lastActiveTab else binding.bottomNav.selectedItemId
-        restoreActiveTab(savedTab)
+        val savedKey = savedInstanceState?.getString("active_tab_key")
+            ?: appSettings.activeTabKey
+        val savedAccountScrollY = savedInstanceState?.getInt("account_scroll_y", 0) ?: 0
+        restoreActiveTab(tabKeyToId(savedKey), preservedAccountScrollY = savedAccountScrollY)
 
         // Observers
         observeBleState()
@@ -299,7 +310,6 @@ class MainActivity : AppCompatActivity() {
         setupTftAndLogDebugger()
         observeNavigation()
         observeTelephonyAndAlerts()
-        observeTelemetry()
         observeMaintenance()
         observeFuelLog()
 
@@ -365,6 +375,9 @@ class MainActivity : AppCompatActivity() {
         try {
             unregisterReceiver(hardwareStateReceiver)
         } catch (_: Exception) {}
+        if (!isChangingConfigurations) {
+            TftWifiMirrorManager.getInstance(this).stopLocalDebugPreview()
+        }
         super.onStop()
     }
 
@@ -389,6 +402,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        pendingSeekThemeRunnable?.let { mainUiHandler.removeCallbacks(it) }
+        pendingSeekThemeRunnable = null
+        renderLogJob?.cancel()
+        renderLogJob = null
         fullscreenTftDialog?.dismiss()
         fullscreenTftDialog = null
         fullscreenTftImageView = null
@@ -398,12 +415,8 @@ class MainActivity : AppCompatActivity() {
             binding.labsTftDebug.ivTftDebugPreview.setImageDrawable(null)
         }
         synchronized(previewDecodeLock) {
-            for (i in previewBitmapSlots.indices) {
-                previewBitmapSlots[i]?.let { bmp ->
-                    if (!bmp.isRecycled) bmp.recycle()
-                }
-                previewBitmapSlots[i] = null
-            }
+            previewBitmapSlots.fill(null)
+            fullscreenBitmapSlots.fill(null)
         }
         if (!isChangingConfigurations) {
             TftWifiMirrorManager.getInstance(this).stopLocalDebugPreview()
@@ -480,31 +493,88 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        val activeTabId = when {
-            binding.scrollFuel.visibility == View.VISIBLE -> R.id.nav_fuel
-            binding.scrollSupport.visibility == View.VISIBLE -> R.id.nav_support
-            binding.scrollSettings.visibility == View.VISIBLE -> R.id.nav_account
-            else -> R.id.nav_home
+        val tabKey = tabIdToKey(currentActiveTabId)
+        outState.putString("active_tab_key", tabKey)
+        if (::binding.isInitialized) {
+            outState.putInt("account_scroll_y", binding.scrollSettings.scrollY)
         }
-        outState.putInt("active_tab_id", activeTabId)
         if (::appSettings.isInitialized) {
-            appSettings.lastActiveTab = activeTabId
+            appSettings.activeTabKey = tabKey
         }
     }
 
     override fun onRestoreInstanceState(savedInstanceState: Bundle) {
         super.onRestoreInstanceState(savedInstanceState)
-        val savedTab = savedInstanceState.getInt("active_tab_id", 0)
-        if (savedTab != 0) {
-            restoreActiveTab(savedTab)
+        val savedKey = savedInstanceState.getString("active_tab_key")
+        val savedTab = if (savedKey != null) tabKeyToId(savedKey) else currentActiveTabId
+        val savedAccountScrollY = savedInstanceState.getInt("account_scroll_y", 0)
+        if (savedTab != currentActiveTabId) {
+            restoreActiveTab(savedTab, preservedAccountScrollY = savedAccountScrollY)
+        } else if (savedTab == R.id.nav_account && savedAccountScrollY > 0) {
+            binding.scrollSettings.post { binding.scrollSettings.scrollTo(0, savedAccountScrollY) }
         }
+    }
+
+    private fun setupEdgeToEdgeInsets() {
+        val baseTopLeft = binding.layoutTopBar.paddingLeft
+        val baseTopTop = binding.layoutTopBar.paddingTop
+        val baseTopRight = binding.layoutTopBar.paddingRight
+        val baseTopBottom = binding.layoutTopBar.paddingBottom
+
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { root, insets ->
+            val sysBars = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            val imeVisible = insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())
+            val imeInsets = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+
+            binding.layoutTopBar.setPadding(
+                baseTopLeft + sysBars.left,
+                baseTopTop + sysBars.top,
+                baseTopRight + sysBars.right,
+                baseTopBottom
+            )
+
+            if (imeVisible) {
+                if (binding.bottomNav.visibility != View.GONE) {
+                    binding.bottomNav.visibility = View.GONE
+                }
+                root.setPadding(0, 0, 0, imeInsets.bottom)
+            } else {
+                if (binding.bottomNav.visibility != View.VISIBLE) {
+                    binding.bottomNav.visibility = View.VISIBLE
+                }
+                binding.bottomNav.setPadding(sysBars.left, 0, sysBars.right, sysBars.bottom)
+                root.setPadding(0, 0, 0, 0)
+            }
+            insets
+        }
+        androidx.core.view.ViewCompat.requestApplyInsets(binding.root)
+    }
+
+    private fun tabIdToKey(tabId: Int): String = when (tabId) {
+        R.id.nav_fuel -> AppSettings.TAB_FUEL
+        R.id.nav_support -> AppSettings.TAB_SUPPORT
+        R.id.nav_account -> AppSettings.TAB_ACCOUNT
+        else -> AppSettings.TAB_HOME
+    }
+
+    private fun tabKeyToId(key: String?): Int = when (AppSettings.normalizeTabKey(key)) {
+        AppSettings.TAB_FUEL -> R.id.nav_fuel
+        AppSettings.TAB_SUPPORT -> R.id.nav_support
+        AppSettings.TAB_ACCOUNT -> R.id.nav_account
+        else -> R.id.nav_home
     }
 
     private fun setupBottomNavigation() {
         binding.bottomNav.setOnItemSelectedListener { item ->
+            if (isRestoringTabSelection) return@setOnItemSelectedListener true
             provideHapticFeedback()
+            if (item.itemId == currentActiveTabId) return@setOnItemSelectedListener true
+            currentActiveTabId = item.itemId
             if (::appSettings.isInitialized) {
-                appSettings.lastActiveTab = item.itemId
+                appSettings.activeTabKey = tabIdToKey(item.itemId)
             }
             when (item.itemId) {
                 R.id.nav_home -> switchTab(binding.scrollCockpit)
@@ -516,37 +586,69 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun restoreActiveTab(tabId: Int) {
-        when (tabId) {
-            R.id.nav_fuel -> {
-                binding.bottomNav.selectedItemId = R.id.nav_fuel
-                switchTab(binding.scrollFuel)
+    private fun restoreActiveTab(tabId: Int, preservedAccountScrollY: Int = 0) {
+        val targetView = when (tabId) {
+            R.id.nav_fuel -> binding.scrollFuel
+            R.id.nav_support -> binding.scrollSupport
+            R.id.nav_account -> binding.scrollSettings
+            else -> binding.scrollCockpit
+        }
+        val normalizedId = when (targetView) {
+            binding.scrollFuel -> R.id.nav_fuel
+            binding.scrollSupport -> R.id.nav_support
+            binding.scrollSettings -> R.id.nav_account
+            else -> R.id.nav_home
+        }
+        currentActiveTabId = normalizedId
+        if (binding.bottomNav.selectedItemId != normalizedId) {
+            isRestoringTabSelection = true
+            try {
+                binding.bottomNav.selectedItemId = normalizedId
+            } finally {
+                isRestoringTabSelection = false
             }
-            R.id.nav_support -> {
-                binding.bottomNav.selectedItemId = R.id.nav_support
-                switchTab(binding.scrollSupport)
-            }
-            R.id.nav_account -> {
-                binding.bottomNav.selectedItemId = R.id.nav_account
-                switchTab(binding.scrollSettings)
-            }
-            else -> {
-                binding.bottomNav.selectedItemId = R.id.nav_home
-                switchTab(binding.scrollCockpit)
-            }
+        }
+        switchTab(
+            targetView,
+            resetAccountScrollToTop = (normalizedId == R.id.nav_account && preservedAccountScrollY == 0)
+        )
+        if (normalizedId == R.id.nav_account && preservedAccountScrollY > 0) {
+            binding.scrollSettings.post { binding.scrollSettings.scrollTo(0, preservedAccountScrollY) }
         }
     }
 
-    private fun switchTab(targetView: View): Boolean {
-        binding.scrollCockpit.visibility = View.GONE
-        binding.scrollFuel.visibility = View.GONE
-        binding.scrollSupport.visibility = View.GONE
-        binding.scrollSettings.visibility = View.GONE
+    private fun switchTab(targetView: View, resetAccountScrollToTop: Boolean = true): Boolean {
+        val visibleCount = (if (binding.scrollCockpit.visibility == View.VISIBLE) 1 else 0) +
+            (if (binding.scrollFuel.visibility == View.VISIBLE) 1 else 0) +
+            (if (binding.scrollSupport.visibility == View.VISIBLE) 1 else 0) +
+            (if (binding.scrollSettings.visibility == View.VISIBLE) 1 else 0)
+        val alreadyVisible = targetView.visibility == View.VISIBLE && visibleCount == 1
+        if (!alreadyVisible) {
+            binding.scrollCockpit.visibility = if (targetView === binding.scrollCockpit) View.VISIBLE else View.GONE
+            binding.scrollFuel.visibility = if (targetView === binding.scrollFuel) View.VISIBLE else View.GONE
+            binding.scrollSupport.visibility = if (targetView === binding.scrollSupport) View.VISIBLE else View.GONE
+            binding.scrollSettings.visibility = if (targetView === binding.scrollSettings) View.VISIBLE else View.GONE
+        }
 
-        targetView.visibility = View.VISIBLE
-        if (targetView === binding.scrollSettings) {
-            renderLatestTftPreviewIfVisible()
-            renderDebugLogsUi(DebugLogRepository.entries.value, forceRender = true)
+        val isAccount = targetView === binding.scrollSettings
+        isAccountTabVisible.value = isAccount
+        if (isAccount) {
+            if (!alreadyVisible && resetAccountScrollToTop) {
+                binding.scrollSettings.scrollTo(0, 0)
+            }
+            if (lastRenderedLogText == null) {
+                renderDebugLogsUi(DebugLogRepository.entries.value, forceRender = true)
+            }
+        } else if (fullscreenTftDialog?.isShowing != true) {
+            val mirrorMgr = TftWifiMirrorManager.getInstance(this)
+            if (mirrorMgr.isLocalPreviewActiveFlow.value) {
+                mirrorMgr.stopLocalDebugPreview()
+            }
+        }
+
+        if (targetView === binding.scrollFuel && fuelListThemeDirty && ::fuelLogManager.isInitialized) {
+            fuelListThemeDirty = false
+            updateFuelList(fuelLogManager.entries.value)
         }
         return true
     }
@@ -2557,7 +2659,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             if (!appSettings.isDarkMode) {
                 appSettings.isDarkMode = true
-                appSettings.lastActiveTab = R.id.nav_account
+                appSettings.activeTabKey = AppSettings.TAB_ACCOUNT
                 androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES)
             } else {
                 applyTheme(appSettings.appTheme)
@@ -2568,7 +2670,7 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             if (appSettings.isDarkMode) {
                 appSettings.isDarkMode = false
-                appSettings.lastActiveTab = R.id.nav_account
+                appSettings.activeTabKey = AppSettings.TAB_ACCOUNT
                 androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO)
             } else {
                 applyTheme(appSettings.appTheme)
@@ -2619,45 +2721,68 @@ class MainActivity : AppCompatActivity() {
         binding.tvRedValue.text = appSettings.customAccentRed.toString()
         binding.tvGreenValue.text = appSettings.customAccentGreen.toString()
         binding.tvBlueValue.text = appSettings.customAccentBlue.toString()
-        val initialHex = String.format("#%02X%02X%02X", appSettings.customAccentRed, appSettings.customAccentGreen, appSettings.customAccentBlue)
-        binding.etCustomHex.setText(initialHex)
+        val initialHex = String.format(Locale.US, "#%02X%02X%02X", appSettings.customAccentRed, appSettings.customAccentGreen, appSettings.customAccentBlue)
+        isUpdatingHexText = true
+        try {
+            binding.etCustomHex.setText(initialHex)
+        } finally {
+            isUpdatingHexText = false
+        }
         val initialCustomColor = appSettings.getCustomAccentColor()
         binding.viewRgbLivePreview.backgroundTintList = ColorStateList.valueOf(initialCustomColor)
         binding.viewCustomThemeDot.backgroundTintList = ColorStateList.valueOf(initialCustomColor)
 
-        val onSeekChanged = { fromUser: Boolean ->
+        val commitCustomAccentTheme = { r: Int, g: Int, b: Int ->
+            appSettings.setCustomAccentRgb(r, g, b)
+            applyTheme(AppSettings.THEME_CUSTOM)
+        }
+
+        val onSeekChanged = { fromUser: Boolean, immediateApply: Boolean ->
             val r = binding.seekRed.progress
             val g = binding.seekGreen.progress
             val b = binding.seekBlue.progress
             binding.tvRedValue.text = r.toString()
             binding.tvGreenValue.text = g.toString()
             binding.tvBlueValue.text = b.toString()
-            val hex = String.format("#%02X%02X%02X", r, g, b)
+            val hex = String.format(Locale.US, "#%02X%02X%02X", r, g, b)
             if (!binding.etCustomHex.isFocused && binding.etCustomHex.text.toString() != hex) {
-                binding.etCustomHex.setText(hex)
+                isUpdatingHexText = true
+                try {
+                    binding.etCustomHex.setText(hex)
+                } finally {
+                    isUpdatingHexText = false
+                }
             }
             val color = Color.rgb(r, g, b)
             binding.viewRgbLivePreview.backgroundTintList = ColorStateList.valueOf(color)
             binding.viewCustomThemeDot.backgroundTintList = ColorStateList.valueOf(color)
 
-            appSettings.customAccentRed = r
-            appSettings.customAccentGreen = g
-            appSettings.customAccentBlue = b
-
             if (fromUser || appSettings.appTheme == AppSettings.THEME_CUSTOM) {
-                applyTheme(AppSettings.THEME_CUSTOM)
+                pendingSeekThemeRunnable?.let { mainUiHandler.removeCallbacks(it) }
+                if (immediateApply) {
+                    pendingSeekThemeRunnable = null
+                    commitCustomAccentTheme(r, g, b)
+                } else {
+                    val runnable = Runnable {
+                        pendingSeekThemeRunnable = null
+                        commitCustomAccentTheme(binding.seekRed.progress, binding.seekGreen.progress, binding.seekBlue.progress)
+                    }
+                    pendingSeekThemeRunnable = runnable
+                    mainUiHandler.postDelayed(runnable, 90L)
+                }
             }
         }
 
         val seekListener = object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
-                    onSeekChanged(true)
+                    onSeekChanged(true, false)
                 }
             }
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
                 provideHapticFeedback()
+                onSeekChanged(true, true)
             }
         }
 
@@ -2671,9 +2796,14 @@ class MainActivity : AppCompatActivity() {
             binding.seekRed.progress = r
             binding.seekGreen.progress = g
             binding.seekBlue.progress = b
-            val hex = String.format("#%02X%02X%02X", r, g, b)
-            binding.etCustomHex.setText(hex)
-            onSeekChanged(true)
+            val hex = String.format(Locale.US, "#%02X%02X%02X", r, g, b)
+            isUpdatingHexText = true
+            try {
+                binding.etCustomHex.setText(hex)
+            } finally {
+                isUpdatingHexText = false
+            }
+            onSeekChanged(true, true)
             showFeedback("$name applied")
         }
 
@@ -2702,17 +2832,22 @@ class MainActivity : AppCompatActivity() {
                     binding.tvRedValue.text = r.toString()
                     binding.tvGreenValue.text = g.toString()
                     binding.tvBlueValue.text = b.toString()
-                    val canonicalHex = String.format("#%02X%02X%02X", r, g, b)
+                    val canonicalHex = String.format(Locale.US, "#%02X%02X%02X", r, g, b)
                     if (binding.etCustomHex.text.toString() != canonicalHex) {
-                        binding.etCustomHex.setText(canonicalHex)
-                        binding.etCustomHex.setSelection(canonicalHex.length)
+                        isUpdatingHexText = true
+                        try {
+                            binding.etCustomHex.setText(canonicalHex)
+                            binding.etCustomHex.setSelection(canonicalHex.length)
+                        } finally {
+                            isUpdatingHexText = false
+                        }
                     }
                     binding.viewRgbLivePreview.backgroundTintList = ColorStateList.valueOf(color)
                     binding.viewCustomThemeDot.backgroundTintList = ColorStateList.valueOf(color)
 
-                    appSettings.customAccentRed = r
-                    appSettings.customAccentGreen = g
-                    appSettings.customAccentBlue = b
+                    pendingSeekThemeRunnable?.let { mainUiHandler.removeCallbacks(it) }
+                    pendingSeekThemeRunnable = null
+                    appSettings.setCustomAccentRgb(r, g, b)
 
                     applyTheme(AppSettings.THEME_CUSTOM)
                     if (showFeedbackMessage) {
@@ -2733,6 +2868,7 @@ class MainActivity : AppCompatActivity() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
+                if (isUpdatingHexText) return
                 if (binding.etCustomHex.isFocused) {
                     val str = s?.toString()?.trim() ?: ""
                     val clean = str.removePrefix("#").trim()
@@ -2770,13 +2906,16 @@ class MainActivity : AppCompatActivity() {
         currentTheme = theme
         appSettings.appTheme = themeKey
 
-        // 1. System Navigation & Status Bars
+        // 1. System Navigation & Status Bars (Edge-to-Edge transparent bars + light/dark icon appearance)
         WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = theme.isLight
             isAppearanceLightNavigationBars = theme.isLight
         }
-        window.statusBarColor = theme.backgroundColor
-        window.navigationBarColor = theme.surfaceColor
+        @Suppress("DEPRECATION")
+        run {
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.TRANSPARENT
+        }
 
         // 2. Root Canvases, ScrollViews & Dividers
         binding.rootLayout.setBackgroundColor(theme.backgroundColor)
@@ -2886,15 +3025,33 @@ class MainActivity : AppCompatActivity() {
             card.strokeColor = if (isSelected) theme.accentColor else theme.cardBorderColor
             card.strokeWidth = if (isSelected) dpToPx(2) else dpToPx(1)
         }
+        binding.tvThemeAmoledTitle.text = if (theme.isLight) "Pearl Minimal" else "AMOLED Black"
+        binding.viewThemeAmoledDot.backgroundTintList = null
+        binding.viewThemeAmoledDot.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (theme.isLight) Color.parseColor("#E2E8F0") else Color.parseColor("#000000"))
+            setStroke(
+                dpToPx(2),
+                if (theme.isLight) Color.parseColor("#94A3B8") else Color.parseColor("#52525B")
+            )
+        }
 
         // Custom RGB Swatches & Highlight
         val customColor = appSettings.getCustomAccentColor()
         binding.viewCustomThemeDot.backgroundTintList = ColorStateList.valueOf(customColor)
         binding.viewRgbLivePreview.backgroundTintList = ColorStateList.valueOf(customColor)
+        binding.etCustomHex.background = createThemedInputDrawable()
+        binding.etCustomHex.setTextColor(theme.textPrimaryColor)
+        binding.etCustomHex.setHintTextColor(theme.textTertiaryColor)
         if (!binding.etCustomHex.isFocused) {
-            val hex = String.format("#%02X%02X%02X", appSettings.customAccentRed, appSettings.customAccentGreen, appSettings.customAccentBlue)
+            val hex = String.format(Locale.US, "#%02X%02X%02X", appSettings.customAccentRed, appSettings.customAccentGreen, appSettings.customAccentBlue)
             if (binding.etCustomHex.text.toString() != hex) {
-                binding.etCustomHex.setText(hex)
+                isUpdatingHexText = true
+                try {
+                    binding.etCustomHex.setText(hex)
+                } finally {
+                    isUpdatingHexText = false
+                }
             }
         }
         binding.btnApplyHex.backgroundTintList = ColorStateList.valueOf(theme.primaryColor)
@@ -3022,6 +3179,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvHomeOdometer.setTextColor(theme.accentColor)
         binding.tvHomeMileage.setTextColor(theme.accentColor)
         binding.tvAccountOdometer.setTextColor(theme.accentColor)
+        binding.btnEditOdo.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.btnEditOdo.setTextColor(theme.accentColor)
         binding.btnEditOdo.strokeColor = ColorStateList.valueOf(theme.borderColor)
 
@@ -3084,10 +3242,59 @@ class MainActivity : AppCompatActivity() {
         binding.tvDocumentsBadge.setTextColor(theme.accentColor)
         binding.tvVaultQrAction.setTextColor(theme.accentColor)
         binding.tvVaultBackupAction.setTextColor(theme.accentColor)
-        binding.btnConfigHome.setTextColor(theme.accentColor)
-        binding.btnConfigWork.setTextColor(theme.accentColor)
-        binding.btnConfigFavPlace.setTextColor(theme.accentColor)
-        binding.btnEditSmsRejectMsg.setTextColor(theme.accentColor)
+        val compactOutlinedBtns = listOf(
+            binding.btnConfigHome,
+            binding.btnConfigWork,
+            binding.btnConfigFavPlace,
+            binding.btnEditSmsRejectMsg
+        )
+        for (btn in compactOutlinedBtns) {
+            btn.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+            btn.strokeColor = ColorStateList.valueOf(theme.borderColor)
+            btn.strokeWidth = dpToPx(1)
+            btn.setTextColor(theme.accentColor)
+        }
+
+        fun applyRoundedSurfaceBox(view: View, fillColor: Int, strokeColor: Int, radiusDp: Float = 10f) {
+            val pl = view.paddingLeft
+            val pt = view.paddingTop
+            val pr = view.paddingRight
+            val pb = view.paddingBottom
+            view.backgroundTintList = null
+            view.background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dpToPx(radiusDp.toInt()).toFloat()
+                setColor(fillColor)
+                setStroke(dpToPx(1), strokeColor)
+            }
+            view.setPadding(pl, pt, pr, pb)
+        }
+
+        val innerBoxFill = theme.surfaceColor
+        val innerBoxStroke = theme.cardBorderColor
+        listOf(
+            binding.tvPacketHex,
+            binding.tvPacketDecoded,
+            binding.tvWhatsAppAlertBanner,
+            binding.tvClusterActionStatus,
+            binding.labsTftDebug.tvBleDiagBanner,
+            binding.labsTftDebug.tvTftDbgTouchInfo,
+            binding.labsTftDebug.scrollDebugLogs
+        ).forEach { applyRoundedSurfaceBox(it, innerBoxFill, innerBoxStroke, 10f) }
+
+        binding.tvPacketHex.setTextColor(theme.textSecondaryColor)
+        binding.tvPacketDecoded.setTextColor(theme.textSecondaryColor)
+        binding.labsTftDebug.tvBleDiagBanner.setTextColor(theme.textPrimaryColor)
+        binding.labsTftDebug.tvTftDbgTouchInfo.setTextColor(theme.textSecondaryColor)
+        binding.labsTftDebug.tvTftDbgMetrics.setTextColor(theme.textSecondaryColor)
+        binding.labsTftDebug.tvDebugLogStats.setTextColor(theme.textSecondaryColor)
+        binding.labsTftDebug.tvDebugLogOutput.setTextColor(theme.textSecondaryColor)
+        applyRoundedSurfaceBox(binding.tvMissedCallBadge, theme.subtleColor, theme.borderColor, 16f)
+        binding.tvMissedCallBadge.setTextColor(theme.accentColor)
+        applyRoundedSurfaceBox(binding.labsTftDebug.tvTftDbgStatus, theme.subtleColor, theme.borderColor, 16f)
+        if (binding.labsTftDebug.tvTftDbgStatus.text == "IDLE") {
+            binding.labsTftDebug.tvTftDbgStatus.setTextColor(theme.textSecondaryColor)
+        }
 
         val testButtons = listOf(
             binding.btnTestLeft, binding.btnTestStraight, binding.btnTestRight, binding.btnTestRoundabout,
@@ -3160,10 +3367,15 @@ class MainActivity : AppCompatActivity() {
         binding.bottomNav.itemIconTintList = navColorList
         binding.bottomNav.itemTextColor = navColorList
 
-        // Dynamic Lists
-        try {
-            updateFuelList(fuelLogManager.entries.value)
-        } catch (_: Exception) {}
+        // Dynamic Lists (defer off-screen Fuel list inflation until tab becomes visible)
+        if (binding.scrollFuel.visibility == View.VISIBLE) {
+            fuelListThemeDirty = false
+            try {
+                updateFuelList(fuelLogManager.entries.value)
+            } catch (_: Exception) {}
+        } else {
+            fuelListThemeDirty = true
+        }
 
         updateNavAppSelectionUi()
         updateHeroRangeDisplay()
@@ -4707,7 +4919,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun observeBleState() {
         lifecycleScope.launch {
-            bleManager.connectionState.collectLatest { state ->
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                bleManager.connectionState.collectLatest { state ->
                 when (state) {
                     is BleConnectionState.Disconnected -> {
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
@@ -4788,11 +5001,14 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+            }
         }
 
         lifecycleScope.launch {
-            bleManager.discoveredBikes.collectLatest { bikes ->
-                updateDeviceList(bikes)
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                bleManager.discoveredBikes.collectLatest { bikes ->
+                    updateDeviceList(bikes)
+                }
             }
         }
 
@@ -4800,8 +5016,8 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 bleManager.lastSentPacket.collectLatest { packet ->
                     if (packet != null) {
-                        val hex = com.pulsarnav.app.protocol.OtcPacketBuilder.toHex(packet)
-                        binding.tvPacketHex.text = "Last Packet (${packet.size}B):\n$hex"
+                        val compactHex = DebugLogRepository.toCompactHex(packet, maxBytes = 12)
+                        binding.tvPacketHex.text = "Last Frame (${packet.size}B): $compactHex • payload redacted"
                         binding.tvPacketDecoded.text = "Decoded: ${DebugLogRepository.summarizeBlePacket(packet)}"
                     } else {
                         binding.tvPacketHex.text = "Last BLE Packet: None"
@@ -4893,7 +5109,12 @@ class MainActivity : AppCompatActivity() {
         val dbg = binding.labsTftDebug
 
         attachTftTouchMapper(dbg.ivTftDebugPreview) { x, y ->
-            wifiMgr.startLocalDebugPreview()
+            val live = wifiMgr.mirrorState.value.status != TftMirrorStatus.IDLE &&
+                wifiMgr.mirrorState.value.status != TftMirrorStatus.ERROR
+            if (!wifiMgr.isLocalPreviewActiveFlow.value && !live) {
+                showFeedback("Tap 'Start Preview' first to interact with the cluster")
+                return@attachTftTouchMapper
+            }
             wifiMgr.simulateClusterTouch(9, x, y)
             dbg.tvTftDbgTouchInfo.text = "Touch mapped @ ($x, $y) on 800×480"
         }
@@ -4951,11 +5172,25 @@ class MainActivity : AppCompatActivity() {
             dbg.btnTftDbgHitboxes.text = if (guides) "⊞ Guides ON" else "⊞ Guides"
         }
 
-        // Prevent outer NestedScrollView from hijacking scrolling inside the monospace log viewport
+        // Yield smoothly back to outer NestedScrollView when inner log console cannot scroll in drag direction
+        var lastLogTouchY = 0f
         dbg.scrollDebugLogs.setOnTouchListener { v, event ->
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
-                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                MotionEvent.ACTION_DOWN -> {
+                    lastLogTouchY = event.y
+                    val canScroll = v.canScrollVertically(1) || v.canScrollVertically(-1)
+                    v.parent?.requestDisallowInterceptTouchEvent(canScroll)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dy = event.y - lastLogTouchY
+                    lastLogTouchY = event.y
+                    val canConsume = when {
+                        dy > 0f -> v.canScrollVertically(-1)
+                        dy < 0f -> v.canScrollVertically(1)
+                        else -> v.canScrollVertically(1) || v.canScrollVertically(-1)
+                    }
+                    v.parent?.requestDisallowInterceptTouchEvent(canConsume)
+                }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
                     v.parent?.requestDisallowInterceptTouchEvent(false)
             }
@@ -4990,14 +5225,19 @@ class MainActivity : AppCompatActivity() {
 
         dbg.btnLogCopy.setOnClickListener {
             provideHapticFeedback()
-            val filtered = DebugLogRepository.filterEntries(DebugLogRepository.entries.value, activeDebugFilter)
-            val payload = DebugLogRepository.formatLogsForExport(
-                filtered,
-                headerInfo = "${bleManager.getDebugDiagnosticsSummary()} • Model=${appSettings.selectedModelId}"
-            )
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("PulsarNav Logs", payload))
-            showFeedback("Copied ${filtered.size} filtered log entries")
+            lifecycleScope.launch {
+                val (count, payload) = withContext(Dispatchers.Default) {
+                    val filtered = DebugLogRepository.filterEntries(DebugLogRepository.entries.value, activeDebugFilter)
+                    val formatted = DebugLogRepository.formatLogsForExport(
+                        filtered,
+                        headerInfo = "${bleManager.getDebugDiagnosticsSummary()} • Model=${appSettings.selectedModelId}"
+                    )
+                    filtered.size to formatted
+                }
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("PulsarNav Logs", payload))
+                showFeedback("Copied $count filtered log entries")
+            }
         }
 
         dbg.btnLogShare.setOnClickListener {
@@ -5012,80 +5252,89 @@ class MainActivity : AppCompatActivity() {
             showFeedback("Debug log buffer cleared")
         }
 
-        suspend fun renderFrameIfVisible(
-            frame: com.pulsarnav.app.wifi.TftDebugFrame?,
-            mirrorState: com.pulsarnav.app.wifi.TftMirrorState,
-            anyActive: Boolean
-        ) {
-            if (frame != null && anyActive) {
-                val previewVisible = binding.scrollSettings.visibility == View.VISIBLE ||
-                    fullscreenTftDialog?.isShowing == true
-                if (previewVisible) {
-                    val bmp = withContext(Dispatchers.Default) {
-                        synchronized(previewDecodeLock) {
-                            val slot = previewBitmapSlotIdx
-                            val reusable = previewBitmapSlots[slot]
-                            val opts = BitmapFactory.Options().apply {
-                                inMutable = true
-                                inPreferredConfig = Bitmap.Config.ARGB_8888
-                                if (reusable != null && !reusable.isRecycled &&
-                                    reusable.width == frame.width && reusable.height == frame.height
-                                ) {
-                                    inBitmap = reusable
-                                }
-                            }
-                            val decoded = try {
-                                BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
-                            } catch (_: IllegalArgumentException) {
-                                opts.inBitmap = null
-                                BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
-                            }
-                            if (decoded != null) {
-                                previewBitmapSlots[slot] = decoded
-                                previewBitmapSlotIdx = slot xor 1
-                            }
-                            decoded
-                        }
-                    }
-                    if (bmp != null) {
-                        dbg.ivTftDebugPreview.setImageBitmap(bmp)
-                        dbg.layoutTftDebugEmpty.visibility = View.GONE
-                        fullscreenTftImageView?.setImageBitmap(bmp)
+        suspend fun decodeSlotBitmap(
+            frame: com.pulsarnav.app.wifi.TftDebugFrame,
+            slots: Array<Bitmap?>,
+            targetSlot: Int
+        ): Bitmap? = withContext(Dispatchers.Default) {
+            synchronized(previewDecodeLock) {
+                val reusable = slots[targetSlot]
+                val opts = BitmapFactory.Options().apply {
+                    inMutable = true
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    if (reusable != null && !reusable.isRecycled &&
+                        reusable.width == frame.width && reusable.height == frame.height
+                    ) {
+                        inBitmap = reusable
                     }
                 }
-                val kb = frame.byteSize / 1024f
-                val motionBadge = if (mirrorState.isBikeStationary) "PARK" else "RIDE"
-                val metricsText = String.format(
-                    Locale.US,
-                    "%dx%d • %.1f KB / 30 KB • Q=%d • #%d • %s",
-                    frame.width,
-                    frame.height,
-                    kb,
-                    frame.quality,
-                    frame.frameIndex,
-                    motionBadge
-                )
-                dbg.tvTftDbgMetrics.text = metricsText
-                fullscreenTftMetricsView?.text = metricsText
-                dbg.pbTftJpegBudget.progress =
-                    frame.byteSize.coerceIn(0, TftWifiProtocol.UDP_MAX_JPEG_BYTES)
-            } else if (!anyActive) {
-                dbg.layoutTftDebugEmpty.visibility = View.VISIBLE
-                dbg.pbTftJpegBudget.progress = 0
-                dbg.tvTftDbgMetrics.text = "800×480 • Idle • JPEG budget <= 30 KB"
+                val decoded = try {
+                    BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
+                } catch (_: IllegalArgumentException) {
+                    opts.inBitmap = null
+                    BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, opts)
+                }
+                if (decoded != null) {
+                    slots[targetSlot] = decoded
+                }
+                decoded
             }
         }
 
-        refreshTftPreviewCallback = {
-            val frame = wifiMgr.latestDebugFrame.value
-            val mirrorState = wifiMgr.mirrorState.value
-            val anyActive = (mirrorState.status != TftMirrorStatus.IDLE &&
-                mirrorState.status != TftMirrorStatus.ERROR) ||
-                wifiMgr.isLocalPreviewActiveFlow.value
+        suspend fun renderFrameIfVisible(
+            frame: com.pulsarnav.app.wifi.TftDebugFrame?,
+            mirrorState: com.pulsarnav.app.wifi.TftMirrorState,
+            anyActive: Boolean,
+            accountVisible: Boolean
+        ) {
             if (frame != null && anyActive) {
-                lifecycleScope.launch {
-                    renderFrameIfVisible(frame, mirrorState, anyActive = true)
+                val fullscreenVisible = fullscreenTftDialog?.isShowing == true
+                if (accountVisible && frame.frameIndex != lastDecodedFrameIndex) {
+                    val targetSlot = (previewBitmapSlotIdx + 1) % previewBitmapSlots.size
+                    val bmp = decodeSlotBitmap(frame, previewBitmapSlots, targetSlot)
+                    if (bmp != null && isAccountTabVisible.value && !isDestroyed && !isFinishing) {
+                        dbg.ivTftDebugPreview.setImageBitmap(bmp)
+                        dbg.layoutTftDebugEmpty.visibility = View.GONE
+                        previewBitmapSlotIdx = targetSlot
+                        lastDecodedFrameIndex = frame.frameIndex
+                    }
                 }
+                if (fullscreenVisible && frame.frameIndex != lastFullscreenFrameIndex) {
+                    val targetFullSlot = (fullscreenBitmapSlotIdx + 1) % fullscreenBitmapSlots.size
+                    val fullBmp = decodeSlotBitmap(frame, fullscreenBitmapSlots, targetFullSlot)
+                    val ivFull = fullscreenTftImageView
+                    if (fullBmp != null && ivFull != null && fullscreenTftDialog?.isShowing == true) {
+                        ivFull.setImageBitmap(fullBmp)
+                        fullscreenBitmapSlotIdx = targetFullSlot
+                        lastFullscreenFrameIndex = frame.frameIndex
+                    }
+                }
+                if (accountVisible || fullscreenVisible) {
+                    val kb = frame.byteSize / 1024f
+                    val motionBadge = if (mirrorState.isBikeStationary) "PARK" else "RIDE"
+                    val metricsText = String.format(
+                        Locale.US,
+                        "%dx%d • %.1f KB / 30 KB • Q=%d • #%d • %s",
+                        frame.width,
+                        frame.height,
+                        kb,
+                        frame.quality,
+                        frame.frameIndex,
+                        motionBadge
+                    )
+                    if (accountVisible) {
+                        dbg.tvTftDbgMetrics.text = metricsText
+                        dbg.pbTftJpegBudget.progress =
+                            frame.byteSize.coerceIn(0, TftWifiProtocol.UDP_MAX_JPEG_BYTES)
+                    }
+                    fullscreenTftMetricsView?.text = metricsText
+                }
+            } else if (!anyActive) {
+                lastDecodedFrameIndex = -1L
+                lastFullscreenFrameIndex = -1L
+                dbg.layoutTftDebugEmpty.visibility = View.VISIBLE
+                dbg.pbTftJpegBudget.progress = 0
+                dbg.tvTftDbgMetrics.text = "800×480 • Idle • JPEG budget <= 30 KB"
             }
         }
 
@@ -5096,10 +5345,15 @@ class MainActivity : AppCompatActivity() {
                     combine(
                         wifiMgr.latestDebugFrame,
                         wifiMgr.mirrorState,
-                        wifiMgr.isLocalPreviewActiveFlow
-                    ) { frame, mirrorState, localActive ->
-                        Triple(frame, mirrorState, localActive)
-                    }.collectLatest { (frame, mirrorState, localActive) ->
+                        wifiMgr.isLocalPreviewActiveFlow,
+                        isAccountTabVisible
+                    ) { frame, mirrorState, localActive, accountVisible ->
+                        listOf(frame, mirrorState, localActive, accountVisible)
+                    }.collectLatest { tuple ->
+                        val frame = tuple[0] as com.pulsarnav.app.wifi.TftDebugFrame?
+                        val mirrorState = tuple[1] as com.pulsarnav.app.wifi.TftMirrorState
+                        val localActive = tuple[2] as Boolean
+                        val accountVisible = tuple[3] as Boolean
                         val liveWifi = mirrorState.status != TftMirrorStatus.IDLE &&
                             mirrorState.status != TftMirrorStatus.ERROR
                         val anyActive = liveWifi || localActive
@@ -5124,7 +5378,7 @@ class MainActivity : AppCompatActivity() {
                         dbg.tvTftDbgTouchInfo.text = "Last Cluster Input: $touchSummary"
                         fullscreenTftTouchView?.text = "Input: $touchSummary"
 
-                        renderFrameIfVisible(frame, mirrorState, anyActive)
+                        renderFrameIfVisible(frame, mirrorState, anyActive, accountVisible)
                     }
                 }
 
@@ -5152,16 +5406,34 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun attachTftTouchMapper(imageView: ImageView, onMappedTouch: (Int, Int) -> Unit) {
+        val touchSlop = android.view.ViewConfiguration.get(imageView.context).scaledTouchSlop.toFloat()
+        var downX = 0f
+        var downY = 0f
+        var movedBeyondSlop = false
+
         imageView.setOnTouchListener { v, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                    downX = event.x
+                    downY = event.y
+                    movedBeyondSlop = false
                     true
                 }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!movedBeyondSlop &&
+                        kotlin.math.hypot(event.x - downX, event.y - downY) > touchSlop
+                    ) {
+                        movedBeyondSlop = true
+                    }
+                    !movedBeyondSlop
+                }
                 MotionEvent.ACTION_UP -> {
-                    v.parent?.requestDisallowInterceptTouchEvent(false)
-                    val w = v.width.coerceAtLeast(1)
-                    val h = v.height.coerceAtLeast(1)
+                    if (movedBeyondSlop) return@setOnTouchListener false
+                    val w = v.width
+                    val h = v.height
+                    if (w <= 0 || h <= 0 || event.x < 0f || event.x >= w || event.y < 0f || event.y >= h) {
+                        return@setOnTouchListener false
+                    }
                     val x = ((event.x / w.toFloat()) * TftWifiProtocol.TFT_WIDTH).roundToInt()
                         .coerceIn(0, TftWifiProtocol.TFT_WIDTH - 1)
                     val y = ((event.y / h.toFloat()) * TftWifiProtocol.TFT_HEIGHT).roundToInt()
@@ -5172,7 +5444,7 @@ class MainActivity : AppCompatActivity() {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    movedBeyondSlop = true
                     false
                 }
                 else -> false
@@ -5211,6 +5483,12 @@ class MainActivity : AppCompatActivity() {
         }
         val btnClose = MaterialButton(this).apply {
             text = "Close"
+            insetTop = 0
+            insetBottom = 0
+            minWidth = 0
+            minimumWidth = 0
+            maxLines = 1
+            setPadding(dpToPx(12), dpToPx(6), dpToPx(12), dpToPx(6))
             setTextColor(Color.WHITE)
             backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1E293B"))
             setOnClickListener { dialog.dismiss() }
@@ -5261,9 +5539,17 @@ class MainActivity : AppCompatActivity() {
             val b = MaterialButton(this).apply {
                 text = label
                 textSize = 11f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                insetTop = 0
+                insetBottom = 0
+                minWidth = 0
+                minimumWidth = 0
+                minimumHeight = 0
+                setPadding(dpToPx(4), 0, dpToPx(4), 0)
                 setTextColor(Color.WHITE)
                 backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1E293B"))
-                layoutParams = LinearLayout.LayoutParams(0, dpToPx(42), 1f).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dpToPx(40), 1f).apply {
                     marginEnd = dpToPx(4)
                 }
                 setOnClickListener {
@@ -5285,10 +5571,16 @@ class MainActivity : AppCompatActivity() {
             tvTouch.text = "Touch @ ($x, $y)"
         }
 
-        // Seed currently cached frame immediately before next frame arrives
+        // Seed currently cached frame asynchronously off Main thread before next frame arrives
         wifiMgr.latestDebugFrame.value?.let { frame ->
-            BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size)?.let { bmp ->
-                ivFull.setImageBitmap(bmp)
+            lifecycleScope.launch {
+                val seeded = withContext(Dispatchers.Default) {
+                    BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size)
+                }
+                if (seeded != null && dialog.isShowing && ivFull === fullscreenTftImageView) {
+                    ivFull.setImageBitmap(seeded)
+                    lastFullscreenFrameIndex = frame.frameIndex
+                }
             }
         }
 
@@ -5303,6 +5595,10 @@ class MainActivity : AppCompatActivity() {
                 fullscreenTftImageView = null
                 fullscreenTftMetricsView = null
                 fullscreenTftTouchView = null
+                lastFullscreenFrameIndex = -1L
+                if (!isAccountTabVisible.value && wifiMgr.isLocalPreviewActiveFlow.value) {
+                    wifiMgr.stopLocalDebugPreview()
+                }
             }
         }
         dialog.setContentView(root)
@@ -5335,37 +5631,68 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderDebugLogsUi(entries: List<com.pulsarnav.app.debug.DebugLogEntry>, forceRender: Boolean) {
-        if (!forceRender && binding.scrollSettings.visibility != View.VISIBLE) return
+        if (!forceRender && !isAccountTabVisible.value) return
         val dbg = binding.labsTftDebug
         dbg.tvBleDiagBanner.text = bleManager.getDebugDiagnosticsSummary()
+        val filterSnapshot = activeDebugFilter
         val errCount = DebugLogRepository.errorCount.value
-        val filtered = DebugLogRepository.filterEntries(entries, activeDebugFilter)
-        val pauseTag = if (isDebugLogPaused) " • PAUSED" else ""
-        dbg.tvDebugLogStats.text = "${filtered.size}/${entries.size} • $errCount err$pauseTag"
 
-        if (isDebugLogPaused && !forceRender) return
-
-        val recent = if (filtered.size > 140) filtered.takeLast(140) else filtered
-        dbg.tvDebugLogOutput.text = if (recent.isEmpty()) {
-            "No entries matching '${activeDebugFilter.label}'. Trigger BLE, TFT preview, or NAV_V2 test."
-        } else {
-            recent.joinToString("\n") { DebugLogRepository.formatEntryLine(it) }
+        if (isDebugLogPaused && !forceRender) {
+            val filteredCount = DebugLogRepository.filterEntries(entries, filterSnapshot).size
+            dbg.tvDebugLogStats.text = "$filteredCount/${entries.size} • $errCount err • PAUSED"
+            return
         }
-        dbg.scrollDebugLogs.post {
-            dbg.scrollDebugLogs.fullScroll(View.FOCUS_DOWN)
+
+        renderLogJob?.cancel()
+        renderLogJob = lifecycleScope.launch {
+            val (statsText, formattedText) = withContext(Dispatchers.Default) {
+                val filtered = DebugLogRepository.filterEntries(entries, filterSnapshot)
+                val pauseTag = if (isDebugLogPaused) " • PAUSED" else ""
+                val stats = "${filtered.size}/${entries.size} • $errCount err$pauseTag"
+                val recent = if (filtered.size > 140) filtered.takeLast(140) else filtered
+                val body = if (recent.isEmpty()) {
+                    "No entries matching '${filterSnapshot.label}'. Trigger BLE, TFT preview, or NAV_V2 test."
+                } else {
+                    recent.joinToString("\n") { DebugLogRepository.formatEntryLine(it) }
+                }
+                stats to body
+            }
+
+            if (isDestroyed || isFinishing) return@launch
+            dbg.tvDebugLogStats.text = statsText
+
+            if (formattedText != lastRenderedLogText) {
+                val isFirstRender = lastRenderedLogText == null
+                val inner = dbg.scrollDebugLogs.getChildAt(0)
+                val wasNearBottom = inner == null ||
+                    !dbg.scrollDebugLogs.canScrollVertically(1) ||
+                    (inner.bottom - (dbg.scrollDebugLogs.height + dbg.scrollDebugLogs.scrollY) < dpToPx(24))
+                lastRenderedLogText = formattedText
+                dbg.tvDebugLogOutput.text = formattedText
+
+                // Only auto-scroll INSIDE scrollDebugLogs using focus-safe scrollTo() when user is already
+                // pinned at bottom on an explicit log append — never call fullScroll(FOCUS_DOWN), which
+                // hijacks focus up to outer scrollSettings and yanks the Account page to the bottom.
+                if (!isFirstRender && !isDebugLogPaused && wasNearBottom) {
+                    dbg.scrollDebugLogs.post {
+                        val content = dbg.scrollDebugLogs.getChildAt(0) ?: return@post
+                        val targetY = (content.height - dbg.scrollDebugLogs.height).coerceAtLeast(0)
+                        dbg.scrollDebugLogs.scrollTo(0, targetY)
+                    }
+                }
+            }
         }
     }
 
     private fun shareDebugLogText() {
-        val entries = DebugLogRepository.entries.value
-        val filtered = DebugLogRepository.filterEntries(entries, activeDebugFilter)
-        val payload = DebugLogRepository.formatLogsForExport(
-            filtered,
-            headerInfo = "PulsarNav v${com.pulsarnav.app.BuildConfig.VERSION_NAME} • Model=${appSettings.selectedModelId} • ${bleManager.getDebugDiagnosticsSummary()}"
-        )
+        val entriesSnapshot = DebugLogRepository.entries.value
+        val filterSnapshot = activeDebugFilter
+        val header = "PulsarNav v${com.pulsarnav.app.BuildConfig.VERSION_NAME} • Model=${appSettings.selectedModelId} • ${bleManager.getDebugDiagnosticsSummary()}"
         lifecycleScope.launch {
             try {
                 val uri = withContext(Dispatchers.IO) {
+                    val filtered = DebugLogRepository.filterEntries(entriesSnapshot, filterSnapshot)
+                    val payload = DebugLogRepository.formatLogsForExport(filtered, headerInfo = header)
                     val dir = File(cacheDir, "debug_logs").apply { mkdirs() }
                     val logFile = File(dir, "pulsarnav-log.txt")
                     logFile.writeText(payload, Charsets.UTF_8)
@@ -5479,40 +5806,44 @@ class MainActivity : AppCompatActivity() {
 
     private fun observeNavigation() {
         lifecycleScope.launch {
-            GoogleMapsNotificationListener.currentNavStep.collectLatest { step ->
-                if (step != null) {
-                    val dist = step.rawDistanceText.ifBlank { "${step.distanceMeters} m" }
-                    val maneuverDesc = if (step.roundaboutExit > 0) {
-                        "Roundabout (Exit ${step.roundaboutExit})"
-                    } else {
-                        step.maneuver.description
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    GoogleMapsNotificationListener.currentNavStep.collectLatest { step ->
+                        if (step != null) {
+                            val dist = step.rawDistanceText.ifBlank { "${step.distanceMeters} m" }
+                            val maneuverDesc = if (step.roundaboutExit > 0) {
+                                "Roundabout (Exit ${step.roundaboutExit})"
+                            } else {
+                                step.maneuver.description
+                            }
+                            val street = if (step.roundaboutExit > 0 && step.streetName.isNotBlank()) {
+                                "Exit ${step.roundaboutExit} • ${step.streetName}"
+                            } else {
+                                step.streetName.ifBlank { maneuverDesc }
+                            }
+                            val etaStr = if (step.etaHour > 0) {
+                                val ampm = if (step.etaIsAm) "AM" else "PM"
+                                "ETA %d:%02d %s".format(step.etaHour, step.etaMinute, ampm)
+                            } else {
+                                "Active Route"
+                            }
+                            updateNavDisplay(step.maneuver, dist, street, etaStr)
+                        } else if (!bleManager.isSimulationRunning.value) {
+                            binding.tvDistance.text = "-- m"
+                            binding.tvStreetName.text = "Waiting for Google Maps..."
+                            binding.tvManeuverIcon.text = "⬆"
+                            binding.tvEtaBadge.text = "-- min ETA"
+                        }
                     }
-                    val street = if (step.roundaboutExit > 0 && step.streetName.isNotBlank()) {
-                        "Exit ${step.roundaboutExit} • ${step.streetName}"
-                    } else {
-                        step.streetName.ifBlank { maneuverDesc }
-                    }
-                    val etaStr = if (step.etaHour > 0) {
-                        val ampm = if (step.etaIsAm) "AM" else "PM"
-                        "ETA %d:%02d %s".format(step.etaHour, step.etaMinute, ampm)
-                    } else {
-                        "Active Route"
-                    }
-                    updateNavDisplay(step.maneuver, dist, street, etaStr)
-                } else if (!bleManager.isSimulationRunning.value) {
-                    binding.tvDistance.text = "-- m"
-                    binding.tvStreetName.text = "Waiting for Google Maps..."
-                    binding.tvManeuverIcon.text = "⬆"
-                    binding.tvEtaBadge.text = "-- min ETA"
                 }
-            }
-        }
 
-        lifecycleScope.launch {
-            combine(bleManager.isSimulationRunning, bleManager.currentActiveManeuver) { running, maneuver ->
-                Pair(running, maneuver)
-            }.collectLatest { (running, maneuver) ->
-                updateSimulationUiState(running, maneuver)
+                launch {
+                    combine(bleManager.isSimulationRunning, bleManager.currentActiveManeuver) { running, maneuver ->
+                        Pair(running, maneuver)
+                    }.collectLatest { (running, maneuver) ->
+                        updateSimulationUiState(running, maneuver)
+                    }
+                }
             }
         }
     }
@@ -5580,74 +5911,70 @@ class MainActivity : AppCompatActivity() {
 
     private fun observeTelephonyAndAlerts() {
         lifecycleScope.launch {
-            callManager.callInfo.collectLatest { call ->
-                when (call.state) {
-                    CallState.INCOMING_CALL -> {
-                        binding.tvCallerStatus.text = "Incoming Call: ${call.callerName ?: "Unknown"} (${call.callerNumber.orEmpty()})"
-                        binding.tvCallerStatus.setTextColor(currentTheme.accentColor)
-                        binding.btnSimulateCall.text = "End Call"
-                    }
-                    CallState.ACTIVE_CALL -> {
-                        binding.tvCallerStatus.text = "Active Call: ${call.callerName ?: "In Call"}"
-                        binding.tvCallerStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
-                        binding.btnSimulateCall.text = "End Call"
-                    }
-                    CallState.OUTGOING_CALL -> {
-                        binding.tvCallerStatus.text = "Outgoing Call: ${call.callerName ?: "Dialing..."}"
-                        binding.tvCallerStatus.setTextColor(currentTheme.accentColor)
-                        binding.btnSimulateCall.text = "End Call"
-                    }
-                    else -> {
-                        binding.tvCallerStatus.text = "Phone Idle • No incoming call"
-                        binding.tvCallerStatus.setTextColor(currentTheme.textPrimaryColor)
-                        binding.btnSimulateCall.text = "Call"
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    callManager.callInfo.collectLatest { call ->
+                        when (call.state) {
+                            CallState.INCOMING_CALL -> {
+                                binding.tvCallerStatus.text = "Incoming Call: ${call.callerName ?: "Unknown"} (${call.callerNumber.orEmpty()})"
+                                binding.tvCallerStatus.setTextColor(currentTheme.accentColor)
+                                binding.btnSimulateCall.text = "End Call"
+                            }
+                            CallState.ACTIVE_CALL -> {
+                                binding.tvCallerStatus.text = "Active Call: ${call.callerName ?: "In Call"}"
+                                binding.tvCallerStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
+                                binding.btnSimulateCall.text = "End Call"
+                            }
+                            CallState.OUTGOING_CALL -> {
+                                binding.tvCallerStatus.text = "Outgoing Call: ${call.callerName ?: "Dialing..."}"
+                                binding.tvCallerStatus.setTextColor(currentTheme.accentColor)
+                                binding.btnSimulateCall.text = "End Call"
+                            }
+                            else -> {
+                                binding.tvCallerStatus.text = "Phone Idle • No incoming call"
+                                binding.tvCallerStatus.setTextColor(currentTheme.textPrimaryColor)
+                                binding.btnSimulateCall.text = "Call"
+                            }
+                        }
+                        binding.tvMissedCallBadge.text = "${call.missedCallCount} Missed"
                     }
                 }
-                binding.tvMissedCallBadge.text = "${call.missedCallCount} Missed"
-            }
-        }
 
-        lifecycleScope.launch {
-            mediaControlManager.lastMediaEvent.collectLatest { event ->
-                if (event != null) {
-                    binding.tvMediaBanner.text = "Media Control: $event"
-                    binding.tvMediaBanner.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
-                } else {
-                    binding.tvMediaBanner.text = "Handlebar Button: Click = Play/Pause • Hold = Next • Click+Hold = Prev"
-                    binding.tvMediaBanner.setTextColor(currentTheme.accentColor)
+                launch {
+                    mediaControlManager.lastMediaEvent.collectLatest { event ->
+                        if (event != null) {
+                            binding.tvMediaBanner.text = "Media Control: $event"
+                            binding.tvMediaBanner.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
+                        } else {
+                            binding.tvMediaBanner.text = "Handlebar Button: Click = Play/Pause • Hold = Next • Click+Hold = Prev"
+                            binding.tvMediaBanner.setTextColor(currentTheme.accentColor)
+                        }
+                    }
                 }
-            }
-        }
 
-        lifecycleScope.launch {
-            GoogleMapsNotificationListener.lastWhatsAppAlert.collectLatest { alert ->
-                if (alert != null) {
-                    binding.tvWhatsAppAlertBanner.text = "WhatsApp Alert: ${alert.sender} (Showing on cluster)"
-                    binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.accentColor)
-                } else {
-                    binding.tvWhatsAppAlertBanner.text = "WhatsApp Alerts: Listening (SMS excluded)"
-                    binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.textSecondaryColor)
+                launch {
+                    GoogleMapsNotificationListener.lastWhatsAppAlert.collectLatest { alert ->
+                        if (alert != null) {
+                            binding.tvWhatsAppAlertBanner.text = "WhatsApp Alert: ${alert.sender} (Showing on cluster)"
+                            binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.accentColor)
+                        } else {
+                            binding.tvWhatsAppAlertBanner.text = "WhatsApp Alerts: Listening (SMS excluded)"
+                            binding.tvWhatsAppAlertBanner.setTextColor(currentTheme.textSecondaryColor)
+                        }
+                    }
                 }
-            }
-        }
 
-        lifecycleScope.launch {
-            bleManager.lastClusterAction.collectLatest { action ->
-                if (action != null) {
-                    binding.tvClusterActionStatus.text = "Cluster Action: $action"
-                    binding.tvClusterActionStatus.setTextColor(currentTheme.accentColor)
-                } else {
-                    binding.tvClusterActionStatus.text = "Cluster Action: Waiting for switchgear / phonebook sync"
-                    binding.tvClusterActionStatus.setTextColor(currentTheme.textSecondaryColor)
+                launch {
+                    bleManager.lastClusterAction.collectLatest { action ->
+                        if (action != null) {
+                            binding.tvClusterActionStatus.text = "Cluster Action: $action"
+                            binding.tvClusterActionStatus.setTextColor(currentTheme.accentColor)
+                        } else {
+                            binding.tvClusterActionStatus.text = "Cluster Action: Waiting for switchgear / phonebook sync"
+                            binding.tvClusterActionStatus.setTextColor(currentTheme.textSecondaryColor)
+                        }
+                    }
                 }
-            }
-        }
-    }
-
-    private fun observeTelemetry() {
-        lifecycleScope.launch {
-            telemetryManager.telemetryState.collectLatest { _ ->
-                // Telemetry syncs in background to cluster
             }
         }
     }
@@ -5914,41 +6241,43 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetTextI18n")
     private fun observeMaintenance() {
         lifecycleScope.launch {
-            maintenanceManager.status.collectLatest { s ->
-                updateHeroRangeDisplay()
-                binding.tvChainRemaining.text = String.format(Locale.US, "%.0f km left", s.chainLubeRemainingKm)
-                binding.progressChain.progress = s.chainLubePercent
-                binding.tvSupportChainRemaining.text = String.format(Locale.US, "Chain Lube: %.0f km left", s.chainLubeRemainingKm.coerceAtLeast(0.0))
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                maintenanceManager.status.collectLatest { s ->
+                    updateHeroRangeDisplay()
+                    binding.tvChainRemaining.text = String.format(Locale.US, "%.0f km left", s.chainLubeRemainingKm)
+                    binding.progressChain.progress = s.chainLubePercent
+                    binding.tvSupportChainRemaining.text = String.format(Locale.US, "Chain Lube: %.0f km left", s.chainLubeRemainingKm.coerceAtLeast(0.0))
 
-                if (s.isServiceOverdue) {
-                    binding.tvSupportServiceRemaining.text = "OVERDUE"
-                    binding.tvSupportServiceRemainingUnit.visibility = View.GONE
-                    binding.tvSupportServiceRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_disconnected))
-                    binding.tvServiceHistorySummary.text = "Service Overdue • Immediate maintenance required"
-                    binding.progressSupportService.progress = 100
-                    binding.tvSupportHealthNote.text = "Schedule periodic service to maintain engine longevity"
-                    binding.tvServiceRemaining.text = String.format(Locale.US, "OVERDUE by %.0f km", s.serviceOverdueKm)
-                    binding.tvServiceRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_disconnected))
-                    binding.progressService.progress = 100
-                } else {
-                    binding.tvSupportServiceRemaining.text = String.format(Locale.US, "%.0f", s.serviceRemainingKm.coerceAtLeast(0.0))
-                    binding.tvSupportServiceRemainingUnit.visibility = View.VISIBLE
-                    binding.tvSupportServiceRemaining.setTextColor(currentTheme.accentColor)
-                    val serviceInterval = MaintenanceManager.SERVICE_INTERVAL_KM
-                    val serviceElapsed = (serviceInterval - s.serviceRemainingKm.coerceIn(0.0, serviceInterval))
-                    val serviceProgress = ((serviceElapsed / serviceInterval) * 100).toInt().coerceIn(0, 100)
-                    binding.progressSupportService.progress = serviceProgress
-                    binding.tvServiceHistorySummary.text = "Periodic Service • $serviceProgress% of cycle elapsed"
-                    binding.tvSupportHealthNote.text = String.format(Locale.US, "Next routine service due in %.0f km", s.serviceRemainingKm.coerceAtLeast(0.0))
-                    binding.tvServiceRemaining.text = String.format(Locale.US, "%.0f km left (Target: %.0f km)", s.serviceRemainingKm, s.nextServiceTargetOdoKm)
-                    binding.tvServiceRemaining.setTextColor(if (s.isServiceDue) ContextCompat.getColor(this@MainActivity, R.color.amber_accent) else currentTheme.accentColor)
-                    binding.progressService.progress = s.servicePercent
-                }
+                    if (s.isServiceOverdue) {
+                        binding.tvSupportServiceRemaining.text = "OVERDUE"
+                        binding.tvSupportServiceRemainingUnit.visibility = View.GONE
+                        binding.tvSupportServiceRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_disconnected))
+                        binding.tvServiceHistorySummary.text = "Service Overdue • Immediate maintenance required"
+                        binding.progressSupportService.progress = 100
+                        binding.tvSupportHealthNote.text = "Schedule periodic service to maintain engine longevity"
+                        binding.tvServiceRemaining.text = String.format(Locale.US, "OVERDUE by %.0f km", s.serviceOverdueKm)
+                        binding.tvServiceRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_disconnected))
+                        binding.progressService.progress = 100
+                    } else {
+                        binding.tvSupportServiceRemaining.text = String.format(Locale.US, "%.0f", s.serviceRemainingKm.coerceAtLeast(0.0))
+                        binding.tvSupportServiceRemainingUnit.visibility = View.VISIBLE
+                        binding.tvSupportServiceRemaining.setTextColor(currentTheme.accentColor)
+                        val serviceInterval = MaintenanceManager.SERVICE_INTERVAL_KM
+                        val serviceElapsed = (serviceInterval - s.serviceRemainingKm.coerceIn(0.0, serviceInterval))
+                        val serviceProgress = ((serviceElapsed / serviceInterval) * 100).toInt().coerceIn(0, 100)
+                        binding.progressSupportService.progress = serviceProgress
+                        binding.tvServiceHistorySummary.text = "Periodic Service • $serviceProgress% of cycle elapsed"
+                        binding.tvSupportHealthNote.text = String.format(Locale.US, "Next routine service due in %.0f km", s.serviceRemainingKm.coerceAtLeast(0.0))
+                        binding.tvServiceRemaining.text = String.format(Locale.US, "%.0f km left (Target: %.0f km)", s.serviceRemainingKm, s.nextServiceTargetOdoKm)
+                        binding.tvServiceRemaining.setTextColor(if (s.isServiceDue) ContextCompat.getColor(this@MainActivity, R.color.amber_accent) else currentTheme.accentColor)
+                        binding.progressService.progress = s.servicePercent
+                    }
 
-                if (s.isChainLubeDue) {
-                    binding.tvChainRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_scanning))
-                } else {
-                    binding.tvChainRemaining.setTextColor(currentTheme.accentColor)
+                    if (s.isChainLubeDue) {
+                        binding.tvChainRemaining.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_scanning))
+                    } else {
+                        binding.tvChainRemaining.setTextColor(currentTheme.accentColor)
+                    }
                 }
             }
         }
@@ -5957,27 +6286,35 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetTextI18n")
     private fun observeFuelLog() {
         lifecycleScope.launch {
-            fuelLogManager.stats.collectLatest { stats ->
-                updateHeroRangeDisplay()
-                updateBikeInvestmentDisplay()
-                if (stats.averageKmpl > 0.0) {
-                    binding.tvAvgMileage.text = formatDecimal(stats.averageKmpl)
-                    binding.tvAvgMileageUnit.visibility = View.VISIBLE
-                } else {
-                    binding.tvAvgMileage.text = "--"
-                    binding.tvAvgMileageUnit.visibility = View.VISIBLE
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    fuelLogManager.stats.collectLatest { stats ->
+                        updateHeroRangeDisplay()
+                        updateBikeInvestmentDisplay()
+                        if (stats.averageKmpl > 0.0) {
+                            binding.tvAvgMileage.text = formatDecimal(stats.averageKmpl)
+                            binding.tvAvgMileageUnit.visibility = View.VISIBLE
+                        } else {
+                            binding.tvAvgMileage.text = "--"
+                            binding.tvAvgMileageUnit.visibility = View.VISIBLE
+                        }
+                        if (stats.costPerKm > 0.0) {
+                            binding.tvCostPerKm.text = String.format(Locale.US, "Cost: %s%.2f / km", appSettings.currentCurrencySymbol, stats.costPerKm)
+                        } else {
+                            binding.tvCostPerKm.text = "Cost: -- / km"
+                        }
+                    }
                 }
-                if (stats.costPerKm > 0.0) {
-                    binding.tvCostPerKm.text = String.format(Locale.US, "Cost: %s%.2f / km", appSettings.currentCurrencySymbol, stats.costPerKm)
-                } else {
-                    binding.tvCostPerKm.text = "Cost: -- / km"
+                launch {
+                    fuelLogManager.entries.collectLatest { entries ->
+                        if (binding.scrollFuel.visibility == View.VISIBLE) {
+                            fuelListThemeDirty = false
+                            updateFuelList(entries)
+                        } else {
+                            fuelListThemeDirty = true
+                        }
+                    }
                 }
-            }
-        }
-
-        lifecycleScope.launch {
-            fuelLogManager.entries.collectLatest { entries ->
-                updateFuelList(entries)
             }
         }
     }

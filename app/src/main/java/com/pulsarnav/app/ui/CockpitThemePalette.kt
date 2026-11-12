@@ -132,6 +132,77 @@ object CockpitThemePalette {
         )
     }
 
+    internal fun relativeLuminanceRgb(r: Int, g: Int, b: Int): Double {
+        fun linearize(channel: Int): Double {
+            val c = channel.coerceIn(0, 255) / 255.0
+            return if (c <= 0.04045) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+    }
+
+    internal fun contrastRatioRgb(
+        fgR: Int,
+        fgG: Int,
+        fgB: Int,
+        bgR: Int,
+        bgG: Int,
+        bgB: Int
+    ): Double {
+        val lum1 = relativeLuminanceRgb(fgR, fgG, fgB)
+        val lum2 = relativeLuminanceRgb(bgR, bgG, bgB)
+        val hi = maxOf(lum1, lum2)
+        val lo = minOf(lum1, lum2)
+        return (hi + 0.05) / (lo + 0.05)
+    }
+
+    /**
+     * Preserves the user's chosen hue while nudging luminance just enough to meet WCAG AA contrast
+     * (4.5:1 by default) against the active card surface so custom RGB themes never render
+     * illegible light-on-light or dark-on-dark accent text/icons.
+     */
+    internal fun adjustCustomAccentRgb(
+        r: Int,
+        g: Int,
+        b: Int,
+        surfaceR: Int,
+        surfaceG: Int,
+        surfaceB: Int,
+        isLight: Boolean,
+        minContrast: Double = 4.5
+    ): Triple<Int, Int, Int> {
+        val cr = r.coerceIn(0, 255)
+        val cg = g.coerceIn(0, 255)
+        val cb = b.coerceIn(0, 255)
+        if (contrastRatioRgb(cr, cg, cb, surfaceR, surfaceG, surfaceB) >= minContrast) {
+            return Triple(cr, cg, cb)
+        }
+
+        val target = if (isLight) 0 else 255
+        var low = 0.0
+        var high = 1.0
+        for (i in 0 until 18) {
+            val mid = (low + high) / 2.0
+            val mr = (cr + (target - cr) * mid).toInt().coerceIn(0, 255)
+            val mg = (cg + (target - cg) * mid).toInt().coerceIn(0, 255)
+            val mb = (cb + (target - cb) * mid).toInt().coerceIn(0, 255)
+            if (contrastRatioRgb(mr, mg, mb, surfaceR, surfaceG, surfaceB) >= minContrast) {
+                high = mid
+            } else {
+                low = mid
+            }
+        }
+        val fr = (cr + (target - cr) * high).toInt().coerceIn(0, 255)
+        val fg = (cg + (target - cg) * high).toInt().coerceIn(0, 255)
+        val fb = (cb + (target - cb) * high).toInt().coerceIn(0, 255)
+        return Triple(fr, fg, fb)
+    }
+
+    internal fun shouldUseDarkForegroundOnPrimary(r: Int, g: Int, b: Int): Boolean {
+        val contrastBlack = contrastRatioRgb(0, 0, 0, r, g, b)
+        val contrastWhite = contrastRatioRgb(255, 255, 255, r, g, b)
+        return contrastBlack > contrastWhite
+    }
+
     private fun buildCustomTheme(
         surface: SurfacePalette,
         isLight: Boolean,
@@ -139,33 +210,40 @@ object CockpitThemePalette {
         g: Int,
         b: Int
     ): CockpitTheme {
-        val customColor = Color.rgb(r, g, b)
-        val lum = 0.299 * r + 0.587 * g + 0.114 * b
-        val onPrimary = if (lum > 150) Color.BLACK else Color.WHITE
+        val cr = r.coerceIn(0, 255)
+        val cg = g.coerceIn(0, 255)
+        val cb = b.coerceIn(0, 255)
+        val customColor = Color.rgb(cr, cg, cb)
+        val onPrimary = if (shouldUseDarkForegroundOnPrimary(cr, cg, cb)) Color.BLACK else Color.WHITE
+        val surfaceR = (surface.cardColor shr 16) and 0xFF
+        val surfaceG = (surface.cardColor shr 8) and 0xFF
+        val surfaceB = surface.cardColor and 0xFF
+        val (ar, ag, ab) = adjustCustomAccentRgb(cr, cg, cb, surfaceR, surfaceG, surfaceB, isLight)
+        val accentColor = Color.rgb(ar, ag, ab)
         val subtle = if (isLight) {
             Color.rgb(
-                (255 * 0.90 + r * 0.10).toInt().coerceIn(0, 255),
-                (255 * 0.90 + g * 0.10).toInt().coerceIn(0, 255),
-                (255 * 0.90 + b * 0.10).toInt().coerceIn(0, 255)
+                (255 * 0.90 + cr * 0.10).toInt().coerceIn(0, 255),
+                (255 * 0.90 + cg * 0.10).toInt().coerceIn(0, 255),
+                (255 * 0.90 + cb * 0.10).toInt().coerceIn(0, 255)
             )
         } else {
             Color.rgb(
-                (19 * 0.80 + r * 0.20).toInt().coerceIn(0, 255),
-                (18 * 0.80 + g * 0.20).toInt().coerceIn(0, 255),
-                (21 * 0.80 + b * 0.20).toInt().coerceIn(0, 255)
+                (19 * 0.80 + cr * 0.20).toInt().coerceIn(0, 255),
+                (18 * 0.80 + cg * 0.20).toInt().coerceIn(0, 255),
+                (21 * 0.80 + cb * 0.20).toInt().coerceIn(0, 255)
             )
         }
         val border = if (isLight) {
             Color.rgb(
-                (255 * 0.75 + r * 0.25).toInt().coerceIn(0, 255),
-                (255 * 0.75 + g * 0.25).toInt().coerceIn(0, 255),
-                (255 * 0.75 + b * 0.25).toInt().coerceIn(0, 255)
+                (255 * 0.75 + cr * 0.25).toInt().coerceIn(0, 255),
+                (255 * 0.75 + cg * 0.25).toInt().coerceIn(0, 255),
+                (255 * 0.75 + cb * 0.25).toInt().coerceIn(0, 255)
             )
         } else {
             Color.rgb(
-                (19 * 0.60 + r * 0.40).toInt().coerceIn(0, 255),
-                (18 * 0.60 + g * 0.40).toInt().coerceIn(0, 255),
-                (21 * 0.60 + b * 0.40).toInt().coerceIn(0, 255)
+                (19 * 0.60 + cr * 0.40).toInt().coerceIn(0, 255),
+                (18 * 0.60 + cg * 0.40).toInt().coerceIn(0, 255),
+                (21 * 0.60 + cb * 0.40).toInt().coerceIn(0, 255)
             )
         }
 
@@ -183,7 +261,7 @@ object CockpitThemePalette {
             textTertiaryColor = surface.textTertiaryColor,
             primaryColor = customColor,
             onPrimaryColor = onPrimary,
-            accentColor = customColor,
+            accentColor = accentColor,
             subtleColor = subtle,
             borderColor = border
         )
