@@ -82,6 +82,16 @@ class AppSettings(context: Context) {
         const val KEY_TFT_WIFI_SSID = "tft_wifi_ssid"
         const val KEY_TFT_WIFI_VIN = "tft_wifi_vin"
         const val KEY_TFT_WIFI_PASSPHRASE = "tft_wifi_passphrase"
+        const val KEY_TFT_MIRROR_MODE = "tft_mirror_mode"
+        const val KEY_TFT_CAST_LAYOUT = "tft_cast_layout"
+        const val KEY_TFT_MAP_ZOOM = "tft_map_zoom"
+        const val KEY_TFT_MAP_HEADING_UP = "tft_map_heading_up"
+
+        const val TFT_MODE_LIVE_MAP = "live_map"
+        const val TFT_MODE_HUD = "cockpit_hud"
+        const val CAST_LAYOUT_FILL = "fill"
+        const val CAST_LAYOUT_FIT = "fit"
+        const val CAST_LAYOUT_ROT90 = "rot90"
 
         const val KEY_SMS_REJECT_ENABLED = "feature_sms_reject_enabled"
         const val KEY_SMS_REJECT_MESSAGE = "feature_sms_reject_message"
@@ -162,6 +172,7 @@ class AppSettings(context: Context) {
                 KEY_NAV_V2_ROUTE_MODE -> RestoreAction.PutInt(asInt().coerceIn(0, 3))
                 KEY_NAV_V2_UNITS -> RestoreAction.PutInt(asInt().coerceIn(0, 1))
                 KEY_NAV_V2_AVOID_BITMASK -> RestoreAction.PutInt(asInt() and 0x0F)
+                KEY_TFT_MAP_ZOOM -> RestoreAction.PutInt(asInt().coerceIn(12, 18))
                 KEY_LAST_SYNC_MS, KEY_PURCHASE_DATE_MS -> RestoreAction.PutLong(asLong())
                 KEY_DOC_RC_PATH, KEY_DOC_INSURANCE_PATH, KEY_DOC_PUC_PATH -> {
                     val path = value.toString()
@@ -173,7 +184,7 @@ class AppSettings(context: Context) {
                 KEY_AUTO_PARK, KEY_RIDE_TRACKING, KEY_MEDIA_CONTROL, KEY_WHATSAPP_ALERTS,
                 KEY_MAINTENANCE_ALERTS, KEY_TELEMETRY_SYNC, KEY_TWO_WHEELER_MODE, KEY_AUTO_CONNECT,
                 KEY_DARK_MODE, KEY_IS_SETUP_COMPLETED, KEY_SKIP_CLUSTER_NAV_WHEN_HEADUNIT,
-                KEY_SMS_REJECT_ENABLED -> RestoreAction.PutBoolean(asBoolean())
+                KEY_SMS_REJECT_ENABLED, KEY_TFT_MAP_HEADING_UP -> RestoreAction.PutBoolean(asBoolean())
                 else -> when (value) {
                     is Boolean -> RestoreAction.PutBoolean(value)
                     is Int -> RestoreAction.PutInt(value)
@@ -610,6 +621,42 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_TFT_WIFI_PASSPHRASE, "") ?: ""
         set(value) {
             prefs.edit().putString(KEY_TFT_WIFI_PASSPHRASE, value).apply()
+        }
+
+    var tftMirrorMode: String
+        get() = when (getSafeString(KEY_TFT_MIRROR_MODE, TFT_MODE_LIVE_MAP)) {
+            TFT_MODE_HUD -> TFT_MODE_HUD
+            else -> TFT_MODE_LIVE_MAP
+        }
+        set(value) {
+            val normalized = if (value == TFT_MODE_HUD) TFT_MODE_HUD else TFT_MODE_LIVE_MAP
+            prefs.edit().putString(KEY_TFT_MIRROR_MODE, normalized).apply()
+        }
+
+    var tftCastLayoutMode: String
+        get() = when (getSafeString(KEY_TFT_CAST_LAYOUT, CAST_LAYOUT_FILL)) {
+            CAST_LAYOUT_FIT -> CAST_LAYOUT_FIT
+            CAST_LAYOUT_ROT90 -> CAST_LAYOUT_ROT90
+            else -> CAST_LAYOUT_FILL
+        }
+        set(value) {
+            val normalized = when (value) {
+                CAST_LAYOUT_FIT, CAST_LAYOUT_ROT90 -> value
+                else -> CAST_LAYOUT_FILL
+            }
+            prefs.edit().putString(KEY_TFT_CAST_LAYOUT, normalized).apply()
+        }
+
+    var tftMapZoom: Int
+        get() = getSafeInt(KEY_TFT_MAP_ZOOM, 16).coerceIn(12, 18)
+        set(value) {
+            prefs.edit().putInt(KEY_TFT_MAP_ZOOM, value.coerceIn(12, 18)).apply()
+        }
+
+    var tftMapHeadingUp: Boolean
+        get() = getSafeBoolean(KEY_TFT_MAP_HEADING_UP, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_TFT_MAP_HEADING_UP, value).apply()
         }
 
     var isSmsRejectEnabled: Boolean

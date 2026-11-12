@@ -148,6 +148,7 @@ class BikeBleForegroundService : Service {
     }
 
     private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -158,16 +159,51 @@ class BikeBleForegroundService : Service {
         // rejections or ForegroundServiceDidNotStartInTimeException during Wi-Fi-only launches.
     }
 
+    @Suppress("DEPRECATION")
     private fun acquireWakeLock() {
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
-            wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "PulsarNav:BleKeepAliveWakeLock")?.apply {
+            val lock = wakeLock ?: pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "PulsarNav:BleKeepAliveWakeLock")?.apply {
                 setReferenceCounted(false)
-                acquire(12 * 60 * 60 * 1000L) // 12-hour safe upper bound
             }
-            Log.d(TAG, "Partial WakeLock acquired for persistent background BLE link")
+            wakeLock = lock
+            if (lock != null && !lock.isHeld) {
+                lock.acquire(12 * 60 * 60 * 1000L) // 12-hour safe upper bound
+                Log.d(TAG, "Partial WakeLock acquired for persistent background link")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to acquire WakeLock: ${e.message}")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun updateWifiLock(enable: Boolean) {
+        try {
+            if (enable) {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                val lock = wifiLock ?: wm?.createWifiLock(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    } else {
+                        android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                    },
+                    "PulsarNav:TftSoftApWifiLock"
+                )?.apply {
+                    setReferenceCounted(false)
+                }
+                wifiLock = lock
+                if (lock != null && !lock.isHeld) {
+                    lock.acquire()
+                    Log.d(TAG, "High-performance WifiLock acquired for screen-off TFT SoftAP streaming")
+                }
+            } else {
+                wifiLock?.let {
+                    if (it.isHeld) it.release()
+                }
+                wifiLock = null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to toggle WifiLock ($enable): ${e.message}")
         }
     }
 
@@ -193,8 +229,9 @@ class BikeBleForegroundService : Service {
             ACTION_START_TFT_COCKPIT_MIRROR -> {
                 isWifiMirrorActive = true
                 isMediaProjectionActive = false
+                updateWifiLock(true)
                 promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = true)
-                TftWifiMirrorManager.getInstance(this).startCockpitHudMirroring()
+                TftWifiMirrorManager.getInstance(this).startPreferredHeadlessMirroring()
             }
             ACTION_START_TFT_LIVE_CAST -> {
                 val resultCode = intent.getIntExtra(EXTRA_PROJECTION_RESULT_CODE, android.app.Activity.RESULT_CANCELED)
@@ -202,6 +239,7 @@ class BikeBleForegroundService : Service {
                 if (data != null) {
                     isWifiMirrorActive = true
                     isMediaProjectionActive = true
+                    updateWifiLock(true)
                     // Android 14+ requires startForeground with MEDIA_PROJECTION BEFORE getMediaProjection().
                     promoteToForeground(includeMediaProjection = true, allowWifiWithoutBt = true)
                     val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
@@ -212,6 +250,7 @@ class BikeBleForegroundService : Service {
                             Log.w(TAG, "Live screen cast failed to start; dropping MediaProjection FGS type")
                             isMediaProjectionActive = false
                             isWifiMirrorActive = false
+                            updateWifiLock(false)
                             if (isBleIdleForService()) {
                                 isRunning = false
                                 stopSelf()
@@ -221,22 +260,24 @@ class BikeBleForegroundService : Service {
                             }
                         }
                     } else {
-                        Log.w(TAG, "MediaProjection handle was null; falling back to Cockpit HUD")
+                        Log.w(TAG, "MediaProjection handle was null; falling back to Live Map / HUD")
                         isMediaProjectionActive = false
                         promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = true)
-                        TftWifiMirrorManager.getInstance(this).startCockpitHudMirroring()
+                        TftWifiMirrorManager.getInstance(this).startPreferredHeadlessMirroring()
                     }
                 } else {
                     isWifiMirrorActive = true
                     isMediaProjectionActive = false
+                    updateWifiLock(true)
                     promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = true)
-                    TftWifiMirrorManager.getInstance(this).startCockpitHudMirroring()
+                    TftWifiMirrorManager.getInstance(this).startPreferredHeadlessMirroring()
                 }
             }
             ACTION_DROP_MEDIA_PROJECTION -> {
                 val keepWifi = intent.getBooleanExtra(EXTRA_KEEP_WIFI_MIRROR, true)
                 isMediaProjectionActive = false
                 isWifiMirrorActive = keepWifi
+                updateWifiLock(keepWifi)
                 if (!keepWifi && isBleIdleForService()) {
                     promoteMinimalBeforeAbort()
                     isRunning = false
@@ -248,6 +289,7 @@ class BikeBleForegroundService : Service {
             ACTION_STOP_TFT_MIRROR -> {
                 isWifiMirrorActive = false
                 isMediaProjectionActive = false
+                updateWifiLock(false)
                 TftWifiMirrorManager.getInstance(this).stopMirroring()
                 if (isBleIdleForService()) {
                     promoteMinimalBeforeAbort()
@@ -385,6 +427,9 @@ class BikeBleForegroundService : Service {
         isMediaProjectionActive = false
         try {
             TftWifiMirrorManager.getInstance(this).stopMirroring()
+        } catch (_: Exception) {}
+        try {
+            updateWifiLock(false)
         } catch (_: Exception) {}
         try {
             wakeLock?.let {

@@ -97,6 +97,7 @@ import com.pulsarnav.app.telemetry.PhoneTelemetryManager
 import com.pulsarnav.app.telephony.CallManager
 import com.pulsarnav.app.wifi.TftMirrorSource
 import com.pulsarnav.app.wifi.TftMirrorStatus
+import com.pulsarnav.app.wifi.TftNavigationMapEngine
 import com.pulsarnav.app.wifi.TftPasswordGenerator
 import com.pulsarnav.app.wifi.TftWifiMirrorManager
 import com.pulsarnav.app.wifi.TftWifiProtocol
@@ -450,15 +451,30 @@ class MainActivity : AppCompatActivity() {
             "com.pulsarnav.action.LOG_REFUEL" -> {
                 showAddFuelDialog()
             }
+            Intent.ACTION_SEND -> {
+                val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                    ?: intent.getStringExtra(Intent.EXTRA_SUBJECT)
+                if (!sharedText.isNullOrBlank()) {
+                    startTftRouteFromSharedInput(sharedText)
+                }
+            }
             Intent.ACTION_VIEW -> {
                 intent.data?.let { uri ->
-                    showExternalVaultImportConfirmation(uri)
+                    if (uri.scheme.equals("geo", ignoreCase = true) ||
+                        uri.scheme.equals("google.navigation", ignoreCase = true)
+                    ) {
+                        startTftRouteFromSharedInput(uri.toString())
+                    } else {
+                        showExternalVaultImportConfirmation(uri)
+                    }
                 }
             }
         }
         // Consume intent so it does not re-trigger on activity recreation (e.g. rotation, theme changes)
         intent.action = null
         intent.data = null
+        intent.removeExtra(Intent.EXTRA_TEXT)
+        intent.removeExtra(Intent.EXTRA_SUBJECT)
         setIntent(Intent(this, MainActivity::class.java))
     }
 
@@ -1005,24 +1021,32 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Notification Access Prompts
+        // Notification Access & Maps TBT Troubleshooting
         binding.btnEnableNotificationAccess.setOnClickListener {
             provideHapticFeedback()
             openNotificationListenerSettings()
         }
         binding.rowNotificationAccess.setOnClickListener {
             provideHapticFeedback()
-            openNotificationListenerSettings()
+            if (isNotificationAccessGranted()) {
+                showMapsTbtTroubleshooterDialog()
+            } else {
+                openNotificationListenerSettings()
+            }
+        }
+        binding.tvMapsTbtFixLink.setOnClickListener {
+            provideHapticFeedback()
+            showMapsTbtTroubleshooterDialog()
         }
         binding.rowBatteryOptimization.setOnClickListener {
             provideHapticFeedback()
             requestIgnoreBatteryOptimization()
         }
 
-        // Search Bar click
+        // Search Bar click -> Built-in Lock-Proof TFT Route OR Google Maps
         binding.layoutSearchBar.setOnClickListener {
             provideHapticFeedback()
-            launchGoogleMapsRide()
+            showDestinationSearchAndRouteDialog()
         }
 
         // Quick Nearby Fuel on Fuel Tab
@@ -3129,6 +3153,7 @@ class MainActivity : AppCompatActivity() {
         binding.layoutManeuverIcon.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.tvManeuverIcon.setTextColor(theme.accentColor)
         binding.tvDistance.setTextColor(theme.accentColor)
+        binding.tvMapsTbtFixLink.setTextColor(theme.accentColor)
         binding.tvEtaBadge.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.tvEtaBadge.setTextColor(theme.accentColor)
 
@@ -4143,8 +4168,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateNotificationAccessUi() {
         val granted = isNotificationAccessGranted()
+        val diag = GoogleMapsNotificationListener.diagnostics.value
         binding.cardNotificationPermissionBanner.visibility = if (granted) View.GONE else View.VISIBLE
-        binding.tvNotificationAccessStatus.text = if (granted) "Active (Maps, Waze & Auto)" else "Action Required (Tap to Enable)"
+        binding.tvNotificationAccessStatus.text = when {
+            !granted -> "Action Required (Tap to Enable)"
+            diag.mapsActiveInShade -> "Active • Live Maps notification detected"
+            else -> "Listener ON • Tap for Maps channel & TBT fix"
+        }
         binding.tvNotificationAccessStatus.setTextColor(
             ContextCompat.getColor(this, if (granted) R.color.mint_accent else R.color.amber_accent)
         )
@@ -4561,9 +4591,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTftHudMirror() {
+        val mirrorModeLabel = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) {
+            "Cockpit HUD"
+        } else {
+            "800×480 Live Map (Maps-Only, Lock-Proof)"
+        }
         TftWifiMirrorManager.getInstance(this).stopLocalDebugPreview()
         BikeBleForegroundService.startForTftCockpitMirror(this)
-        showFeedback("Connecting to TFT Wi-Fi for 800×480 Cockpit Mirror...")
+        showFeedback("Connecting to TFT Wi-Fi for $mirrorModeLabel...")
     }
 
     private fun launchTftScreenCapture() {
@@ -4573,7 +4608,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
         try {
-            tftScreenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
+            val captureIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                mpm.createScreenCaptureIntent(
+                    android.media.projection.MediaProjectionConfig.createConfigForUserChoice()
+                )
+            } else {
+                mpm.createScreenCaptureIntent()
+            }
+            tftScreenCaptureLauncher.launch(captureIntent)
         } catch (e: Exception) {
             showFeedback("Unable to start screen capture: ${e.message}", isAlert = true)
         }
@@ -5062,7 +5104,11 @@ class MainActivity : AppCompatActivity() {
                     TftMirrorStatus.WIFI_CONNECTED_WAITING_TCP -> "Wi-Fi linked (${mirror.clusterHost}) • Waiting for TCP 5558"
                     TftMirrorStatus.TCP_CONNECTED_IDLE -> "Cluster TCP ready (${mirror.clusterHost}) • Idle"
                     TftMirrorStatus.STREAMING -> {
-                        val modeLabel = if (mirror.source == TftMirrorSource.LIVE_SCREEN_CAST) "Live Cast" else "HUD Mirror"
+                        val modeLabel = when (mirror.source) {
+                            TftMirrorSource.LIVE_MAP -> "Live Map"
+                            TftMirrorSource.COCKPIT_HUD -> "HUD Mirror"
+                            TftMirrorSource.LIVE_SCREEN_CAST -> "Live Cast"
+                        }
                         String.format(
                             java.util.Locale.US,
                             "%s • %.1f fps • %s:%d",
@@ -5086,13 +5132,19 @@ class MainActivity : AppCompatActivity() {
                         val credHint = if (appSettings.tftWifiVin.isNotBlank() || appSettings.tftWifiPassphrase.isNotBlank()) {
                             "SoftAP credentials saved for $targetSsid."
                         } else {
-                            "Tap Config to enter VIN/WPA2 password, or join bike Wi-Fi manually."
+                            "Tap Config to enter VIN/WPA2 password or set orientation."
                         }
-                        "Offline Cockpit HUD (works screen-off) or Cast Live Maps. $credHint"
+                        val prefLabel = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) {
+                            "Cockpit HUD (works screen-off)"
+                        } else {
+                            "Live Maps 800×480 (maps-only • works locked)"
+                        }
+                        "$prefLabel. $credHint"
                     }
                 }
 
-                binding.btnToggleTftHudMirror.text = if (active) "Stop Mirror" else "Mirror HUD"
+                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "Mirror HUD" else "Map Mirror"
+                binding.btnToggleTftHudMirror.text = if (active) "Stop Mirror" else prefIdleBtn
                 binding.btnCastLiveScreen.text = if (active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST) {
                     "Stop Cast"
                 } else {
@@ -5772,16 +5824,90 @@ class MainActivity : AppCompatActivity() {
         })
         container.addView(tvPreview)
 
+        val tvModeHeader = android.widget.TextView(this).apply {
+            text = "Mirror Mode (Screen-Off Safe):"
+            textSize = 12f
+            setPadding(0, dpToPx(12), 0, dpToPx(4))
+            setTextColor(currentTheme.textPrimaryColor)
+        }
+        container.addView(tvModeHeader)
+
+        val rgMirrorMode = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+        }
+        val rbLiveMap = android.widget.RadioButton(this).apply {
+            text = "Live Maps + TBT (Maps Only • Works Locked)"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        val rbHud = android.widget.RadioButton(this).apply {
+            text = "Telemetry Cockpit HUD (Works Locked)"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        rgMirrorMode.addView(rbLiveMap)
+        rgMirrorMode.addView(rbHud)
+        if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) rbHud.isChecked = true else rbLiveMap.isChecked = true
+        container.addView(rgMirrorMode)
+
+        val tvCastHeader = android.widget.TextView(this).apply {
+            text = "Cast App Aspect & Orientation (800×480 Landscape):"
+            textSize = 12f
+            setPadding(0, dpToPx(10), 0, dpToPx(4))
+            setTextColor(currentTheme.textPrimaryColor)
+        }
+        container.addView(tvCastHeader)
+
+        val rgCastLayout = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+        }
+        val rbCastFill = android.widget.RadioButton(this).apply {
+            text = "Fill 800×480 Landscape (Crop Black Bars)"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        val rbCastFit = android.widget.RadioButton(this).apply {
+            text = "Fit Full App Inside 800×480 (Uncropped)"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        val rbCastRot90 = android.widget.RadioButton(this).apply {
+            text = "Rotate 90° Landscape + Fill"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        rgCastLayout.addView(rbCastFill)
+        rgCastLayout.addView(rbCastFit)
+        rgCastLayout.addView(rbCastRot90)
+        when (appSettings.tftCastLayoutMode) {
+            AppSettings.CAST_LAYOUT_FIT -> rbCastFit.isChecked = true
+            AppSettings.CAST_LAYOUT_ROT90 -> rbCastRot90.isChecked = true
+            else -> rbCastFill.isChecked = true
+        }
+        container.addView(rgCastLayout)
+
+        val scrollWrapper = android.widget.ScrollView(this).apply {
+            addView(container)
+        }
+
         MaterialAlertDialogBuilder(this)
-            .setTitle("TFT Wi-Fi Configuration")
-            .setView(container)
+            .setTitle("TFT Wi-Fi & Display Config")
+            .setView(scrollWrapper)
             .setPositiveButton("Save") { _, _ ->
                 appSettings.tftWifiSsid = etSsid.text.toString().trim()
                 appSettings.tftWifiVin = etVin.text.toString().trim()
                 appSettings.tftWifiPassphrase = etPass.text.toString().trim()
-                showFeedback("TFT Wi-Fi settings saved")
+                val nextMode = if (rbHud.isChecked) AppSettings.TFT_MODE_HUD else AppSettings.TFT_MODE_LIVE_MAP
+                appSettings.tftMirrorMode = nextMode
+                appSettings.tftCastLayoutMode = when {
+                    rbCastFit.isChecked -> AppSettings.CAST_LAYOUT_FIT
+                    rbCastRot90.isChecked -> AppSettings.CAST_LAYOUT_ROT90
+                    else -> AppSettings.CAST_LAYOUT_FILL
+                }
+                TftWifiMirrorManager.getInstance(this).switchHeadlessModeIfActive(nextMode)
+                showFeedback("TFT settings saved")
             }
-            .setNeutralButton("Clear") { _, _ ->
+            .setNeutralButton("Clear Wi-Fi") { _, _ ->
                 appSettings.tftWifiSsid = ""
                 appSettings.tftWifiVin = ""
                 appSettings.tftWifiPassphrase = ""
@@ -5789,6 +5915,126 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun startTftRouteFromSharedInput(rawInput: String) {
+        val mapEngine = TftNavigationMapEngine.getInstance(this)
+        val wifiMgr = TftWifiMirrorManager.getInstance(this)
+        if (!wifiMgr.isLocalPreviewActiveFlow.value &&
+            wifiMgr.mirrorState.value.status == TftMirrorStatus.IDLE
+        ) {
+            appSettings.tftMirrorMode = AppSettings.TFT_MODE_LIVE_MAP
+            wifiMgr.startLocalDebugPreview()
+        }
+        showFeedback("Resolving destination for PulsarNav Live Map...")
+        mapEngine.startRouteFromInput(rawInput) { ok, message ->
+            runOnUiThread {
+                showFeedback(message, isAlert = !ok)
+            }
+        }
+    }
+
+    private fun showDestinationSearchAndRouteDialog() {
+        val mapEngine = TftNavigationMapEngine.getInstance(this)
+        val activeState = mapEngine.uiState.value
+        val layout = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val pad = dpToPx(20)
+            setPadding(pad, dpToPx(12), pad, 0)
+        }
+        val info = android.widget.TextView(this).apply {
+            text = "Search any place, enter lat,lng, or paste a shared Google Maps link to route on the 800×480 Live Map & cluster TBT (keeps working when phone is locked)."
+            textSize = 12f
+            setTextColor(currentTheme.textSecondaryColor)
+        }
+        layout.addView(info)
+
+        val input = createThemedEditText("Place, address, or Google Maps URL").apply {
+            setPadding(0, dpToPx(10), 0, 0)
+        }
+        layout.addView(input)
+
+        val builder = MaterialAlertDialogBuilder(this)
+            .setTitle("Route on PulsarNav TFT Map")
+            .setView(layout)
+            .setPositiveButton("Route on TFT Map") { _, _ ->
+                val q = input.text.toString().trim()
+                if (q.isBlank()) {
+                    showFeedback("Enter a destination or share a pin from Google Maps", isAlert = true)
+                } else {
+                    startTftRouteFromSharedInput(q)
+                }
+            }
+            .setNeutralButton("Open Google Maps") { _, _ ->
+                launchGoogleMapsRide()
+            }
+        if (activeState.routeActive) {
+            builder.setNegativeButton("Stop Route") { _, _ ->
+                mapEngine.clearActiveRoute()
+                showFeedback("PulsarNav Live Map route cleared")
+            }
+        } else {
+            builder.setNegativeButton("Cancel", null)
+        }
+        builder.show()
+    }
+
+    private fun showMapsTbtTroubleshooterDialog() {
+        val granted = isNotificationAccessGranted()
+        val diag = GoogleMapsNotificationListener.diagnostics.value
+        val activeRoute = TftNavigationMapEngine.getInstance(this).uiState.value
+
+        val statusLines = buildString {
+            append("• Notification Access: ${if (granted) "GRANTED" else "MISSING"}\n")
+            append("• Listener Service: ${if (diag.isConnected) "CONNECTED" else "DISCONNECTED"}\n")
+            append("• Maps Notif in Shade: ${if (diag.mapsActiveInShade) "DETECTED" else "NOT FOUND"}\n")
+            if (diag.lastNavSummary.isNotBlank()) {
+                append("• Last TBT: ${diag.lastNavSummary}\n")
+            }
+            if (activeRoute.routeActive) {
+                append("• Built-in Live Map Route: ${activeRoute.destinationLabel} (${activeRoute.remainingDistanceText})\n")
+            }
+            append("\nIf Google Maps is in mini PiP window with NO notification in the top shade (common on ColorOS / OxygenOS / RealmeUI):\n")
+            append("1. Tap \"Maps Notifs\" below and turn ON Notifications -> \"Navigation\".\n")
+            append("2. Tap \"Maps Battery\" and set to Unrestricted / Allow background activity.\n")
+            append("3. Or inside Google Maps, tap Share -> PulsarNav to route directly on our 800×480 Live Map (works locked & needs zero Maps notification).")
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Google Maps TBT Diagnostics")
+            .setMessage(statusLines)
+            .setPositiveButton("Maps Notifs") { _, _ ->
+                openAppNotificationSettings("com.google.android.apps.maps")
+            }
+            .setNeutralButton("Maps Battery") { _, _ ->
+                openAppDetailsSettings("com.google.android.apps.maps")
+            }
+            .setNegativeButton("Route in App") { _, _ ->
+                showDestinationSearchAndRouteDialog()
+            }
+            .show()
+    }
+
+    private fun openAppNotificationSettings(targetPackage: String) {
+        try {
+            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, targetPackage)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            openAppDetailsSettings(targetPackage)
+        }
+    }
+
+    private fun openAppDetailsSettings(targetPackage: String) {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$targetPackage")
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            showFeedback("Unable to open settings: ${e.message}", isAlert = true)
+        }
     }
 
     private fun updateDeviceList(bikes: List<DiscoveredBike>) {
@@ -5808,7 +6054,14 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    GoogleMapsNotificationListener.currentNavStep.collectLatest { step ->
+                    combine(
+                        GoogleMapsNotificationListener.currentNavStep,
+                        GoogleMapsNotificationListener.diagnostics,
+                        TftNavigationMapEngine.getInstance(this@MainActivity).uiState
+                    ) { extStep, diag, mapUi ->
+                        Triple(extStep, diag, mapUi)
+                    }.collectLatest { (extStep, diag, mapUi) ->
+                        val step = extStep ?: TftNavigationMapEngine.getInstance(this@MainActivity).getCurrentStepForHud()
                         if (step != null) {
                             val dist = step.rawDistanceText.ifBlank { "${step.distanceMeters} m" }
                             val maneuverDesc = if (step.roundaboutExit > 0) {
@@ -5825,15 +6078,22 @@ class MainActivity : AppCompatActivity() {
                                 val ampm = if (step.etaIsAm) "AM" else "PM"
                                 "ETA %d:%02d %s".format(step.etaHour, step.etaMinute, ampm)
                             } else {
-                                "Active Route"
+                                mapUi.remainingEtaText.ifBlank { "Active Route" }
                             }
                             updateNavDisplay(step.maneuver, dist, street, etaStr)
                         } else if (!bleManager.isSimulationRunning.value) {
                             binding.tvDistance.text = "-- m"
-                            binding.tvStreetName.text = "Waiting for Google Maps..."
+                            binding.tvStreetName.text = if (!isNotificationAccessGranted()) {
+                                "Enable Notification Access or tap Search"
+                            } else if (!diag.mapsActiveInShade) {
+                                "Waiting for Maps Notif (tap Maps Fix ›)"
+                            } else {
+                                "Waiting for Google Maps..."
+                            }
                             binding.tvManeuverIcon.text = "⬆"
                             binding.tvEtaBadge.text = "-- min ETA"
                         }
+                        updateNotificationAccessUi()
                     }
                 }
 

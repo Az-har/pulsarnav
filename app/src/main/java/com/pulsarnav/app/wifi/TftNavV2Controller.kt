@@ -8,10 +8,6 @@ import android.location.Address
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -25,13 +21,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -374,14 +364,6 @@ class TftNavV2Controller(private val context: Context) {
         return best
     }
 
-    private fun hasUsableDefaultInternet(cm: ConnectivityManager?): Boolean {
-        if (cm == null) return false
-        val net = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(net) ?: return false
-        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }
-
     private fun fetchOverpassPois(
         categoryIndex: Int,
         lat: Double,
@@ -398,57 +380,15 @@ class TftNavV2Controller(private val context: Context) {
             spec.overpassFilter
         )
 
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        var cellularNetwork: Network? = null
-        var callback: ConnectivityManager.NetworkCallback? = null
-
-        if (cm != null && ContextCompat.checkSelfPermission(context, Manifest.permission.CHANGE_NETWORK_STATE) == PackageManager.PERMISSION_GRANTED) {
-            try {
-                val latch = CountDownLatch(1)
-                val req = NetworkRequest.Builder()
-                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
-                    .build()
-                val cb = object : ConnectivityManager.NetworkCallback() {
-                    override fun onAvailable(network: Network) {
-                        cellularNetwork = network
-                        latch.countDown()
-                    }
-
-                    override fun onUnavailable() {
-                        latch.countDown()
-                    }
-                }
-                callback = cb
-                cm.requestNetwork(req, cb, 2000)
-                latch.await(2200L, TimeUnit.MILLISECONDS)
-            } catch (e: Exception) {
-                Log.d(TAG, "Cellular internet request unavailable: ${e.message}")
-            }
-        }
-
+        val encodedBody = "data=" + URLEncoder.encode(overpassQuery, "UTF-8")
         return try {
-            if (cellularNetwork == null && !hasUsableDefaultInternet(cm)) {
-                Log.d(TAG, "Skipping Overpass POI lookup: no cellular or validated default internet while on SoftAP")
-                return emptyList()
-            }
-            val url = URL("https://overpass-api.de/api/interpreter")
-            val conn = (cellularNetwork?.openConnection(url) ?: url.openConnection()) as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 3500
-            conn.readTimeout = 4500
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-            conn.setRequestProperty("User-Agent", "PulsarNav-Android/1.0")
-            val body = "data=" + URLEncoder.encode(overpassQuery, "UTF-8")
-            OutputStreamWriter(conn.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
-
-            if (conn.responseCode !in 200..299) {
-                conn.disconnect()
-                return emptyList()
-            }
-            val rawJson = BufferedReader(InputStreamReader(conn.inputStream, StandardCharsets.UTF_8)).use { it.readText() }
-            conn.disconnect()
+            val rawJson = CellularNetworkHttp.postFormText(
+                context = context,
+                url = "https://overpass-api.de/api/interpreter",
+                encodedBody = encodedBody,
+                connectTimeoutMs = 3500,
+                readTimeoutMs = 4500
+            ) ?: return emptyList()
             parseOverpassPoisJson(
                 rawJson = rawJson,
                 fallbackCategoryName = spec.label,
@@ -460,13 +400,6 @@ class TftNavV2Controller(private val context: Context) {
         } catch (e: Exception) {
             Log.d(TAG, "Overpass POI lookup skipped (${e.javaClass.simpleName}): ${e.message}")
             emptyList()
-        } finally {
-            if (cm != null && callback != null) {
-                try {
-                    cm.unregisterNetworkCallback(callback)
-                } catch (_: Exception) {
-                }
-            }
         }
     }
 

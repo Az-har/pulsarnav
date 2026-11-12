@@ -21,18 +21,29 @@ data class WhatsAppAlertInfo(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+data class NotificationListenerDiagnostics(
+    val isConnected: Boolean = false,
+    val mapsActiveInShade: Boolean = false,
+    val lastNavPackage: String = "",
+    val lastNavSummary: String = "",
+    val lastNavTimestampMs: Long = 0L,
+    val totalNavUpdates: Long = 0L,
+    val lastIgnoredMapsSummary: String = ""
+)
+
 class GoogleMapsNotificationListener : NotificationListenerService() {
 
     companion object {
         private const val TAG = "PulsarNotificationHub"
         private const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
+        private const val GOOGLE_MAPS_LITE_PACKAGE = "com.google.android.apps.mapslite"
         private const val WAZE_PACKAGE = "com.waze"
         private const val ANDROID_AUTO_PACKAGE = "com.google.android.projection.gearhead"
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
         private const val WHATSAPP_BUSINESS_PACKAGE = "com.whatsapp.w4b"
         private const val WHATSAPP_REVERT_DELAY_MS = 6000L
 
-    private val ICON_KEYS = arrayOf(
+        private val ICON_KEYS = arrayOf(
             Notification.EXTRA_LARGE_ICON,
             Notification.EXTRA_PICTURE,
             "android.ongoingActivityNoti.chipIcon",
@@ -45,6 +56,11 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
 
         private val _lastWhatsAppAlert = MutableStateFlow<WhatsAppAlertInfo?>(null)
         val lastWhatsAppAlert: StateFlow<WhatsAppAlertInfo?> = _lastWhatsAppAlert
+
+        private val _diagnostics = MutableStateFlow(NotificationListenerDiagnostics())
+        val diagnostics: StateFlow<NotificationListenerDiagnostics> = _diagnostics
+
+        fun hasActiveExternalNavigation(): Boolean = _currentNavStep.value != null
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -71,22 +87,69 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         ManeuverMatcher.prime(this)
+        _diagnostics.value = _diagnostics.value.copy(isConnected = true)
+        scanExistingActiveNotifications()
         Log.i(TAG, "Notification Listener connected (Google Maps TBT + WhatsApp Alerts)")
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        _diagnostics.value = _diagnostics.value.copy(isConnected = false, mapsActiveInShade = false)
         Log.w(TAG, "Notification Listener disconnected")
         DebugLogRepository.error("NotifListener", "Notification Listener service disconnected")
     }
 
+    override fun onDestroy() {
+        mainHandler.removeCallbacks(revertToNavigationRunnable)
+        super.onDestroy()
+    }
+
+    private fun scanExistingActiveNotifications() {
+        try {
+            val active = activeNotifications ?: return
+            var mapsPresent = false
+            for (sbn in active) {
+                if (sbn == null) continue
+                when (sbn.packageName) {
+                    GOOGLE_MAPS_PACKAGE, GOOGLE_MAPS_LITE_PACKAGE -> {
+                        mapsPresent = true
+                        handleNavigationNotification(sbn, "Google Maps")
+                    }
+                    WAZE_PACKAGE -> {
+                        mapsPresent = true
+                        handleNavigationNotification(sbn, "Waze")
+                    }
+                    ANDROID_AUTO_PACKAGE -> {
+                        mapsPresent = true
+                        handleNavigationNotification(sbn, "Android Auto")
+                    }
+                }
+            }
+            _diagnostics.value = _diagnostics.value.copy(mapsActiveInShade = mapsPresent)
+        } catch (e: Exception) {
+            Log.d(TAG, "Unable to inspect initial activeNotifications: ${e.message}")
+        }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
+        if (!_diagnostics.value.isConnected) {
+            _diagnostics.value = _diagnostics.value.copy(isConnected = true)
+        }
 
         when (sbn.packageName) {
-            GOOGLE_MAPS_PACKAGE -> handleNavigationNotification(sbn, "Google Maps")
-            WAZE_PACKAGE -> handleNavigationNotification(sbn, "Waze")
-            ANDROID_AUTO_PACKAGE -> handleNavigationNotification(sbn, "Android Auto")
+            GOOGLE_MAPS_PACKAGE, GOOGLE_MAPS_LITE_PACKAGE -> {
+                _diagnostics.value = _diagnostics.value.copy(mapsActiveInShade = true)
+                handleNavigationNotification(sbn, "Google Maps")
+            }
+            WAZE_PACKAGE -> {
+                _diagnostics.value = _diagnostics.value.copy(mapsActiveInShade = true)
+                handleNavigationNotification(sbn, "Waze")
+            }
+            ANDROID_AUTO_PACKAGE -> {
+                _diagnostics.value = _diagnostics.value.copy(mapsActiveInShade = true)
+                handleNavigationNotification(sbn, "Android Auto")
+            }
             WHATSAPP_PACKAGE, WHATSAPP_BUSINESS_PACKAGE -> {
                 if (com.pulsarnav.app.data.AppSettings.getInstance(applicationContext).isWhatsAppAlertsEnabled) {
                     handleWhatsAppNotification(sbn)
@@ -99,18 +162,26 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
 
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+        val subtext = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
+
         // Verify it is an ongoing navigation notification
-        if (!isNavigationNotification(notification, extras)) return
+        if (!isNavigationNotification(notification, extras)) {
+            if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) == 0 && !title.isNullOrBlank()) {
+                _diagnostics.value = _diagnostics.value.copy(
+                    lastIgnoredMapsSummary = "${sbn.packageName}: cat=${notification.category ?: "none"} flags=0x${notification.flags.toString(16)}"
+                )
+            }
+            return
+        }
 
         val settings = com.pulsarnav.app.data.AppSettings.getInstance(applicationContext)
         if (settings.isSkipClusterNavWhenHeadunit && sourceName == "Android Auto") {
             Log.d(TAG, "Skipping BLE cluster update because Headunit navigation mirroring is disabled in settings")
             return
         }
-
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-        val subtext = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
 
         val primaryInfo = extras.getCharSequence("android.ongoingActivityNoti.primaryInfo")?.toString()
             ?: extras.getCharSequence("android.ongoingActivityNoti.nowbarPrimaryInfo")?.toString()
@@ -146,6 +217,16 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         activeNavKey = sbn.key
         activeNavPackage = sbn.packageName
         _currentNavStep.value = parsedStep
+        val prevDiag = _diagnostics.value
+        _diagnostics.value = prevDiag.copy(
+            isConnected = true,
+            mapsActiveInShade = true,
+            lastNavPackage = sourceName,
+            lastNavSummary = "${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m (${parsedStep.streetName.ifBlank { "Route" }})",
+            lastNavTimestampMs = System.currentTimeMillis(),
+            totalNavUpdates = prevDiag.totalNavUpdates + 1L,
+            lastIgnoredMapsSummary = ""
+        )
 
         Log.d(TAG, "[$sourceName] TBT: ${parsedStep.maneuver.description} in ${parsedStep.distanceMeters}m (ETA: ${parsedStep.etaHour}:${parsedStep.etaMinute})")
         DebugLogRepository.logRateLimited(
@@ -171,6 +252,8 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         if (Notification.CATEGORY_NAVIGATION == n.category) return true
         if (n.category?.contains("nav", ignoreCase = true) == true) return true
         if (ex.containsKey("android.ongoingActivityNoti.primaryInfo")) return true
+        if (ex.containsKey("android.ongoingActivityNoti.nowbarPrimaryInfo")) return true
+        if (ex.containsKey("android.ongoingActivityNoti.chipExpandedText")) return true
         if (ex.containsKey("android.ongoingActivityNoti.style")) return true
 
         val channelId = n.channelId?.lowercase()
@@ -184,7 +267,9 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
                 )) return true
 
         return (n.flags and Notification.FLAG_ONGOING_EVENT) != 0 &&
-            (ex.containsKey(Notification.EXTRA_TITLE) || ex.containsKey(Notification.EXTRA_TEXT))
+            (ex.containsKey(Notification.EXTRA_TITLE) ||
+                ex.containsKey(Notification.EXTRA_TEXT) ||
+                ex.containsKey(Notification.EXTRA_BIG_TEXT))
     }
 
     private fun extractIconObject(notification: Notification, ex: Bundle): Any? {
@@ -243,7 +328,9 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         val pkg = sbn?.packageName ?: return
-        if (pkg == GOOGLE_MAPS_PACKAGE || pkg == WAZE_PACKAGE || pkg == ANDROID_AUTO_PACKAGE) {
+        if (pkg == GOOGLE_MAPS_PACKAGE || pkg == GOOGLE_MAPS_LITE_PACKAGE ||
+            pkg == WAZE_PACKAGE || pkg == ANDROID_AUTO_PACKAGE
+        ) {
             val key = sbn.key
             val matchesTrackedKey = activeNavKey != null && key == activeNavKey
             val matchesFallbackPkg = activeNavKey == null && pkg == activeNavPackage &&
@@ -254,6 +341,7 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
             activeNavKey = null
             activeNavPackage = null
             _currentNavStep.value = null
+            _diagnostics.value = _diagnostics.value.copy(mapsActiveInShade = false)
             Log.i(TAG, "Navigation session ended ($pkg) -> sending stop frame")
             val bleManager = BajajBleManager.getInstance(applicationContext)
             bleManager.stopNavigation()

@@ -1,13 +1,14 @@
 package com.pulsarnav.app.wifi
 
-import android.app.Presentation
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -15,16 +16,14 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
-import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
-import android.view.View
-import android.view.WindowManager
 import com.pulsarnav.app.ble.BajajBleManager
+import com.pulsarnav.app.data.AppSettings
 import com.pulsarnav.app.media.MediaControlManager
 import com.pulsarnav.app.model.Maneuver
 import com.pulsarnav.app.parser.ParsedNavigationStep
@@ -37,17 +36,17 @@ import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
- * Manages the 800x480 virtual display pipeline for Bajaj TFT mirroring:
- *  - Mode 1 (COCKPIT_HUD): Offline-first Presentation HUD driven by live TBT notifications,
- *    call state, media playback, telemetry, and cluster touch / handlebar recenter inputs.
- *    Works with zero special consent dialogs even when the phone screen is locked.
- *  - Mode 2 (LIVE_SCREEN_CAST): Mirrors live Google Maps / Waze / phone screen via an active
- *    Android MediaProjection session scaled cleanly to 800x480.
+ * Manages the 800x480 framebuffer pipeline for Bajaj TFT Wi-Fi mirroring:
+ *  - Mode 1 (LIVE_MAP): Headless offscreen Canvas renderer on a background HandlerThread that
+ *    streams an 800x480 Maps-only landscape view (slippy tiles + OSRM route + TBT corner card +
+ *    telemetry strip). Does not use MediaProjection or Presentation, so it keeps streaming
+ *    continuously even when the phone screen is locked.
+ *  - Mode 2 (COCKPIT_HUD): Headless offscreen Canvas cockpit dashboard renderer (works locked).
+ *  - Mode 3 (LIVE_SCREEN_CAST): Mirrors Google Maps / single app via Android MediaProjection with
+ *    dynamic orientation detection and aspect/crop normalization to eliminate portrait black bars.
  */
 class TftCockpitDisplayController(
     private val context: Context,
@@ -56,13 +55,14 @@ class TftCockpitDisplayController(
 ) {
 
     enum class ClusterTouchZone { NONE, MEDIA_PLAY_PAUSE, DAYLIGHT_TOGGLE }
+    enum class LiveMapTouchZone { NONE, ZOOM_IN, ZOOM_OUT, TOGGLE_HEADING, TOGGLE_DAYLIGHT }
 
     companion object {
         private const val TAG = "TftCockpitDisplay"
         private const val REDRAW_INTERVAL_MS = 75L
         private const val LOCAL_PREVIEW_IDLE_REDRAW_MS = 250L
 
-        // Unified 800x480 interactive hitboxes shared between TftCockpitView.onDraw() and onClusterTouch()
+        // Unified 800x480 interactive hitboxes shared between CockpitHudCanvasRenderer and onClusterTouch()
         const val FOOTER_THEME_LEFT = 14
         const val FOOTER_THEME_TOP = 416
         const val FOOTER_THEME_RIGHT = 280
@@ -83,28 +83,47 @@ class TftCockpitDisplayController(
                 else -> ClusterTouchZone.NONE
             }
         }
+
+        fun resolveLiveMapTouchZone(touchType: Int, x: Int, y: Int): LiveMapTouchZone {
+            if (touchType != 5 && touchType != 9) return LiveMapTouchZone.NONE
+            return when {
+                x >= TftWifiProtocol.TFT_WIDTH - 68 && y in 140..186 -> LiveMapTouchZone.ZOOM_IN
+                x >= TftWifiProtocol.TFT_WIDTH - 68 && y in 196..242 -> LiveMapTouchZone.ZOOM_OUT
+                x >= TftWifiProtocol.TFT_WIDTH - 68 && y in 252..298 -> LiveMapTouchZone.TOGGLE_HEADING
+                y >= 420 && x in 16..340 -> LiveMapTouchZone.TOGGLE_DAYLIGHT
+                else -> LiveMapTouchZone.NONE
+            }
+        }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+    private val appSettings = AppSettings.getInstance(context)
+    private val mapEngine = TftNavigationMapEngine.getInstance(context)
+    private val hudRenderer = CockpitHudCanvasRenderer(context)
+
     private val pipelineTransitionLock = Any()
     private val lifecycleLock = Any()
 
-    private var readerThread: HandlerThread? = null
+    private var workerThread: HandlerThread? = null
+    private var workerHandler: Handler? = null
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
-    private var presentation: TftCockpitPresentation? = null
 
     private var activeProjection: MediaProjection? = null
     private var activeProjectionCallback: MediaProjection.Callback? = null
+    private var displayListener: DisplayManager.DisplayListener? = null
     @Volatile
     private var stoppedByProjectionCallback = false
     @Volatile
     private var displayGeneration = 0L
 
     private var frameBitmap: Bitmap? = null
-    private var paddedBitmap: Bitmap? = null
-    private var copyCanvas: Canvas? = null
+    private var frameCanvas: Canvas? = null
+    private var castRawBitmap: Bitmap? = null
+    private var castPaddedBitmap: Bitmap? = null
+    private val castMatrix = Matrix()
+    private val castFilterPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val copySrcRect = Rect()
     private val copyDstRect = Rect()
     private val jpegBuffer = ByteArrayOutputStream(32_768)
@@ -128,76 +147,57 @@ class TftCockpitDisplayController(
     @Volatile
     private var daylightHighContrast = false
     @Volatile
-    private var activeSource = TftMirrorSource.COCKPIT_HUD
-
+    private var activeSource = TftMirrorSource.LIVE_MAP
     @Volatile
     private var previewPaused = false
+    @Volatile
+    private var debugOverlayEnabled = false
+    @Volatile
+    private var currentCaptureSize = IntSize(TftWifiProtocol.TFT_WIDTH, TftWifiProtocol.TFT_HEIGHT)
 
-    fun setPreviewPaused(paused: Boolean) {
-        previewPaused = paused
-        mainHandler.removeCallbacks(redrawRunnable)
-        if (!paused && running && activeSource == TftMirrorSource.COCKPIT_HUD) {
-            mainHandler.post(redrawRunnable)
+    private val headlessTickRunnable = object : Runnable {
+        override fun run() {
+            if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST || previewPaused) return
+            renderAndEmitHeadlessFrame()
+            val delayMs = if (clusterStationary) LOCAL_PREVIEW_IDLE_REDRAW_MS else REDRAW_INTERVAL_MS
+            workerHandler?.postDelayed(this, delayMs)
         }
     }
 
-    private val redrawRunnable = object : Runnable {
-        override fun run() {
-            if (!running || activeSource != TftMirrorSource.COCKPIT_HUD || previewPaused) return
-            presentation?.refreshFrame()
-            val delayMs = if (virtualDisplay != null && activeProjection != null) {
-                REDRAW_INTERVAL_MS
-            } else if (clusterStationary) {
-                LOCAL_PREVIEW_IDLE_REDRAW_MS
-            } else {
-                REDRAW_INTERVAL_MS
-            }
-            mainHandler.postDelayed(this, delayMs)
+    fun setPreviewPaused(paused: Boolean) {
+        previewPaused = paused
+        workerHandler?.removeCallbacks(headlessTickRunnable)
+        if (!paused && running && activeSource != TftMirrorSource.LIVE_SCREEN_CAST) {
+            workerHandler?.post(headlessTickRunnable)
         }
     }
 
     fun startCockpitHud() {
+        startHeadless(TftMirrorSource.COCKPIT_HUD)
+    }
+
+    fun startHeadless(source: TftMirrorSource) {
+        val normalizedSource = if (source == TftMirrorSource.COCKPIT_HUD) {
+            TftMirrorSource.COCKPIT_HUD
+        } else {
+            TftMirrorSource.LIVE_MAP
+        }
         synchronized(pipelineTransitionLock) {
             stop()
-            val expectedGen: Long
             synchronized(lifecycleLock) {
                 displayGeneration++
-                expectedGen = displayGeneration
-                activeSource = TftMirrorSource.COCKPIT_HUD
+                activeSource = normalizedSource
                 running = true
                 stoppedByProjectionCallback = false
                 currentQuality = TftWifiProtocol.UDP_DEFAULT_JPEG_QUALITY
                 lastCaptureTimestampMs = 0L
-                startReaderPipeline()
-                val reader = imageReader ?: return
-                virtualDisplay = displayManager.createVirtualDisplay(
-                    "PulsarNav_TFT_HUD",
-                    TftWifiProtocol.TFT_WIDTH,
-                    TftWifiProtocol.TFT_HEIGHT,
-                    TftWifiProtocol.TFT_DPI,
-                    reader.surface,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
-                )
-            }
 
-            mainHandler.post {
-                synchronized(lifecycleLock) {
-                    val vd = virtualDisplay ?: return@post
-                    if (!running || activeSource != TftMirrorSource.COCKPIT_HUD || displayGeneration != expectedGen) {
-                        return@post
-                    }
-                    try {
-                        val pres = TftCockpitPresentation(context, vd.display)
-                        pres.show()
-                        presentation = pres
-                        mainHandler.removeCallbacks(redrawRunnable)
-                        mainHandler.post(redrawRunnable)
-                        Log.i(TAG, "Started 800x480 TftCockpitPresentation on VirtualDisplay")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to show TftCockpitPresentation: ${e.message}", e)
-                    }
-                }
+                val thread = HandlerThread("TftHeadlessRenderThread").apply { start() }
+                val handler = Handler(thread.looper)
+                workerThread = thread
+                workerHandler = handler
+                handler.post(headlessTickRunnable)
+                Log.i(TAG, "Started lock-proof headless 800x480 TFT pipeline (mode=$normalizedSource)")
             }
         }
     }
@@ -213,11 +213,16 @@ class TftCockpitDisplayController(
                 stoppedByProjectionCallback = false
                 currentQuality = TftWifiProtocol.UDP_DEFAULT_JPEG_QUALITY
                 lastCaptureTimestampMs = 0L
-                startReaderPipeline()
-                val reader = imageReader ?: run {
-                    running = false
-                    return false
-                }
+
+                val thread = HandlerThread("TftImageReader").apply { start() }
+                val handler = Handler(thread.looper)
+                workerThread = thread
+                workerHandler = handler
+
+                val initialSize = queryCurrentCastCaptureSize()
+                currentCaptureSize = initialSize
+                val reader = createCastImageReader(initialSize, handler)
+                imageReader = reader
 
                 val callback = object : MediaProjection.Callback() {
                     override fun onStop() {
@@ -233,8 +238,8 @@ class TftCockpitDisplayController(
                 virtualDisplay = try {
                     mediaProjection.createVirtualDisplay(
                         "PulsarNav_TFT_Cast",
-                        TftWifiProtocol.TFT_WIDTH,
-                        TftWifiProtocol.TFT_HEIGHT,
+                        initialSize.width,
+                        initialSize.height,
                         TftWifiProtocol.TFT_DPI,
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                         reader.surface,
@@ -246,7 +251,20 @@ class TftCockpitDisplayController(
                     null
                 }
                 created = virtualDisplay != null
-                Log.i(TAG, "Started 800x480 Live MediaProjection VirtualDisplay (created=$created)")
+                if (created) {
+                    val dListener = object : DisplayManager.DisplayListener {
+                        override fun onDisplayAdded(displayId: Int) {}
+                        override fun onDisplayRemoved(displayId: Int) {}
+                        override fun onDisplayChanged(displayId: Int) {
+                            if (displayId == Display.DEFAULT_DISPLAY) {
+                                maybeResizeCastSurface()
+                            }
+                        }
+                    }
+                    displayListener = dListener
+                    displayManager.registerDisplayListener(dListener, mainHandler)
+                }
+                Log.i(TAG, "Started Live MediaProjection ${initialSize.width}x${initialSize.height} -> 800x480 (created=$created)")
             }
             if (!created) {
                 stop()
@@ -255,29 +273,67 @@ class TftCockpitDisplayController(
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun queryCurrentCastCaptureSize(): IntSize {
+        val disp = displayManager.getDisplay(Display.DEFAULT_DISPLAY)
+        val pt = Point()
+        if (disp != null) {
+            disp.getRealSize(pt)
+        } else {
+            val dm = context.resources.displayMetrics
+            pt.set(dm.widthPixels, dm.heightPixels)
+        }
+        return TftScreenCastTransform.computeCaptureDimensions(pt.x, pt.y, maxEdge = 960)
+    }
+
+    private fun createCastImageReader(size: IntSize, handler: Handler): ImageReader {
+        return ImageReader.newInstance(size.width, size.height, PixelFormat.RGBA_8888, 2).also { ir ->
+            ir.setOnImageAvailableListener({ reader ->
+                processCastImage(reader)
+            }, handler)
+        }
+    }
+
+    private fun maybeResizeCastSurface() {
+        val next = queryCurrentCastCaptureSize()
+        synchronized(lifecycleLock) {
+            if (!running || activeSource != TftMirrorSource.LIVE_SCREEN_CAST) return
+            if (next == currentCaptureSize) return
+            val vd = virtualDisplay ?: return
+            val handler = workerHandler ?: return
+            val oldReader = imageReader
+            val newReader = createCastImageReader(next, handler)
+            currentCaptureSize = next
+            imageReader = newReader
+            try {
+                oldReader?.setOnImageAvailableListener(null, null)
+            } catch (_: Exception) {}
+            try {
+                vd.resize(next.width, next.height, TftWifiProtocol.TFT_DPI)
+                vd.surface = newReader.surface
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to resize VirtualDisplay to ${next.width}x${next.height}: ${e.message}")
+            }
+            try {
+                oldReader?.close()
+            } catch (_: Exception) {}
+        }
+    }
+
     fun updateBikeStationary(stationary: Boolean) {
         clusterStationary = stationary
-        if (activeSource == TftMirrorSource.COCKPIT_HUD) {
-            mainHandler.post { presentation?.refreshFrame() }
-        }
+        refreshFrameNow()
     }
 
     fun onHandlebarRecenter() {
         recenterToastUntilMs = SystemClock.elapsedRealtime() + 2500L
         daylightHighContrast = false
-        if (activeSource == TftMirrorSource.COCKPIT_HUD) {
-            mainHandler.post { presentation?.refreshFrame() }
-        }
+        refreshFrameNow()
     }
-
-    @Volatile
-    private var debugOverlayEnabled = false
 
     fun setDebugOverlayEnabled(enabled: Boolean) {
         debugOverlayEnabled = enabled
-        if (activeSource == TftMirrorSource.COCKPIT_HUD) {
-            mainHandler.post { presentation?.refreshFrame() }
-        }
+        refreshFrameNow()
     }
 
     fun isDebugOverlayEnabled(): Boolean = debugOverlayEnabled
@@ -288,15 +344,14 @@ class TftCockpitDisplayController(
 
     fun toggleDaylightHighContrast(): Boolean {
         daylightHighContrast = !daylightHighContrast
-        if (activeSource == TftMirrorSource.COCKPIT_HUD) {
-            mainHandler.post { presentation?.refreshFrame() }
-        }
+        refreshFrameNow()
         return daylightHighContrast
     }
 
     fun refreshFrameNow() {
-        if (activeSource == TftMirrorSource.COCKPIT_HUD) {
-            mainHandler.post { presentation?.refreshFrame() }
+        if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST || previewPaused) return
+        workerHandler?.post {
+            renderAndEmitHeadlessFrame()
         }
     }
 
@@ -306,63 +361,52 @@ class TftCockpitDisplayController(
         lastTouchX = clampedX
         lastTouchY = clampedY
         lastTouchTimestampMs = SystemClock.elapsedRealtime()
-        // Treat touch UP (5) or DOWN_UP (9) inside the unified 800x480 hitboxes as interactive controls.
-        when (resolveTouchZone(touchType, clampedX, clampedY)) {
-            ClusterTouchZone.MEDIA_PLAY_PAUSE -> {
-                val mm = MediaControlManager.getInstance(context)
-                if (mm.getActiveMediaSnapshot().playStatus == 2) {
-                    mm.dispatchPause()
-                } else {
-                    mm.dispatchPlay()
-                }
-            }
-            ClusterTouchZone.DAYLIGHT_TOGGLE -> {
-                daylightHighContrast = !daylightHighContrast
-            }
-            ClusterTouchZone.NONE -> {}
-        }
-        if (activeSource == TftMirrorSource.COCKPIT_HUD) {
-            mainHandler.post { presentation?.refreshFrame() }
-        }
-    }
 
-    private fun dismissPresentationSync() {
-        val pres = synchronized(lifecycleLock) {
-            presentation.also { presentation = null }
-        } ?: return
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            try {
-                pres.dismiss()
-            } catch (_: Exception) {}
-            return
-        }
-        val done = CountDownLatch(1)
-        mainHandler.post {
-            try {
-                pres.dismiss()
-            } catch (_: Exception) {
-            } finally {
-                done.countDown()
+        if (activeSource == TftMirrorSource.LIVE_MAP) {
+            when (resolveLiveMapTouchZone(touchType, clampedX, clampedY)) {
+                LiveMapTouchZone.ZOOM_IN -> mapEngine.adjustZoom(+1)
+                LiveMapTouchZone.ZOOM_OUT -> mapEngine.adjustZoom(-1)
+                LiveMapTouchZone.TOGGLE_HEADING -> mapEngine.toggleHeadingUp()
+                LiveMapTouchZone.TOGGLE_DAYLIGHT -> daylightHighContrast = !daylightHighContrast
+                LiveMapTouchZone.NONE -> {}
+            }
+        } else {
+            when (resolveTouchZone(touchType, clampedX, clampedY)) {
+                ClusterTouchZone.MEDIA_PLAY_PAUSE -> {
+                    val mm = MediaControlManager.getInstance(context)
+                    if (mm.getActiveMediaSnapshot().playStatus == 2) {
+                        mm.dispatchPause()
+                    } else {
+                        mm.dispatchPlay()
+                    }
+                }
+                ClusterTouchZone.DAYLIGHT_TOGGLE -> {
+                    daylightHighContrast = !daylightHighContrast
+                }
+                ClusterTouchZone.NONE -> {}
             }
         }
-        try {
-            done.await(500L, TimeUnit.MILLISECONDS)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-        }
+        refreshFrameNow()
     }
 
     fun stop() {
         synchronized(pipelineTransitionLock) {
             displayGeneration++
             running = false
-            mainHandler.removeCallbacks(redrawRunnable)
-            // Dismiss Presentation synchronously BEFORE releasing the VirtualDisplay it is attached to.
-            dismissPresentationSync()
 
             var oldThread: HandlerThread?
             var oldReader: ImageReader?
             synchronized(lifecycleLock) {
+                workerHandler?.removeCallbacks(headlessTickRunnable)
+                workerHandler = null
+
+                displayListener?.let { dl ->
+                    try {
+                        displayManager.unregisterDisplayListener(dl)
+                    } catch (_: Exception) {}
+                }
+                displayListener = null
+
                 val proj = activeProjection
                 val cb = activeProjectionCallback
                 val alreadyStoppedByCb = stoppedByProjectionCallback
@@ -393,14 +437,13 @@ class TftCockpitDisplayController(
                     oldReader?.setOnImageAvailableListener(null, null)
                 } catch (_: Exception) {}
 
-                oldThread = readerThread
-                readerThread = null
+                oldThread = workerThread
+                workerThread = null
                 try {
                     oldThread?.quitSafely()
                 } catch (_: Exception) {}
             }
 
-            // Drain any in-flight processImage() outside lifecycleLock before closing reader or recycling bitmaps.
             if (oldThread != null && Thread.currentThread() !== oldThread) {
                 try {
                     oldThread?.join(500L)
@@ -414,33 +457,38 @@ class TftCockpitDisplayController(
             } catch (_: Exception) {}
 
             synchronized(lifecycleLock) {
-                copyCanvas = null
+                frameCanvas = null
                 frameBitmap?.recycle()
                 frameBitmap = null
-                paddedBitmap?.recycle()
-                paddedBitmap = null
+                castRawBitmap?.recycle()
+                castRawBitmap = null
+                castPaddedBitmap?.recycle()
+                castPaddedBitmap = null
             }
         }
     }
 
-    private fun startReaderPipeline() {
-        val thread = HandlerThread("TftImageReader").apply { start() }
-        val handler = Handler(thread.looper)
-        readerThread = thread
+    private fun renderAndEmitHeadlessFrame() {
+        synchronized(lifecycleLock) {
+            if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST) return
+            val w = TftWifiProtocol.TFT_WIDTH
+            val h = TftWifiProtocol.TFT_HEIGHT
+            val bmp = ensureTargetBitmap(w, h)
+            val canvas = frameCanvas ?: Canvas(bmp).also { frameCanvas = it }
 
-        val reader = ImageReader.newInstance(
-            TftWifiProtocol.TFT_WIDTH,
-            TftWifiProtocol.TFT_HEIGHT,
-            PixelFormat.RGBA_8888,
-            2
-        )
-        reader.setOnImageAvailableListener({ ir ->
-            processImage(ir)
-        }, handler)
-        imageReader = reader
+            if (activeSource == TftMirrorSource.LIVE_MAP) {
+                hudRenderer.drawLiveMapFrame(canvas, w, h)
+            } else {
+                hudRenderer.drawCockpitHudFrame(canvas, w.toFloat(), h.toFloat())
+            }
+
+            val encoded = encodeAdaptiveJpeg(bmp) ?: return
+            lastCaptureTimestampMs = SystemClock.elapsedRealtime()
+            onEncodedFrameReady(encoded, currentQuality, encoded.size)
+        }
     }
 
-    private fun processImage(reader: ImageReader) {
+    private fun processCastImage(reader: ImageReader) {
         if (!running) return
         val image = try {
             reader.acquireLatestImage()
@@ -459,36 +507,48 @@ class TftCockpitDisplayController(
                 val buffer = plane.buffer
                 val pixelStride = plane.pixelStride
                 val rowStride = plane.rowStride
-                val width = image.width
-                val height = image.height
-                if (pixelStride <= 0 || width <= 0 || height <= 0) return
+                val srcW = image.width
+                val srcH = image.height
+                if (pixelStride <= 0 || srcW <= 0 || srcH <= 0) return
 
-                val outBitmap = frameBitmap?.takeIf { !it.isRecycled && it.width == width && it.height == height }
-                    ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
-                        frameBitmap?.recycle()
-                        frameBitmap = it
-                        copyCanvas = Canvas(it)
+                val rawBmp = castRawBitmap?.takeIf { !it.isRecycled && it.width == srcW && it.height == srcH }
+                    ?: Bitmap.createBitmap(srcW, srcH, Bitmap.Config.ARGB_8888).also {
+                        castRawBitmap?.recycle()
+                        castRawBitmap = it
                     }
 
-                val rowPadding = rowStride - pixelStride * width
+                val rowPadding = rowStride - pixelStride * srcW
                 if (rowPadding == 0) {
-                    outBitmap.copyPixelsFromBuffer(buffer)
+                    rawBmp.copyPixelsFromBuffer(buffer)
                 } else {
-                    val paddedWidth = width + (rowPadding / pixelStride)
-                    val padded = paddedBitmap?.takeIf {
-                        !it.isRecycled && it.width == paddedWidth && it.height == height
-                    } ?: Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888).also {
-                        paddedBitmap?.recycle()
-                        paddedBitmap = it
+                    val paddedW = srcW + (rowPadding / pixelStride)
+                    val padded = castPaddedBitmap?.takeIf {
+                        !it.isRecycled && it.width == paddedW && it.height == srcH
+                    } ?: Bitmap.createBitmap(paddedW, srcH, Bitmap.Config.ARGB_8888).also {
+                        castPaddedBitmap?.recycle()
+                        castPaddedBitmap = it
                     }
                     padded.copyPixelsFromBuffer(buffer)
-                    val canvas = copyCanvas ?: Canvas(outBitmap).also { copyCanvas = it }
-                    copySrcRect.set(0, 0, width, height)
-                    copyDstRect.set(0, 0, width, height)
-                    canvas.drawBitmap(padded, copySrcRect, copyDstRect, null)
+                    val tmpCanvas = Canvas(rawBmp)
+                    copySrcRect.set(0, 0, srcW, srcH)
+                    copyDstRect.set(0, 0, srcW, srcH)
+                    tmpCanvas.drawBitmap(padded, copySrcRect, copyDstRect, null)
                 }
 
-                val encoded = encodeAdaptiveJpeg(outBitmap) ?: return
+                val dstBmp = ensureTargetBitmap(TftWifiProtocol.TFT_WIDTH, TftWifiProtocol.TFT_HEIGHT)
+                val dstCanvas = frameCanvas ?: Canvas(dstBmp).also { frameCanvas = it }
+                TftScreenCastTransform.renderIntoTarget(
+                    srcBitmap = rawBmp,
+                    dstBitmap = dstBmp,
+                    dstCanvas = dstCanvas,
+                    layoutMode = appSettings.tftCastLayoutMode,
+                    drawMatrix = castMatrix,
+                    filterPaint = castFilterPaint,
+                    srcRectTmp = copySrcRect,
+                    dstRectTmp = copyDstRect
+                )
+
+                val encoded = encodeAdaptiveJpeg(dstBmp) ?: return
                 lastCaptureTimestampMs = now
                 onEncodedFrameReady(encoded, currentQuality, encoded.size)
             }
@@ -497,6 +557,15 @@ class TftCockpitDisplayController(
         } finally {
             image.close()
         }
+    }
+
+    private fun ensureTargetBitmap(w: Int, h: Int): Bitmap {
+        return frameBitmap?.takeIf { !it.isRecycled && it.width == w && it.height == h }
+            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                frameBitmap?.recycle()
+                frameBitmap = it
+                frameCanvas = Canvas(it)
+            }
     }
 
     private fun encodeAdaptiveJpeg(bitmap: Bitmap): ByteArray? {
@@ -515,8 +584,13 @@ class TftCockpitDisplayController(
         }
 
         if (size >= TftWifiProtocol.UDP_MAX_JPEG_BYTES) {
-            currentQuality = maxOf(TftWifiProtocol.UDP_MIN_JPEG_QUALITY, q - 5)
-            return null
+            size = compressJpegSize(bitmap, 16)
+            if (size >= TftWifiProtocol.UDP_MAX_JPEG_BYTES) {
+                currentQuality = TftWifiProtocol.UDP_MIN_JPEG_QUALITY
+                return null
+            }
+            currentQuality = TftWifiProtocol.UDP_MIN_JPEG_QUALITY
+            return jpegBuffer.toByteArray()
         }
 
         currentQuality = TftUdpFrameEncoder.selectNextQuality(q, size)
@@ -529,27 +603,7 @@ class TftCockpitDisplayController(
         return jpegBuffer.size()
     }
 
-    private inner class TftCockpitPresentation(
-        outerContext: Context,
-        display: Display
-    ) : Presentation(outerContext, display) {
-
-        private var cockpitView: TftCockpitView? = null
-
-        override fun onCreate(savedInstanceState: Bundle?) {
-            super.onCreate(savedInstanceState)
-            window?.addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED)
-            val view = TftCockpitView(context)
-            cockpitView = view
-            setContentView(view)
-        }
-
-        fun refreshFrame() {
-            cockpitView?.invalidate()
-        }
-    }
-
-    private inner class TftCockpitView(context: Context) : View(context) {
+    private inner class CockpitHudCanvasRenderer(context: Context) {
 
         private val timeFormat = SimpleDateFormat("hh:mm a", Locale.getDefault())
         private val bleManager = BajajBleManager.getInstance(context)
@@ -584,10 +638,48 @@ class TftCockpitDisplayController(
         private val radarRect = RectF()
         private val tmpRect = RectF()
 
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            val w = width.toFloat().coerceAtLeast(1f)
-            val h = height.toFloat().coerceAtLeast(1f)
+        private fun currentClockString(): String {
+            val wallNowMs = System.currentTimeMillis()
+            val minuteBucket = wallNowMs / 60_000L
+            if (minuteBucket != cachedTimeMinute) {
+                cachedTimeMinute = minuteBucket
+                reusableDate.time = wallNowMs
+                cachedTimeStr = timeFormat.format(reusableDate)
+            }
+            return cachedTimeStr
+        }
+
+        fun drawLiveMapFrame(canvas: Canvas, width: Int, height: Int) {
+            val telemetry = telemetryManager.telemetryState.value
+            val callInfo = callManager.callInfo.value
+            val waAlert = GoogleMapsNotificationListener.lastWhatsAppAlert.value
+            val simAlertSender = bleManager.simulatedAlert.value?.takeIf {
+                System.currentTimeMillis() - it.timestampMs < 6000L
+            }?.sender
+            val resolvedWa = waAlert?.sender ?: simAlertSender
+            val caller = if (callInfo.state != CallState.NO_CALL) {
+                callInfo.callerName?.ifBlank { callInfo.callerNumber } ?: "Incoming Call"
+            } else null
+
+            val navStep = mapEngine.getCurrentStepForHud() ?: bleManager.simulatedNavStep.value
+            val toast = if (SystemClock.elapsedRealtime() < recenterToastUntilMs) "RECENTERED" else null
+
+            mapEngine.renderMapFrame(
+                canvas = canvas,
+                width = width,
+                height = height,
+                daylightMode = daylightHighContrast,
+                isStationary = clusterStationary,
+                batteryPct = telemetry.batteryPercent,
+                clockText = currentClockString(),
+                activeNavStep = navStep,
+                incomingCaller = caller,
+                whatsAppSender = resolvedWa,
+                toastBanner = toast
+            )
+        }
+
+        fun drawCockpitHudFrame(canvas: Canvas, w: Float, h: Float) {
             val highContrast = daylightHighContrast
 
             val bgColor = if (highContrast) Color.rgb(245, 247, 250) else Color.rgb(10, 12, 16)
@@ -595,28 +687,26 @@ class TftCockpitDisplayController(
             val borderColor = if (highContrast) Color.rgb(200, 208, 220) else Color.rgb(44, 52, 68)
             val primaryText = if (highContrast) Color.rgb(15, 20, 28) else Color.rgb(246, 248, 252)
             val secondaryText = if (highContrast) Color.rgb(75, 86, 104) else Color.rgb(160, 172, 194)
-            val accentColor = Color.rgb(230, 57, 70) // Pulsar Crimson Red
+            val accentColor = Color.rgb(230, 57, 70)
             val cyanAccent = Color.rgb(56, 189, 248)
             val greenAccent = Color.rgb(34, 197, 94)
 
             bgPaint.color = bgColor
             canvas.drawRect(0f, 0f, w, h, bgPaint)
 
-            val navStep: ParsedNavigationStep? = GoogleMapsNotificationListener.currentNavStep.value
+            val navStep: ParsedNavigationStep? = mapEngine.getCurrentStepForHud()
             val waAlert = GoogleMapsNotificationListener.lastWhatsAppAlert.value
             val callInfo = callManager.callInfo.value
             val telemetry = telemetryManager.telemetryState.value
             val media = mediaManager.getActiveMediaSnapshot()
             val stats = rideTracker.getLiveRideSnapshot()
 
-            // Top Telemetry Status Bar (height 54px)
             cardPaint.color = cardColor
             borderPaint.color = borderColor
             cardRect.set(14f, 10f, w - 14f, 58f)
             canvas.drawRoundRect(cardRect, 12f, 12f, cardPaint)
             canvas.drawRoundRect(cardRect, 12f, 12f, borderPaint)
 
-            // Cluster / BLE dot
             val bleConnected = bleManager.isLinkReady
             accentPaint.color = if (bleConnected) greenAccent else Color.rgb(245, 158, 11)
             canvas.drawCircle(34f, 34f, 6f, accentPaint)
@@ -628,19 +718,11 @@ class TftCockpitDisplayController(
             val headerTitle = bleManager.getConnectedClusterName().ifBlank { "PULSAR TFT" }
             canvas.drawText(headerTitle, 48f, 41f, textPaint)
 
-            // Battery & Time on right of top bar
             textPaint.textAlign = Paint.Align.RIGHT
             textPaint.typeface = normalTypeface
             textPaint.color = secondaryText
             textPaint.textSize = 19f
-            val wallNowMs = System.currentTimeMillis()
-            val minuteBucket = wallNowMs / 60_000L
-            if (minuteBucket != cachedTimeMinute) {
-                cachedTimeMinute = minuteBucket
-                reusableDate.time = wallNowMs
-                cachedTimeStr = timeFormat.format(reusableDate)
-            }
-            val timeStr = cachedTimeStr
+            val timeStr = currentClockString()
             val stateBadge = if (clusterStationary) "PARK" else "RIDE"
             canvas.drawText(
                 "$stateBadge  |  BAT ${telemetry.batteryPercent}%  |  $timeStr",
@@ -649,20 +731,17 @@ class TftCockpitDisplayController(
                 textPaint
             )
 
-            // Main Left Panel: Turn-by-Turn Navigation Card (x: 14..510, y: 70..404)
             cardRect.set(14f, 70f, 512f, 404f)
             canvas.drawRoundRect(cardRect, 18f, 18f, cardPaint)
             canvas.drawRoundRect(cardRect, 18f, 18f, borderPaint)
 
             val resolvedNavStep = navStep ?: bleManager.simulatedNavStep.value
             if (resolvedNavStep != null) {
-                // Maneuver Vector Stage
                 radarRect.set(30f, 88f, 186f, 244f)
                 cardPaint.color = if (highContrast) Color.rgb(232, 238, 246) else Color.rgb(30, 36, 48)
                 canvas.drawRoundRect(radarRect, 20f, 20f, cardPaint)
                 drawManeuverVector(canvas, resolvedNavStep.maneuver, radarRect, accentColor, cyanAccent)
 
-                // Distance to next turn
                 textPaint.textAlign = Paint.Align.LEFT
                 textPaint.typeface = boldTypeface
                 textPaint.color = primaryText
@@ -670,12 +749,10 @@ class TftCockpitDisplayController(
                 val distLabel = formatDistanceShort(resolvedNavStep.distanceMeters, resolvedNavStep.rawDistanceText)
                 canvas.drawText(distLabel, 204f, 152f, textPaint)
 
-                // Maneuver description subtitle
                 textPaint.textSize = 22f
                 textPaint.color = cyanAccent
                 canvas.drawText(resolvedNavStep.maneuver.description.uppercase(Locale.US), 204f, 188f, textPaint)
 
-                // ETA / Total Dist Pill
                 textPaint.textSize = 21f
                 textPaint.color = secondaryText
                 textPaint.typeface = normalTypeface
@@ -690,14 +767,12 @@ class TftCockpitDisplayController(
                 } else ""
                 canvas.drawText("$etaStr$remKm", 204f, 224f, textPaint)
 
-                // Street / Road Name
                 textPaint.typeface = boldTypeface
                 textPaint.color = primaryText
                 textPaint.textSize = 30f
                 val street = resolvedNavStep.streetName.ifBlank { "Follow Route" }
                 drawWrappedTwoLines(canvas, street, 32f, 294f, 464f, 38f, textPaint)
             } else {
-                // Standby Compass / Navigation Ready View
                 radarRect.set(34f, 94f, 174f, 234f)
                 borderPaint.color = cyanAccent
                 borderPaint.strokeWidth = 3f
@@ -705,7 +780,6 @@ class TftCockpitDisplayController(
                 borderPaint.strokeWidth = 2f
                 borderPaint.color = borderColor
 
-                // Stylized forward compass chevron
                 drawManeuverVector(canvas, Maneuver.STRAIGHT, radarRect, greenAccent, cyanAccent)
 
                 textPaint.textAlign = Paint.Align.LEFT
@@ -717,10 +791,9 @@ class TftCockpitDisplayController(
                 textPaint.typeface = normalTypeface
                 textPaint.color = secondaryText
                 textPaint.textSize = 21f
-                canvas.drawText("Start route in Google Maps or Waze", 196f, 192f, textPaint)
-                canvas.drawText("Or use Live Screen Cast for full map view", 196f, 224f, textPaint)
+                canvas.drawText("Share a place to PulsarNav for Live Map", 196f, 192f, textPaint)
+                canvas.drawText("Or open Config -> Switch to Map Mirror", 196f, 224f, textPaint)
 
-                // Quick Stats Grid inside standby box
                 textPaint.typeface = boldTypeface
                 textPaint.color = primaryText
                 textPaint.textSize = 26f
@@ -743,7 +816,6 @@ class TftCockpitDisplayController(
                 )
             }
 
-            // Right Panel Top: Speed / Call / WhatsApp Priority Card (x: 526..786, y: 70..226)
             cardPaint.color = cardColor
             cardRect.set(526f, 70f, w - 14f, 226f)
             canvas.drawRoundRect(cardRect, 18f, 18f, cardPaint)
@@ -801,7 +873,6 @@ class TftCockpitDisplayController(
                 )
             }
 
-            // Right Panel Bottom: Media Dock Card (x: 526..786, y: 238..404)
             cardPaint.color = cardColor
             cardRect.set(526f, 238f, w - 14f, 404f)
             canvas.drawRoundRect(cardRect, 18f, 18f, cardPaint)
@@ -841,7 +912,6 @@ class TftCockpitDisplayController(
                 canvas.drawRoundRect(tmpRect, 4f, 4f, accentPaint)
             }
 
-            // Bottom Footer Strip (y: 416..470)
             cardPaint.color = cardColor
             cardRect.set(14f, 416f, w - 14f, 468f)
             canvas.drawRoundRect(cardRect, 12f, 12f, cardPaint)
@@ -863,11 +933,9 @@ class TftCockpitDisplayController(
             textPaint.color = if (nowMs < recenterToastUntilMs) greenAccent else secondaryText
             canvas.drawText(footerStatus, w - 28f, 449f, textPaint)
 
-            // Optional debug hitbox guide when inspect overlay is active
             if (debugOverlayEnabled) {
                 borderPaint.color = Color.argb(140, 245, 158, 11)
                 borderPaint.strokeWidth = 2f
-                // Touch Zone 1: Day/Night Footer Chip
                 cardRect.set(
                     FOOTER_THEME_LEFT.toFloat(),
                     FOOTER_THEME_TOP.toFloat(),
@@ -875,7 +943,6 @@ class TftCockpitDisplayController(
                     FOOTER_THEME_BOTTOM.toFloat()
                 )
                 canvas.drawRoundRect(cardRect, 8f, 8f, borderPaint)
-                // Touch Zone 2: Media Play/Pause Card
                 cardRect.set(
                     MEDIA_CARD_LEFT.toFloat(),
                     MEDIA_CARD_TOP.toFloat(),
@@ -891,7 +958,6 @@ class TftCockpitDisplayController(
                 borderPaint.color = borderColor
             }
 
-            // Transient touch ripple & coordinate crosshair feedback for cluster touch testing
             val touchAgeMs = nowMs - lastTouchTimestampMs
             val touchVisibleMs = if (debugOverlayEnabled) 2500L else 900L
             if (lastTouchX >= 0 && touchAgeMs < touchVisibleMs) {
@@ -905,7 +971,7 @@ class TftCockpitDisplayController(
                     textPaint.textSize = 14f
                     textPaint.typeface = monoBoldTypeface
                     textPaint.color = cyanAccent
-                    val tx = (lastTouchX + 24).coerceAtMost(width - 130).toFloat()
+                    val tx = (lastTouchX + 24).coerceAtMost(w.toInt() - 130).toFloat()
                     val ty = (lastTouchY - 10).coerceAtLeast(24).toFloat()
                     canvas.drawText("(${lastTouchX},${lastTouchY})", tx, ty, textPaint)
                 }
@@ -985,103 +1051,20 @@ class TftCockpitDisplayController(
             primary: Int,
             secondary: Int
         ) {
-            val cx = box.centerX()
-            val cy = box.centerY()
-            val s = minOf(box.width(), box.height()) * 0.34f
-            arrowStrokePaint.color = primary
             arrowStrokePaint.strokeWidth = 11f
-            arrowPath.reset()
-
-            when (maneuver) {
-                Maneuver.TURN_LEFT, Maneuver.FORK_LEFT, Maneuver.KEEP_LEFT -> {
-                    arrowPath.moveTo(cx + s * 0.25f, cy + s)
-                    arrowPath.lineTo(cx + s * 0.25f, cy - s * 0.1f)
-                    arrowPath.lineTo(cx - s * 0.8f, cy - s * 0.1f)
-                    arrowPath.moveTo(cx - s * 0.45f, cy - s * 0.45f)
-                    arrowPath.lineTo(cx - s * 0.85f, cy - s * 0.1f)
-                    arrowPath.lineTo(cx - s * 0.45f, cy + s * 0.25f)
-                }
-                Maneuver.TURN_RIGHT, Maneuver.FORK_RIGHT, Maneuver.KEEP_RIGHT -> {
-                    arrowPath.moveTo(cx - s * 0.25f, cy + s)
-                    arrowPath.lineTo(cx - s * 0.25f, cy - s * 0.1f)
-                    arrowPath.lineTo(cx + s * 0.8f, cy - s * 0.1f)
-                    arrowPath.moveTo(cx + s * 0.45f, cy - s * 0.45f)
-                    arrowPath.lineTo(cx + s * 0.85f, cy - s * 0.1f)
-                    arrowPath.lineTo(cx + s * 0.45f, cy + s * 0.25f)
-                }
-                Maneuver.TURN_SLIGHT_LEFT, Maneuver.RAMP_LEFT -> {
-                    arrowPath.moveTo(cx + s * 0.3f, cy + s)
-                    arrowPath.lineTo(cx + s * 0.3f, cy + s * 0.1f)
-                    arrowPath.lineTo(cx - s * 0.6f, cy - s * 0.8f)
-                    arrowPath.moveTo(cx - s * 0.65f, cy - s * 0.3f)
-                    arrowPath.lineTo(cx - s * 0.65f, cy - s * 0.85f)
-                    arrowPath.lineTo(cx - s * 0.1f, cy - s * 0.85f)
-                }
-                Maneuver.TURN_SLIGHT_RIGHT, Maneuver.RAMP_RIGHT -> {
-                    arrowPath.moveTo(cx - s * 0.3f, cy + s)
-                    arrowPath.lineTo(cx - s * 0.3f, cy + s * 0.1f)
-                    arrowPath.lineTo(cx + s * 0.6f, cy - s * 0.8f)
-                    arrowPath.moveTo(cx + s * 0.1f, cy - s * 0.85f)
-                    arrowPath.lineTo(cx + s * 0.65f, cy - s * 0.85f)
-                    arrowPath.lineTo(cx + s * 0.65f, cy - s * 0.3f)
-                }
-                Maneuver.U_TURN_LEFT -> {
-                    arrowPath.moveTo(cx + s * 0.45f, cy + s)
-                    arrowPath.lineTo(cx + s * 0.45f, cy - s * 0.35f)
-                    tmpRect.set(cx - s * 0.45f, cy - s * 0.9f, cx + s * 0.45f, cy)
-                    arrowPath.arcTo(
-                        tmpRect,
-                        0f,
-                        -180f,
-                        false
-                    )
-                    arrowPath.lineTo(cx - s * 0.45f, cy + s * 0.55f)
-                    arrowPath.moveTo(cx - s * 0.78f, cy + s * 0.25f)
-                    arrowPath.lineTo(cx - s * 0.45f, cy + s * 0.65f)
-                    arrowPath.lineTo(cx - s * 0.12f, cy + s * 0.25f)
-                }
-                Maneuver.U_TURN_RIGHT -> {
-                    arrowPath.moveTo(cx - s * 0.45f, cy + s)
-                    arrowPath.lineTo(cx - s * 0.45f, cy - s * 0.35f)
-                    tmpRect.set(cx - s * 0.45f, cy - s * 0.9f, cx + s * 0.45f, cy)
-                    arrowPath.arcTo(
-                        tmpRect,
-                        180f,
-                        180f,
-                        false
-                    )
-                    arrowPath.lineTo(cx + s * 0.45f, cy + s * 0.55f)
-                    arrowPath.moveTo(cx + s * 0.12f, cy + s * 0.25f)
-                    arrowPath.lineTo(cx + s * 0.45f, cy + s * 0.65f)
-                    arrowPath.lineTo(cx + s * 0.78f, cy + s * 0.25f)
-                }
-                Maneuver.ROUNDABOUT_LEFT, Maneuver.ROUNDABOUT_RIGHT -> {
-                    arrowStrokePaint.color = secondary
-                    canvas.drawCircle(cx, cy - s * 0.1f, s * 0.45f, arrowStrokePaint)
-                    arrowStrokePaint.color = primary
-                    val dir = if (maneuver == Maneuver.ROUNDABOUT_LEFT) -1f else 1f
-                    arrowPath.moveTo(cx, cy + s)
-                    arrowPath.lineTo(cx, cy + s * 0.35f)
-                    arrowPath.moveTo(cx + dir * s * 0.45f, cy - s * 0.1f)
-                    arrowPath.lineTo(cx + dir * s * 0.9f, cy - s * 0.55f)
-                }
-                Maneuver.DESTINATION_REACHED -> {
-                    arrowStrokePaint.color = Color.rgb(34, 197, 94)
-                    canvas.drawCircle(cx, cy, s * 0.65f, arrowStrokePaint)
-                    canvas.drawCircle(cx, cy, s * 0.22f, accentPaint.apply { color = Color.rgb(34, 197, 94) })
-                    return
-                }
-                else -> {
-                    // Straight / Merge / Sharp fallback upright arrow
-                    val shiftX = if (abs(maneuver.opcode.toInt()) == 69) -s * 0.35f else 0f
-                    arrowPath.moveTo(cx, cy + s)
-                    arrowPath.lineTo(cx + shiftX, cy - s * 0.8f)
-                    arrowPath.moveTo(cx + shiftX - s * 0.4f, cy - s * 0.35f)
-                    arrowPath.lineTo(cx + shiftX, cy - s * 0.85f)
-                    arrowPath.lineTo(cx + shiftX + s * 0.4f, cy - s * 0.35f)
-                }
-            }
-            canvas.drawPath(arrowPath, arrowStrokePaint)
+            TftManeuverVectorDrawer.draw(
+                canvas = canvas,
+                maneuver = maneuver,
+                cx = box.centerX(),
+                cy = box.centerY(),
+                s = minOf(box.width(), box.height()) * 0.34f,
+                strokePaint = arrowStrokePaint,
+                fillPaint = accentPaint,
+                path = arrowPath,
+                arcRect = tmpRect,
+                primaryColor = primary,
+                secondaryColor = secondary
+            )
         }
     }
 }

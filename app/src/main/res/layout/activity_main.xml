@@ -580,7 +580,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
-                            android:text="Stream offline cockpit HUD (even screen off) or cast Google Maps to NS400Z TFT."
+                            android:text="Stream maps-only 800×480 Live Map (works locked) or Cast Google Maps."
                             android:textColor="@color/text_secondary"
                             android:textSize="11sp" />
 
@@ -597,7 +597,7 @@
                                 android:layout_marginEnd="6dp"
                                 android:layout_weight="1"
                                 android:backgroundTint="@color/wine_red"
-                                android:text="Mirror HUD"
+                                android:text="Map Mirror"
                                 android:textColor="@color/on_primary"
                                 android:textSize="12sp"
                                 android:textStyle="bold"
@@ -4211,6 +4211,20 @@
                                 android:letterSpacing="0.06"
                                 android:text="CLUSTER HUD MIRROR"
                                 android:textColor="@color/text_tertiary"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvMapsTbtFixLink"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginEnd="8dp"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:paddingHorizontal="6dp"
+                                android:paddingVertical="4dp"
+                                android:text="Maps Fix ›"
+                                android:textColor="@color/wine_red_light"
                                 android:textSize="11sp"
                                 android:textStyle="bold" />
 

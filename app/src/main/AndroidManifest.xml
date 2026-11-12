@@ -129,6 +129,19 @@
                 <data android:pathPattern=".*\\.pnav\\.json" />
             </intent-filter>
 
+            <!-- Share from Google Maps or open geo: links directly into PulsarNav Live TFT Map + BLE TBT -->
+            <intent-filter android:label="Route on PulsarNav TFT">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="geo" />
+            </intent-filter>
+
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />

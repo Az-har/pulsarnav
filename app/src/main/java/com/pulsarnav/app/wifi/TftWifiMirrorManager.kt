@@ -60,13 +60,14 @@ enum class TftMirrorStatus {
 }
 
 enum class TftMirrorSource {
+    LIVE_MAP,
     COCKPIT_HUD,
     LIVE_SCREEN_CAST
 }
 
 data class TftMirrorState(
     val status: TftMirrorStatus = TftMirrorStatus.IDLE,
-    val source: TftMirrorSource = TftMirrorSource.COCKPIT_HUD,
+    val source: TftMirrorSource = TftMirrorSource.LIVE_MAP,
     val ssid: String = "",
     val clusterHost: String = TftWifiProtocol.DEFAULT_CLUSTER_HOST,
     val isBikeStationary: Boolean = true,
@@ -137,7 +138,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
     @Volatile
     private var activePassword: String = ""
     @Volatile
-    private var activeSourceMode: TftMirrorSource = TftMirrorSource.COCKPIT_HUD
+    private var activeSourceMode: TftMirrorSource = TftMirrorSource.LIVE_MAP
     @Volatile
     private var tcpOutputStream: OutputStream? = null
     @Volatile
@@ -167,15 +168,61 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         },
         onProjectionStoppedUnexpectedly = {
             if (isActiveSession.get() && _mirrorState.value.source == TftMirrorSource.LIVE_SCREEN_CAST) {
-                Log.i(TAG, "Reverting TFT mirror back to built-in Cockpit HUD after MediaProjection stop")
-                startCockpitHudMirroring()
+                Log.i(TAG, "Phone locked or cast stopped — seamlessly continuing with headless 800x480 Live Map on TFT")
+                com.pulsarnav.app.debug.DebugLogRepository.wifi(
+                    "TFT_CAST",
+                    "MediaProjection ended (e.g. screen lock) -> seamless Live Map continuity"
+                )
+                startPreferredHeadlessMirroring()
                 BikeBleForegroundService.dropMediaProjection(context, keepWifiMirror = true)
             }
         }
     )
 
+    private val mapEngine: TftNavigationMapEngine by lazy {
+        TftNavigationMapEngine.getInstance(context).also { engine ->
+            engine.setInvalidationListener {
+                if (isActiveSession.get() || isLocalPreviewActive.get()) {
+                    displayController.refreshFrameNow()
+                }
+            }
+        }
+    }
+
+    fun startPreferredHeadlessMirroring() {
+        val preferred = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) {
+            TftMirrorSource.COCKPIT_HUD
+        } else {
+            TftMirrorSource.LIVE_MAP
+        }
+        startInternal(preferred, null)
+    }
+
+    fun startLiveMapMirroring() {
+        appSettings.tftMirrorMode = AppSettings.TFT_MODE_LIVE_MAP
+        startInternal(TftMirrorSource.LIVE_MAP, null)
+    }
+
     fun startCockpitHudMirroring() {
         startInternal(TftMirrorSource.COCKPIT_HUD, null)
+    }
+
+    fun switchHeadlessModeIfActive(mode: String) {
+        appSettings.tftMirrorMode = mode
+        if (!isActiveSession.get() && !isLocalPreviewActive.get()) return
+        val nextSource = if (mode == AppSettings.TFT_MODE_HUD) {
+            TftMirrorSource.COCKPIT_HUD
+        } else {
+            TftMirrorSource.LIVE_MAP
+        }
+        if (nextSource == TftMirrorSource.LIVE_MAP) {
+            mapEngine.startLocationTracking()
+        }
+        if (isActiveSession.get() && _mirrorState.value.source != TftMirrorSource.LIVE_SCREEN_CAST) {
+            startInternal(nextSource, null)
+        } else if (isLocalPreviewActive.get()) {
+            displayController.startHeadless(nextSource)
+        }
     }
 
     fun startLiveScreenMirroring(mediaProjection: MediaProjection): Boolean {
@@ -196,6 +243,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         isLocalPreviewActive.set(false)
         _isLocalPreviewActiveFlow.value = false
         displayController.stop()
+        mapEngine.stopLocationTracking()
         unregisterWifiCallback()
         closeSockets()
         tcpSessionJob?.cancel()
@@ -240,15 +288,18 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                         )
                         return false
                     }
-                } else {
-                    displayController.startCockpitHud()
+                    } else {
+                        if (source == TftMirrorSource.LIVE_MAP) {
+                            mapEngine.startLocationTracking()
+                        }
+                        displayController.startHeadless(source)
+                    }
+                    _mirrorState.value = _mirrorState.value.copy(
+                        source = source,
+                        errorMessage = null
+                    )
+                    return true
                 }
-                _mirrorState.value = _mirrorState.value.copy(
-                    source = source,
-                    errorMessage = null
-                )
-                return true
-            }
 
             stopMirroringLocked()
             activeSsid = ssid
@@ -258,7 +309,10 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
             val displayOk = if (source == TftMirrorSource.LIVE_SCREEN_CAST && projection != null) {
                 displayController.startLiveScreenCast(projection)
             } else {
-                displayController.startCockpitHud()
+                if (source == TftMirrorSource.LIVE_MAP) {
+                    mapEngine.startLocationTracking()
+                }
+                displayController.startHeadless(source)
                 true
             }
             if (!displayOk) {
@@ -679,7 +733,8 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
 
         when (val req = TftTcpCodec.parseClusterRequest(frame)) {
             is ClusterTcpRequest.ScreenInfoRequest -> {
-                val navActive = GoogleMapsNotificationListener.currentNavStep.value != null
+                val navActive = GoogleMapsNotificationListener.currentNavStep.value != null ||
+                    mapEngine.uiState.value.routeActive
                 val mode = if (navActive || _mirrorState.value.source == TftMirrorSource.LIVE_SCREEN_CAST) {
                     TftWifiProtocol.SCREEN_MODE_TBT_NAV
                 } else {
@@ -871,10 +926,16 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         }
         if (isLocalPreviewActive.compareAndSet(false, true)) {
             _isLocalPreviewActiveFlow.value = true
-            displayController.startCockpitHud()
+            val src = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) {
+                TftMirrorSource.COCKPIT_HUD
+            } else {
+                mapEngine.startLocationTracking()
+                TftMirrorSource.LIVE_MAP
+            }
+            displayController.startHeadless(src)
             com.pulsarnav.app.debug.DebugLogRepository.wifi(
                 "TFT_DBG",
-                "Started offline 800x480 TFT Cockpit bench preview"
+                "Started offline 800x480 TFT bench preview (${src.name})"
             )
         } else {
             displayController.refreshFrameNow()
@@ -886,6 +947,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         _isLocalPreviewActiveFlow.value = false
         if (wasActive && !isActiveSession.get()) {
             displayController.stop()
+            mapEngine.stopLocationTracking()
             com.pulsarnav.app.debug.DebugLogRepository.wifi(
                 "TFT_DBG",
                 "Stopped offline 800x480 TFT Cockpit bench preview"
