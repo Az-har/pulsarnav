@@ -64,6 +64,26 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
             return packageName in SMS_PACKAGES
         }
 
+        internal const val ALERT_DEBOUNCE_WINDOW_MS = 3500L
+
+        internal fun shouldSuppressAlert(
+            alertType: AlertType,
+            senderTitle: String,
+            nowMs: Long,
+            timestampsMap: MutableMap<String, Long>
+        ): Boolean {
+            val debounceKey = "${alertType.name}:$senderTitle"
+            val lastSent = timestampsMap[debounceKey] ?: 0L
+            if (nowMs - lastSent < ALERT_DEBOUNCE_WINDOW_MS) {
+                return true
+            }
+            timestampsMap[debounceKey] = nowMs
+            if (timestampsMap.size > 50) {
+                timestampsMap.entries.removeIf { nowMs - it.value > 60_000L }
+            }
+            return false
+        }
+
         private val ICON_KEYS = arrayOf(
             Notification.EXTRA_LARGE_ICON,
             Notification.EXTRA_PICTURE,
@@ -324,6 +344,8 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         }
     }
 
+    private val lastAlertTimestamps = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private fun handleMessagingNotification(sbn: StatusBarNotification, alertType: AlertType) {
         val notification = sbn.notification ?: return
         if ((notification.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_GROUP_SUMMARY)) != 0) return
@@ -352,6 +374,15 @@ class GoogleMapsNotificationListener : NotificationListenerService() {
         }
 
         val senderTitle = rawTitle.trim()
+        if (senderTitle.isBlank()) return
+
+        // Debounce rapid duplicate notifications from the same sender (e.g. typing updates or burst messages)
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (shouldSuppressAlert(alertType, senderTitle, now, lastAlertTimestamps)) {
+            Log.d(TAG, "Suppressed duplicate/rapid ${alertType.name}:$senderTitle notification (debounce active)")
+            return
+        }
+
         val channelTag = if (alertType == AlertType.SMS) "SMS" else "WhatsApp"
         Log.i(TAG, "$channelTag alert intercepted from: ${DebugLogRepository.maskPersonName(senderTitle)}")
         DebugLogRepository.telephony(

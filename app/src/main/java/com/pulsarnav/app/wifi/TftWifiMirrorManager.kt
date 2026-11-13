@@ -170,14 +170,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         },
         onProjectionStoppedUnexpectedly = {
             if (isActiveSession.get() && _mirrorState.value.source == TftMirrorSource.LIVE_SCREEN_CAST) {
-                Log.i(TAG, "Phone locked or cast stopped — seamlessly continuing with lock-proof headless TFT mirror")
-                com.pulsarnav.app.debug.DebugLogRepository.wifi(
-                    "TFT_CAST",
-                    "MediaProjection ended (e.g. screen lock) -> lock-proof headless continuity"
-                )
-                maybeApplyCastLandscapeRotation(false)
-                startPreferredHeadlessMirroring()
-                BikeBleForegroundService.dropMediaProjection(context, keepWifiMirror = true)
+                handleScreenLockedDuringCast()
             }
         }
     )
@@ -185,17 +178,23 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
     private var savedAccelRotation: Int? = null
     private var savedUserRotation: Int? = null
     private var rotationModifiedByCast = false
+    private val isTransitioningToHeadless = java.util.concurrent.atomic.AtomicBoolean(false)
 
     fun handleScreenLockedDuringCast() {
         if (!isActiveSession.get() || _mirrorState.value.source != TftMirrorSource.LIVE_SCREEN_CAST) return
-        Log.i(TAG, "Screen locked during LIVE_SCREEN_CAST -> transitioning to lock-proof headless mirror")
-        com.pulsarnav.app.debug.DebugLogRepository.wifi(
-            "TFT_CAST",
-            "Screen locked -> switching to lock-proof ${if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_LIVE_MAP) "Live Map" else "Cockpit HUD"}"
-        )
-        maybeApplyCastLandscapeRotation(false)
-        startPreferredHeadlessMirroring()
-        BikeBleForegroundService.dropMediaProjection(context, keepWifiMirror = true)
+        if (!isTransitioningToHeadless.compareAndSet(false, true)) return
+        try {
+            Log.i(TAG, "Screen locked during LIVE_SCREEN_CAST -> transitioning to lock-proof headless mirror")
+            com.pulsarnav.app.debug.DebugLogRepository.wifi(
+                "TFT_CAST",
+                "Screen locked -> switching to lock-proof ${if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_LIVE_MAP) "Live Map" else "Cockpit HUD"}"
+            )
+            maybeApplyCastLandscapeRotation(false)
+            startPreferredHeadlessMirroring()
+            BikeBleForegroundService.dropMediaProjection(context, keepWifiMirror = true)
+        } finally {
+            isTransitioningToHeadless.set(false)
+        }
     }
 
     private fun stopLiveMapIfUnused() {
@@ -581,8 +580,13 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                     tcpOutputStream = sock.getOutputStream()
 
                     Log.i(TAG, "Connected TCP control channel to $host:${TftWifiProtocol.TCP_PORT}")
+                    clusterStreamingEnabled.set(true)
+                    displayController.refreshFrameNow()
+                    synchronized(udpWakeLock) {
+                        udpWakeLock.notifyAll()
+                    }
                     _mirrorState.value = _mirrorState.value.copy(
-                        status = if (clusterStreamingEnabled.get()) TftMirrorStatus.STREAMING else TftMirrorStatus.TCP_CONNECTED_IDLE,
+                        status = TftMirrorStatus.STREAMING,
                         errorMessage = null
                     )
 
@@ -813,9 +817,14 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                     TftWifiProtocol.SCREEN_MODE_ROUTE_MAP
                 }
                 sendTcpFrame(TftTcpCodec.buildScreenInfoResponse(mode))
+                displayController.refreshFrameNow()
+                synchronized(udpWakeLock) {
+                    udpWakeLock.notifyAll()
+                }
             }
             is ClusterTcpRequest.ScreenControl -> {
                 sendTcpFrame(TftTcpCodec.buildScreenControlResponse())
+                displayController.refreshFrameNow()
             }
             is ClusterTcpRequest.DateTimeRequest -> {
                 sendTcpFrame(TftTcpCodec.buildDateTimeResponse(Calendar.getInstance()))
@@ -833,6 +842,12 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                 _mirrorState.value = _mirrorState.value.copy(
                     status = if (req.active) TftMirrorStatus.STREAMING else TftMirrorStatus.TCP_CONNECTED_IDLE
                 )
+                if (req.active) {
+                    displayController.refreshFrameNow()
+                    synchronized(udpWakeLock) {
+                        udpWakeLock.notifyAll()
+                    }
+                }
             }
             is ClusterTcpRequest.Touch -> {
                 displayController.onClusterTouch(req.touchType, req.x, req.y)

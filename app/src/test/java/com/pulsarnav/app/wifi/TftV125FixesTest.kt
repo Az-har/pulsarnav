@@ -126,4 +126,81 @@ class TftV125FixesTest {
             assertTrue(chunksA1[i].contentEquals(chunksA2[i]))
         }
     }
+
+    @Test
+    fun computeSourceCropRect_landscapeAnchorToTopPreservesTurnBanner() {
+        // Landscape phone 2400x1080 (aspect 2.222) cast into safe panorama 754x256 (aspect 2.945)
+        val content = IntRect(0, 0, 2400, 1080)
+        val crop = TftScreenCastTransform.computeSourceCropRect(
+            contentRect = content,
+            targetW = 754,
+            targetH = 256,
+            layoutMode = AppSettings.CAST_LAYOUT_FILL
+        )
+        // With targetAspect = 2.945, rawCropH = 2400 / 2.945 = ~815px.
+        // Slack = 1080 - 815 = 265px.
+        // Top offset with 0.05f bias should be ~13px (near 0, top-anchored), NEVER centered (132px).
+        assertEquals(0, crop.left)
+        assertEquals(2400, crop.right)
+        assertTrue("Top offset ${crop.top} should be <= 20px to preserve turn header", crop.top <= 20)
+        assertTrue("Bottom should cover at least 70% of screen height", crop.bottom >= 800)
+    }
+
+    @Test
+    fun computeSourceCropRect_tallPortraitUsesTopBias() {
+        // Tall portrait phone 1080x2400 (aspect 0.45) cast into safe panorama 754x256
+        val content = IntRect(0, 0, 1080, 2400)
+        val crop = TftScreenCastTransform.computeSourceCropRect(
+            contentRect = content,
+            targetW = 754,
+            targetH = 256,
+            layoutMode = AppSettings.CAST_LAYOUT_FILL
+        )
+        // RawCropH = 1080 / 2.945 = ~366px.
+        // Slack = 2400 - 366 = 2034px.
+        // Bias = 0.12f -> topOffset ~ 244px.
+        assertTrue("Top offset should be biased near upper third", crop.top in 150..400)
+    }
+
+    @Test
+    fun shouldSuppressAlert_debouncesRapidDuplicateAlerts() {
+        val map = mutableMapOf<String, Long>()
+        val sender = "RiderFriend"
+
+        // First alert: allowed
+        val suppressed1 = GoogleMapsNotificationListener.shouldSuppressAlert(
+            com.pulsarnav.app.protocol.AlertType.WHATSAPP,
+            sender,
+            100_000L,
+            map
+        )
+        assertFalse(suppressed1)
+
+        // Rapid duplicate (1000ms later < 3500ms): suppressed
+        val suppressed2 = GoogleMapsNotificationListener.shouldSuppressAlert(
+            com.pulsarnav.app.protocol.AlertType.WHATSAPP,
+            sender,
+            101_000L,
+            map
+        )
+        assertTrue(suppressed2)
+
+        // Different sender: allowed immediately
+        val suppressedOther = GoogleMapsNotificationListener.shouldSuppressAlert(
+            com.pulsarnav.app.protocol.AlertType.WHATSAPP,
+            "WorkBoss",
+            101_500L,
+            map
+        )
+        assertFalse(suppressedOther)
+
+        // Same sender after window expires (> 3500ms later): allowed
+        val suppressed3 = GoogleMapsNotificationListener.shouldSuppressAlert(
+            com.pulsarnav.app.protocol.AlertType.WHATSAPP,
+            sender,
+            104_000L,
+            map
+        )
+        assertFalse(suppressed3)
+    }
 }

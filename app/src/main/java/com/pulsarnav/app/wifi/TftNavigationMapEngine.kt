@@ -950,20 +950,30 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     private fun onNewLocation(loc: Location) {
         val speedKmh = if (loc.hasSpeed()) (loc.speed * 3.6f).coerceIn(0f, 199f) else 0f
         _uiState.update { prev ->
-            val bearing = when {
-                loc.hasBearing() && loc.bearing != 0f -> loc.bearing
-                prev.hasGpsFix && TftMapMathAndParser.haversineMeters(prev.lat, prev.lng, loc.latitude, loc.longitude) > 4.0 -> {
+            // Speed deadband (4.5 km/h) & circular shortest-path low-pass smoothing:
+            // When stationary or creeping at walking pace, freeze heading to prevent GPS noise from flipping the map!
+            val isMoving = speedKmh >= 4.5f
+            val rawTarget = when {
+                isMoving && loc.hasBearing() && loc.bearing != 0f -> loc.bearing
+                isMoving && prev.hasGpsFix && TftMapMathAndParser.haversineMeters(prev.lat, prev.lng, loc.latitude, loc.longitude) > 5.0 -> {
                     TftMapMathAndParser.bearingDegrees(prev.lat, prev.lng, loc.latitude, loc.longitude)
                 }
                 else -> prev.bearingDeg
             }
+            val diff = ((rawTarget - prev.bearingDeg + 540f) % 360f) - 180f
+            val smoothedBearing = if (prev.hasGpsFix && isMoving) {
+                ((prev.bearingDeg + diff * 0.35f) + 360f) % 360f
+            } else {
+                prev.bearingDeg
+            }
+
             prev.copy(
                 hasGpsFix = true,
                 lat = loc.latitude,
                 lng = loc.longitude,
                 previewLat = null,
                 previewLng = null,
-                bearingDeg = bearing,
+                bearingDeg = smoothedBearing,
                 speedKmh = speedKmh
             )
         }

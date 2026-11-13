@@ -53,6 +53,9 @@ class BikeBleForegroundService : Service {
         @Volatile
         private var isNavLocationActive = false
 
+        @Volatile
+        private var activeInstance: BikeBleForegroundService? = null
+
         fun isRunning(): Boolean = isRunning
 
         fun start(context: Context) {
@@ -143,6 +146,11 @@ class BikeBleForegroundService : Service {
         }
 
         fun dropMediaProjection(context: Context, keepWifiMirror: Boolean = true) {
+            val inst = activeInstance
+            if (inst != null && isRunning) {
+                inst.dropMediaProjectionInternal(keepWifiMirror)
+                return
+            }
             if (!isRunning) {
                 isMediaProjectionActive = false
                 if (!keepWifiMirror) {
@@ -204,6 +212,7 @@ class BikeBleForegroundService : Service {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         acquireWakeLock()
         initCallManagerIfPermitted()
         try {
@@ -334,20 +343,8 @@ class BikeBleForegroundService : Service {
             }
             ACTION_DROP_MEDIA_PROJECTION -> {
                 val keepWifi = intent.getBooleanExtra(EXTRA_KEEP_WIFI_MIRROR, true)
-                isMediaProjectionActive = false
-                isWifiMirrorActive = keepWifi
-                updateWifiLock(keepWifi)
-                if (!keepWifi && !isNavLocationActive && isBleIdleForService()) {
-                    promoteMinimalBeforeAbort()
-                    isRunning = false
-                    stopSelf()
-                    return START_NOT_STICKY
-                }
-                promoteToForeground(
-                    includeMediaProjection = false,
-                    allowWifiWithoutBt = keepWifi,
-                    allowLocationOnly = isNavLocationActive
-                )
+                dropMediaProjectionInternal(keepWifi)
+                if (!isRunning) return START_NOT_STICKY
             }
             ACTION_STOP_TFT_MIRROR -> {
                 isWifiMirrorActive = false
@@ -461,6 +458,23 @@ class BikeBleForegroundService : Service {
         }
     }
 
+    internal fun dropMediaProjectionInternal(keepWifi: Boolean) {
+        isMediaProjectionActive = false
+        isWifiMirrorActive = keepWifi
+        updateWifiLock(keepWifi)
+        if (!keepWifi && !isNavLocationActive && isBleIdleForService()) {
+            promoteMinimalBeforeAbort()
+            isRunning = false
+            stopSelf()
+            return
+        }
+        promoteToForeground(
+            includeMediaProjection = false,
+            allowWifiWithoutBt = keepWifi,
+            allowLocationOnly = isNavLocationActive
+        )
+    }
+
     private fun promoteToForeground(
         includeMediaProjection: Boolean = false,
         allowWifiWithoutBt: Boolean = false,
@@ -566,6 +580,9 @@ class BikeBleForegroundService : Service {
         } catch (_: Exception) {}
         wakeLock = null
         Log.d(TAG, "BikeBleForegroundService destroyed")
+        if (activeInstance === this) {
+            activeInstance = null
+        }
         super.onDestroy()
     }
 

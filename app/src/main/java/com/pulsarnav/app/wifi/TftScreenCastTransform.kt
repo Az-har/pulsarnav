@@ -64,12 +64,17 @@ object TftScreenCastTransform {
         }
 
         return if (srcAspect < targetAspect) {
-            // Portrait or taller than 5:3: take full width and slice a top-biased 5:3 window
-            // (bias=0.15) so the top turn-by-turn banner in navigation apps stays inside the crop.
+            // Source is taller than target (e.g. 20:9 phone vs 2.95:1 cluster safe zone).
+            // Retain top turn-by-turn banner / street names by biasing near the top (never center-slice 50%!).
             val rawCropH = (cw / targetAspect).roundToInt().coerceIn(1, ch)
             val slack = ch - rawCropH
             val isTallPortrait = ch > cw * 1.35f
-            val bias = if (isTallPortrait) 0.15f else 0.50f
+            val isLandscapePhone = cw > ch
+            val bias = when {
+                isTallPortrait -> 0.12f // Top-biased for vertical phone
+                isLandscapePhone -> 0.05f // Top-anchored for landscape Google Maps to keep green turn card & road names
+                else -> 0.15f
+            }
             val topOffset = (slack * bias).roundToInt().coerceIn(0, slack)
             IntRect(
                 left = contentRect.left,
@@ -239,29 +244,38 @@ object TftScreenCastTransform {
                 dstCanvas.drawBitmap(srcBitmap, srcRectTmp, dstRectTmp, filterPaint)
             }
             AppSettings.CAST_LAYOUT_ROT90 -> {
-                // Rotate content -90 deg (counter-clockwise so top of phone lands on left of TFT)
-                // and aspect-fill strictly inside the NS400Z unobstructed safe viewport.
-                val rotW = content.height.toFloat()
-                val rotH = content.width.toFloat()
-                val vpW = safeViewport.width.toFloat()
-                val vpH = safeViewport.height.toFloat()
-                val scale = max(vpW / rotW, vpH / rotH)
-                val vpCenterX = (safeViewport.left + safeViewport.right) * 0.5f
-                val vpCenterY = (safeViewport.top + safeViewport.bottom) * 0.5f
-                drawMatrix.reset()
-                drawMatrix.postTranslate(-content.left - content.width * 0.5f, -content.top - content.height * 0.5f)
-                drawMatrix.postRotate(-90f)
-                drawMatrix.postScale(scale, scale)
-                drawMatrix.postTranslate(vpCenterX, vpCenterY)
-                dstCanvas.save()
-                dstCanvas.clipRect(
-                    safeViewport.left.toFloat(),
-                    safeViewport.top.toFloat(),
-                    safeViewport.right.toFloat(),
-                    safeViewport.bottom.toFloat()
-                )
-                dstCanvas.drawBitmap(srcBitmap, drawMatrix, filterPaint)
-                dstCanvas.restore()
+                if (content.width >= content.height) {
+                    // Phone is already in landscape! Do not rotate -90° (which scrambles horizontal navigation);
+                    // fit cleanly inside the NS400Z safe viewport instead.
+                    val dstRect = computeFitDestinationRect(content.width, content.height, dstW, dstH, safeViewport)
+                    srcRectTmp.set(content.left, content.top, content.right, content.bottom)
+                    dstRectTmp.set(dstRect.left, dstRect.top, dstRect.right, dstRect.bottom)
+                    dstCanvas.drawBitmap(srcBitmap, srcRectTmp, dstRectTmp, filterPaint)
+                } else {
+                    // Rotate portrait content -90 deg (counter-clockwise so top of phone lands on left of TFT)
+                    // and aspect-fill strictly inside the NS400Z unobstructed safe viewport.
+                    val rotW = content.height.toFloat()
+                    val rotH = content.width.toFloat()
+                    val vpW = safeViewport.width.toFloat()
+                    val vpH = safeViewport.height.toFloat()
+                    val scale = max(vpW / rotW, vpH / rotH)
+                    val vpCenterX = (safeViewport.left + safeViewport.right) * 0.5f
+                    val vpCenterY = (safeViewport.top + safeViewport.bottom) * 0.5f
+                    drawMatrix.reset()
+                    drawMatrix.postTranslate(-content.left - content.width * 0.5f, -content.top - content.height * 0.5f)
+                    drawMatrix.postRotate(-90f)
+                    drawMatrix.postScale(scale, scale)
+                    drawMatrix.postTranslate(vpCenterX, vpCenterY)
+                    dstCanvas.save()
+                    dstCanvas.clipRect(
+                        safeViewport.left.toFloat(),
+                        safeViewport.top.toFloat(),
+                        safeViewport.right.toFloat(),
+                        safeViewport.bottom.toFloat()
+                    )
+                    dstCanvas.drawBitmap(srcBitmap, drawMatrix, filterPaint)
+                    dstCanvas.restore()
+                }
             }
             else -> {
                 val crop = computeSourceCropRect(

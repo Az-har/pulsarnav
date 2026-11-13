@@ -669,7 +669,7 @@ class AppSettings(context: Context) {
         }
 
     var tftMapHeadingUp: Boolean
-        get() = getSafeBoolean(KEY_TFT_MAP_HEADING_UP, true)
+        get() = getSafeBoolean(KEY_TFT_MAP_HEADING_UP, false)
         set(value) {
             prefs.edit().putBoolean(KEY_TFT_MAP_HEADING_UP, value).apply()
         }
