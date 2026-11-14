@@ -1,5 +1,6 @@
 package com.pulsarnav.app.service
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Build
@@ -47,6 +48,7 @@ class PulsarNavTileService : TileService() {
         super.onDestroy()
     }
 
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     override fun onClick() {
         super.onClick()
         val wifiMgr = TftWifiMirrorManager.getInstance(this)
