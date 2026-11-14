@@ -268,6 +268,10 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         startInternal(TftMirrorSource.COCKPIT_HUD, null)
     }
 
+    fun triggerRecenter() {
+        displayController.onHandlebarRecenter()
+    }
+
     fun switchHeadlessModeIfActive(mode: String) {
         appSettings.tftMirrorMode = mode
         if (!isActiveSession.get() && !isLocalPreviewActive.get()) return
@@ -488,9 +492,9 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                     }
                     if (!isActiveSession.get()) return
                     Log.w(TAG, "SoftAP connection unavailable or timed out for SSID=$ssid")
-                    isActiveSession.set(false)
-                    clusterStreamingEnabled.set(false)
-                    displayController.stop()
+                    synchronized(sessionLock) {
+                        stopMirroringLocked(preserveErrorState = true)
+                    }
                     _mirrorState.value = _mirrorState.value.copy(
                         status = TftMirrorStatus.ERROR,
                         ssid = ssid,
@@ -671,62 +675,69 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
     private fun startUdpWorker(network: Network, host: String) {
         udpLoopFuture?.cancel(true)
         udpLoopFuture = udpDispatcherExecutor.submit {
-            var dSock: DatagramSocket? = null
-            try {
-                val sock = try {
-                    DatagramSocket(null).apply {
-                        reuseAddress = true
-                        bind(InetSocketAddress(TftWifiProtocol.UDP_PORT))
+            while (isActiveSession.get() && !Thread.currentThread().isInterrupted) {
+                var dSock: DatagramSocket? = null
+                try {
+                    val sock = try {
+                        DatagramSocket(null).apply {
+                            reuseAddress = true
+                            bind(InetSocketAddress(TftWifiProtocol.UDP_PORT))
+                        }
+                    } catch (_: Exception) {
+                        DatagramSocket()
                     }
-                } catch (_: Exception) {
-                    DatagramSocket()
-                }
-                dSock = sock
-                network.bindSocket(sock)
-                udpSocket = sock
+                    dSock = sock
+                    network.bindSocket(sock)
+                    udpSocket = sock
 
-                val targetAddr = InetAddress.getByName(host)
-                val cipher = TftUdpFrameEncoder.createEncryptCipher()
-                val reusablePacket = DatagramPacket(ByteArray(0), 0, targetAddr, TftWifiProtocol.UDP_PORT)
+                    val targetAddr = InetAddress.getByName(host)
+                    val cipher = TftUdpFrameEncoder.createEncryptCipher()
+                    val reusablePacket = DatagramPacket(ByteArray(0), 0, targetAddr, TftWifiProtocol.UDP_PORT)
 
-                while (isActiveSession.get() && !Thread.currentThread().isInterrupted) {
-                    val jpeg = pendingJpegRef.getAndSet(null)
-                    if (jpeg == null || !clusterStreamingEnabled.get()) {
-                        synchronized(udpWakeLock) {
-                            if (pendingJpegRef.get() == null && isActiveSession.get()) {
-                                udpWakeLock.wait(200L)
+                    while (isActiveSession.get() && !Thread.currentThread().isInterrupted) {
+                        val jpeg = pendingJpegRef.getAndSet(null)
+                        if (jpeg == null || !clusterStreamingEnabled.get()) {
+                            synchronized(udpWakeLock) {
+                                if (pendingJpegRef.get() == null && isActiveSession.get()) {
+                                    udpWakeLock.wait(200L)
+                                }
+                            }
+                            continue
+                        }
+
+                        val chunks = TftUdpFrameEncoder.encodeJpegFrameChunks(jpeg, cipher)
+                        if (chunks.isEmpty()) continue
+
+                        for (i in chunks.indices) {
+                            if (!isActiveSession.get()) break
+                            val packetBytes = chunks[i]
+                            reusablePacket.setData(packetBytes, 0, packetBytes.size)
+                            sock.send(reusablePacket)
+                            if ((i + 1) % TftWifiProtocol.UDP_TX_BURST_PACKETS == 0 && i < chunks.lastIndex) {
+                                Thread.sleep(TftWifiProtocol.UDP_TX_PACING_MS)
                             }
                         }
-                        continue
+
+                        recordSentFrameStats()
                     }
-
-                    val chunks = TftUdpFrameEncoder.encodeJpegFrameChunks(jpeg, cipher)
-                    if (chunks.isEmpty()) continue
-
-                    for (i in chunks.indices) {
-                        if (!isActiveSession.get()) break
-                        val packetBytes = chunks[i]
-                        reusablePacket.setData(packetBytes, 0, packetBytes.size)
-                        sock.send(reusablePacket)
-                        if ((i + 1) % TftWifiProtocol.UDP_TX_BURST_PACKETS == 0 && i < chunks.lastIndex) {
-                            Thread.sleep(TftWifiProtocol.UDP_TX_PACING_MS)
+                } catch (_: InterruptedException) {
+                    break
+                } catch (e: Exception) {
+                    if (isActiveSession.get()) {
+                        Log.w(TAG, "UDP stream error ($host): ${e.message}; retrying in 1s")
+                        com.pulsarnav.app.debug.DebugLogRepository.error("UDP_5556", "UDP stream error: ${e.message}")
+                        try {
+                            Thread.sleep(1000L)
+                        } catch (_: InterruptedException) {
+                            break
                         }
                     }
-
-                    recordSentFrameStats()
+                } finally {
+                    try {
+                        dSock?.close()
+                    } catch (_: Exception) {}
+                    udpSocket = null
                 }
-            } catch (_: InterruptedException) {
-                // Expected on shutdown
-            } catch (e: Exception) {
-                if (isActiveSession.get()) {
-                    Log.w(TAG, "UDP stream error: ${e.message}")
-                    com.pulsarnav.app.debug.DebugLogRepository.error("UDP_5556", "UDP stream error: ${e.message}")
-                }
-            } finally {
-                try {
-                    dSock?.close()
-                } catch (_: Exception) {}
-                udpSocket = null
             }
         }
     }

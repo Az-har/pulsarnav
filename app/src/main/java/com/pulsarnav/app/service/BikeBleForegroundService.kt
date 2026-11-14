@@ -34,6 +34,8 @@ class BikeBleForegroundService : Service {
         const val ACTION_START_TFT_COCKPIT_MIRROR = "com.pulsarnav.action.START_TFT_COCKPIT_MIRROR"
         const val ACTION_START_TFT_LIVE_CAST = "com.pulsarnav.action.START_TFT_LIVE_CAST"
         const val ACTION_STOP_TFT_MIRROR = "com.pulsarnav.action.STOP_TFT_MIRROR"
+        const val ACTION_CYCLE_TFT_MODE = "com.pulsarnav.action.CYCLE_TFT_MODE"
+        const val ACTION_RECENTER_TFT_MAP = "com.pulsarnav.action.RECENTER_TFT_MAP"
         const val ACTION_DROP_MEDIA_PROJECTION = "com.pulsarnav.action.DROP_MEDIA_PROJECTION"
         const val ACTION_START_NAV_LOCATION = "com.pulsarnav.action.START_NAV_LOCATION"
         const val ACTION_STOP_NAV_LOCATION = "com.pulsarnav.action.STOP_NAV_LOCATION"
@@ -309,7 +311,12 @@ class BikeBleForegroundService : Service {
                     // Android 14+ requires startForeground with MEDIA_PROJECTION BEFORE getMediaProjection().
                     promoteToForeground(includeMediaProjection = true, allowWifiWithoutBt = true)
                     val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-                    val projection = mpm?.getMediaProjection(resultCode, data)
+                    val projection = try {
+                        mpm?.getMediaProjection(resultCode, data)
+                    } catch (sec: Exception) {
+                        Log.e(TAG, "Failed to obtain MediaProjection: ${sec.message}", sec)
+                        null
+                    }
                     if (projection != null) {
                         val started = TftWifiMirrorManager.getInstance(this).startLiveScreenMirroring(projection)
                         if (!started) {
@@ -360,6 +367,20 @@ class BikeBleForegroundService : Service {
                     allowWifiWithoutBt = false,
                     allowLocationOnly = isNavLocationActive
                 )
+            }
+            ACTION_CYCLE_TFT_MODE -> {
+                val appSettings = com.pulsarnav.app.data.AppSettings.getInstance(this)
+                val current = appSettings.tftMirrorMode
+                val next = if (current == com.pulsarnav.app.data.AppSettings.TFT_MODE_HUD) {
+                    com.pulsarnav.app.data.AppSettings.TFT_MODE_LIVE_MAP
+                } else {
+                    com.pulsarnav.app.data.AppSettings.TFT_MODE_HUD
+                }
+                TftWifiMirrorManager.getInstance(this).switchHeadlessModeIfActive(next)
+                promoteToForeground(includeMediaProjection = false, allowWifiWithoutBt = true)
+            }
+            ACTION_RECENTER_TFT_MAP -> {
+                TftWifiMirrorManager.getInstance(this).triggerRecenter()
             }
             ACTION_START_NAV_LOCATION -> {
                 isNavLocationActive = true
@@ -445,9 +466,15 @@ class BikeBleForegroundService : Service {
                 val safeType = when {
                     hasBtConnectPermission() -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                     hasLocationPermission() -> ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                    else -> return
+                    else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 }
-                startForeground(NOTIFICATION_ID, notification, safeType)
+                try {
+                    startForeground(NOTIFICATION_ID, notification, safeType)
+                } catch (_: SecurityException) {
+                    try {
+                        startForeground(NOTIFICATION_ID, notification)
+                    } catch (_: Exception) {}
+                }
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
@@ -650,12 +677,40 @@ class BikeBleForegroundService : Service {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(content)
             .setSmallIcon(com.pulsarnav.app.R.drawable.ic_launcher)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .build()
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
+
+        if (isWifiMirrorActive) {
+            val stopIntent = PendingIntent.getService(
+                this,
+                1,
+                Intent(this, BikeBleForegroundService::class.java).apply { action = ACTION_STOP_TFT_MIRROR },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val cycleIntent = PendingIntent.getService(
+                this,
+                2,
+                Intent(this, BikeBleForegroundService::class.java).apply { action = ACTION_CYCLE_TFT_MODE },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val recenterIntent = PendingIntent.getService(
+                this,
+                3,
+                Intent(this, BikeBleForegroundService::class.java).apply { action = ACTION_RECENTER_TFT_MAP },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            builder.addAction(com.pulsarnav.app.R.drawable.ic_launcher, "Stop Mirror", stopIntent)
+            val cycleTitle = if (com.pulsarnav.app.data.AppSettings.getInstance(this).tftMirrorMode == com.pulsarnav.app.data.AppSettings.TFT_MODE_HUD) "Map View" else "HUD View"
+            builder.addAction(com.pulsarnav.app.R.drawable.ic_launcher, cycleTitle, cycleIntent)
+            builder.addAction(com.pulsarnav.app.R.drawable.ic_launcher, "Recenter", recenterIntent)
+        }
+
+        return builder.build()
     }
 }

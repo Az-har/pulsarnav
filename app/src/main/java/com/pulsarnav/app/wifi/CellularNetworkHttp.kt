@@ -309,12 +309,24 @@ object CellularNetworkHttp {
                     }
 
                     override fun onLost(network: Network) {
-                        if (cachedCellularNetwork == network) {
-                            cachedCellularNetwork = null
+                        synchronized(pinLock) {
+                            if (cachedCellularNetwork == network) {
+                                cachedCellularNetwork = null
+                            }
+                            if (persistentCellCallback === this) {
+                                persistentCellCallback = null
+                                persistentCellCm = null
+                            }
                         }
                     }
 
                     override fun onUnavailable() {
+                        synchronized(pinLock) {
+                            if (persistentCellCallback === this) {
+                                persistentCellCallback = null
+                                persistentCellCm = null
+                            }
+                        }
                         latch.countDown()
                     }
                 }

@@ -61,7 +61,7 @@ object CockpitThemePalette {
         cardBorderColor = Color.parseColor("#32303B"),
         textPrimaryColor = Color.parseColor("#F7F7F8"),
         textSecondaryColor = Color.parseColor("#A5A4AF"),
-        textTertiaryColor = Color.parseColor("#72707D")
+        textTertiaryColor = Color.parseColor("#9896A4")
     )
 
     private val AMOLED_DARK_SURFACE = SurfacePalette(
@@ -71,7 +71,7 @@ object CockpitThemePalette {
         cardBorderColor = Color.parseColor("#262630"),
         textPrimaryColor = Color.parseColor("#F8FAFC"),
         textSecondaryColor = Color.parseColor("#A5A4AF"),
-        textTertiaryColor = Color.parseColor("#72707D")
+        textTertiaryColor = Color.parseColor("#9896A4")
     )
 
     private val LIGHT_SPECS = mapOf(

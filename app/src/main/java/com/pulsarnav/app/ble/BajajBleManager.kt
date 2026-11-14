@@ -838,6 +838,9 @@ class BajajBleManager private constructor(private val context: Context) {
 
     private fun endRideSessionIfActive() {
         bleHandler.removeCallbacks(pendingAclDisconnectRunnable)
+        try {
+            com.pulsarnav.app.service.BikeBleForegroundService.stopTftMirror(context)
+        } catch (_: Exception) {}
         if (!hasStartedRideSession) return
         hasStartedRideSession = false
         val trip = com.pulsarnav.app.tracking.RideTracker.getInstance(context).onBikeDisconnected()
@@ -1380,6 +1383,20 @@ class BajajBleManager private constructor(private val context: Context) {
         try {
             com.pulsarnav.app.service.BikeBleForegroundService.start(context)
         } catch (_: Exception) {}
+
+        if (isTftCluster() && com.pulsarnav.app.data.AppSettings.getInstance(context).isAutoWifiMirrorEnabled) {
+            val wifiMgr = com.pulsarnav.app.wifi.TftWifiMirrorManager.getInstance(context)
+            val currentStatus = wifiMgr.mirrorState.value.status
+            if (currentStatus == com.pulsarnav.app.wifi.TftMirrorStatus.IDLE ||
+                currentStatus == com.pulsarnav.app.wifi.TftMirrorStatus.ERROR) {
+                Log.i(TAG, "TFT cluster link ready -> auto-launching preferred Headless Mirror (Live Map / Cockpit HUD)")
+                try {
+                    com.pulsarnav.app.service.BikeBleForegroundService.startForTftCockpitMirror(context)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed auto-starting headless TFT mirror: ${e.message}")
+                }
+            }
+        }
 
         // Subscribe to button control notifications if cluster exposes CCCD
         buttonCharacteristic?.let { char ->

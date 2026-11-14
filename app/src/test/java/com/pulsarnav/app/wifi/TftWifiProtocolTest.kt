@@ -99,7 +99,7 @@ class TftWifiProtocolTest {
             byteArrayOf(
                 0x01, 0x02, 0x03, 0x00, 0x0B,
                 35,
-                2, // Calendar.HOUR is 12-hour field (14 -> 2)
+                14, // Calendar.HOUR_OF_DAY 24-hour field (14:00 -> 14)
                 12,
                 10, // Calendar.NOVEMBER = 10
                 0x07, 0xEA.toByte() // 2026 BE

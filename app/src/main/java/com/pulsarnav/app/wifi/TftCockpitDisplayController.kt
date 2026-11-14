@@ -12,6 +12,10 @@ import android.graphics.Point
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -159,6 +163,40 @@ class TftCockpitDisplayController(
     @Volatile
     private var currentCaptureSize = IntSize(TftWifiProtocol.TFT_WIDTH, TftWifiProtocol.TFT_HEIGHT)
 
+    private var lightSensorListener: SensorEventListener? = null
+
+    private fun registerLightSensor(handler: Handler) {
+        val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
+        val sensor = sm.getDefaultSensor(Sensor.TYPE_LIGHT) ?: return
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent?) {
+                val lux = event?.values?.getOrNull(0) ?: return
+                if (lux >= 10000f && !daylightHighContrast) {
+                    daylightHighContrast = true
+                    refreshFrameNow()
+                } else if (lux < 1000f && daylightHighContrast) {
+                    daylightHighContrast = false
+                    refreshFrameNow()
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        lightSensorListener = listener
+        try {
+            sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL, handler)
+        } catch (_: Exception) {}
+    }
+
+    private fun unregisterLightSensor() {
+        val listener = lightSensorListener ?: return
+        lightSensorListener = null
+        val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
+        try {
+            sm.unregisterListener(listener)
+        } catch (_: Exception) {}
+    }
+
     private val immediateRefreshRunnable = Runnable {
         renderAndEmitHeadlessFrame()
     }
@@ -204,6 +242,7 @@ class TftCockpitDisplayController(
                 val handler = Handler(thread.looper)
                 workerThread = thread
                 workerHandler = handler
+                registerLightSensor(handler)
                 handler.post(headlessTickRunnable)
                 Log.i(TAG, "Started lock-proof headless 800x480 TFT pipeline (mode=$normalizedSource)")
             }
@@ -399,6 +438,7 @@ class TftCockpitDisplayController(
         synchronized(pipelineTransitionLock) {
             displayGeneration++
             running = false
+            unregisterLightSensor()
 
             var oldThread: HandlerThread?
             var oldReader: ImageReader?

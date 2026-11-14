@@ -10,7 +10,8 @@
     <!-- Button Heights & Dimensions -->
     <dimen name="btn_height_primary">50dp</dimen>
     <dimen name="btn_height_secondary">48dp</dimen>
-    <dimen name="btn_height_compact">36dp</dimen>
+    <dimen name="btn_height_compact">44dp</dimen>
+    <dimen name="btn_touch_target_min">48dp</dimen>
     <dimen name="btn_corner_radius">12dp</dimen>
     <dimen name="btn_corner_radius_compact">8dp</dimen>
 </resources>

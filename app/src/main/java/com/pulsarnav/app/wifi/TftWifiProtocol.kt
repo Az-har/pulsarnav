@@ -399,7 +399,7 @@ object TftTcpCodec {
 
     fun buildDateTimeResponse(calendar: Calendar): ByteArray = buildDateTimeResponse(
         minute = calendar.get(Calendar.MINUTE),
-        hour12 = calendar.get(Calendar.HOUR),
+        hour = calendar.get(Calendar.HOUR_OF_DAY),
         dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH),
         month0Based = calendar.get(Calendar.MONTH),
         year = calendar.get(Calendar.YEAR)
@@ -407,11 +407,11 @@ object TftTcpCodec {
 
     /**
      * OEM cluster firmware expects TCP [3..4] = 0x000B (11 = total 5B header + 6B payload) on
-     * CMD_DATE_TIME, rather than payload-only length 6.
+     * CMD_DATE_TIME, rather than payload-only length 6. Hour is encoded in standard 24-hour format (0..23).
      */
     fun buildDateTimeResponse(
         minute: Int,
-        hour12: Int,
+        hour: Int,
         dayOfMonth: Int,
         month0Based: Int,
         year: Int
@@ -422,7 +422,7 @@ object TftTcpCodec {
         0x00,
         0x0B,
         minute.toByte(),
-        hour12.toByte(),
+        hour.toByte(),
         dayOfMonth.toByte(),
         month0Based.toByte(),
         ((year ushr 8) and 0xFF).toByte(),
@@ -784,12 +784,15 @@ object TftUdpFrameEncoder {
         val packets = ArrayList<ByteArray>((totalLen / TftWifiProtocol.UDP_NEXT_CHUNK_BYTES) + 2)
 
         if (totalLen <= TftWifiProtocol.UDP_FIRST_CHUNK_BYTES) {
-            // Single self-contained frame containing 4B BE length + JPEG + 4B BE CRC32
-            val plain = ByteArray(4 + totalLen + 4)
-            writeIntBE(plain, 0, totalLen)
-            System.arraycopy(jpeg, 0, plain, 4, totalLen)
-            writeIntBE(plain, 4 + totalLen, crc)
-            packets.add(cipher.doFinal(plain))
+            // Single self-contained frame containing 4B BE length + JPEG + 4B BE CRC32.
+            // Reuses scratchPlainThreadLocal to avoid single-packet GC churn at 15 FPS.
+            val minScratchSize = max(4 + totalLen + 4, 4 + TftWifiProtocol.UDP_FIRST_CHUNK_BYTES)
+            val scratchPlain = scratchPlainThreadLocal.get()?.takeIf { it.size >= minScratchSize }
+                ?: ByteArray(minScratchSize).also { scratchPlainThreadLocal.set(it) }
+            writeIntBE(scratchPlain, 0, totalLen)
+            System.arraycopy(jpeg, 0, scratchPlain, 4, totalLen)
+            writeIntBE(scratchPlain, 4 + totalLen, crc)
+            packets.add(cipher.doFinal(scratchPlain, 0, 4 + totalLen + 4))
             return packets
         }
 

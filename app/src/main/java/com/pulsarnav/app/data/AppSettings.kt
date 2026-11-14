@@ -88,6 +88,7 @@ class AppSettings(context: Context) {
         const val KEY_TFT_CAST_FORCE_LANDSCAPE = "tft_cast_force_landscape"
         const val KEY_TFT_MAP_ZOOM = "tft_map_zoom"
         const val KEY_TFT_MAP_HEADING_UP = "tft_map_heading_up"
+        const val KEY_AUTO_WIFI_MIRROR_ENABLED = "auto_wifi_mirror_enabled"
 
         const val TFT_MODE_LIVE_MAP = "live_map"
         const val TFT_MODE_HUD = "cockpit_hud"
@@ -649,6 +650,22 @@ class AppSettings(context: Context) {
             }
             prefs.edit().putString(KEY_TFT_CAST_LAYOUT, normalized).apply()
         }
+
+    var isAutoWifiMirrorEnabled: Boolean
+        get() = getSafeBoolean(KEY_AUTO_WIFI_MIRROR_ENABLED, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_AUTO_WIFI_MIRROR_ENABLED, value).apply()
+        }
+
+    fun cycleTftCastLayoutMode(): String {
+        val next = when (tftCastLayoutMode) {
+            CAST_LAYOUT_FIT -> CAST_LAYOUT_FILL
+            CAST_LAYOUT_FILL -> CAST_LAYOUT_ROT90
+            else -> CAST_LAYOUT_FIT
+        }
+        tftCastLayoutMode = next
+        return next
+    }
 
     var isTftCastAutoOpenMapsEnabled: Boolean
         get() = getSafeBoolean(KEY_TFT_CAST_AUTO_OPEN_MAPS, true)

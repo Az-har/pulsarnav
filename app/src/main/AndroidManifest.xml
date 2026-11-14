@@ -82,6 +82,7 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -148,16 +149,27 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
-        <!-- Ignition ON/OFF Auto-Connect & Auto-Park Receiver (gated to privileged BT system broadcasts) -->
+        <!-- Ignition ON/OFF Auto-Connect & Auto-Park Receiver -->
         <receiver
             android:name=".receiver.BluetoothIgnitionReceiver"
-            android:exported="true"
-            android:permission="android.permission.BLUETOOTH_PRIVILEGED">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
                 <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
             </intent-filter>
         </receiver>
+
+        <!-- Android Quick Settings (QS) Tile Service for 1-Tap Bike Casting -->
+        <service
+            android:name=".service.PulsarNavTileService"
+            android:icon="@drawable/ic_launcher"
+            android:label="Bike TFT Cast"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <!-- Google Maps Turn-by-Turn + WhatsApp Notification Interceptor -->
         <service

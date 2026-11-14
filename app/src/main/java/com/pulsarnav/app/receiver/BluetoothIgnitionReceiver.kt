@@ -67,6 +67,9 @@ class BluetoothIgnitionReceiver : BroadcastReceiver() {
             BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
                 Log.i(TAG, "Cluster ACL_DISCONNECTED ($deviceName) — scheduling debounced trip/parking check...")
                 bleManager.onSystemAclDisconnected()
+                try {
+                    BikeBleForegroundService.stopTftMirror(context)
+                } catch (_: Exception) {}
             }
         }
     }

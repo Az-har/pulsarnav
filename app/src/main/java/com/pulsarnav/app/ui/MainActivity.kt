@@ -223,18 +223,50 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var wasLiveCastActive = false
+    private enum class PendingWifiActionType { NONE, MIRROR_HUD, LIVE_CAST, CONFIG_DIALOG }
+    private var pendingWifiActionType = PendingWifiActionType.NONE
     private var pendingWifiAction: (() -> Unit)? = null
     private val wifiSettingsLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { _ ->
         val action = pendingWifiAction
+        val actionType = pendingWifiActionType
         pendingWifiAction = null
+        pendingWifiActionType = PendingWifiActionType.NONE
         if (isWifiEnabled()) {
             showFeedback("Wi-Fi enabled")
-            action?.invoke()
+            if (action != null) {
+                action.invoke()
+            } else {
+                when (actionType) {
+                    PendingWifiActionType.MIRROR_HUD -> startTftHudMirror()
+                    PendingWifiActionType.LIVE_CAST -> checkLandscapeAndLaunchCast()
+                    PendingWifiActionType.CONFIG_DIALOG -> showTftWifiConfigDialog()
+                    PendingWifiActionType.NONE -> {}
+                }
+            }
         } else {
             showFeedback("Wi-Fi is still turned off. Wi-Fi is required to connect to cluster.", isAlert = true)
         }
+    }
+
+    private var statusDotAnimator: android.animation.ObjectAnimator? = null
+
+    private fun startStatusDotPulse(dotView: View) {
+        if (statusDotAnimator != null && statusDotAnimator?.isRunning == true) return
+        statusDotAnimator = android.animation.ObjectAnimator.ofFloat(dotView, "alpha", 0.35f, 1.0f).apply {
+            duration = 800L
+            repeatMode = android.animation.ValueAnimator.REVERSE
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            start()
+        }
+    }
+
+    private fun stopStatusDotPulse(dotView: View) {
+        statusDotAnimator?.cancel()
+        statusDotAnimator = null
+        dotView.alpha = 1.0f
     }
 
     private var activeDebugFilter: DebugFilter = DebugFilter.ALL
@@ -534,6 +566,7 @@ class MainActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
         val tabKey = tabIdToKey(currentActiveTabId)
         outState.putString("active_tab_key", tabKey)
+        outState.putString("key_pending_wifi_action", pendingWifiActionType.name)
         if (::binding.isInitialized) {
             outState.putInt("account_scroll_y", binding.scrollSettings.scrollY)
         }
@@ -545,6 +578,12 @@ class MainActivity : AppCompatActivity() {
     override fun onRestoreInstanceState(savedInstanceState: Bundle) {
         super.onRestoreInstanceState(savedInstanceState)
         val savedKey = savedInstanceState.getString("active_tab_key")
+        val savedPendingAction = savedInstanceState.getString("key_pending_wifi_action")
+        if (savedPendingAction != null) {
+            try {
+                pendingWifiActionType = PendingWifiActionType.valueOf(savedPendingAction)
+            } catch (_: Exception) {}
+        }
         val savedTab = if (savedKey != null) tabKeyToId(savedKey) else currentActiveTabId
         val savedAccountScrollY = savedInstanceState.getInt("account_scroll_y", 0)
         if (savedTab != currentActiveTabId) {
@@ -4653,7 +4692,11 @@ class MainActivity : AppCompatActivity() {
         return wm?.isWifiEnabled == true
     }
 
-    private fun promptEnableWifi(onWifiReady: (() -> Unit)? = null) {
+    private fun promptEnableWifi(
+        actionType: PendingWifiActionType = PendingWifiActionType.NONE,
+        onWifiReady: (() -> Unit)? = null
+    ) {
+        pendingWifiActionType = actionType
         pendingWifiAction = onWifiReady
         MaterialAlertDialogBuilder(this)
             .setTitle("Turn On Wi-Fi")
@@ -4676,16 +4719,18 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancel") { _, _ ->
                 pendingWifiAction = null
+                pendingWifiActionType = PendingWifiActionType.NONE
             }
             .setOnCancelListener {
                 pendingWifiAction = null
+                pendingWifiActionType = PendingWifiActionType.NONE
             }
             .show()
     }
 
     private fun ensureWifiEnabled(onReady: () -> Unit) {
         if (!isWifiEnabled()) {
-            promptEnableWifi(onReady)
+            promptEnableWifi(PendingWifiActionType.NONE, onReady)
         } else {
             onReady()
         }
@@ -4693,7 +4738,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startTftHudMirror() {
         if (!isWifiEnabled()) {
-            promptEnableWifi { startTftHudMirror() }
+            promptEnableWifi(PendingWifiActionType.MIRROR_HUD) { startTftHudMirror() }
             return
         }
         val mirrorModeLabel = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) {
@@ -4708,7 +4753,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun checkLandscapeAndLaunchCast() {
         if (!isWifiEnabled()) {
-            promptEnableWifi { checkLandscapeAndLaunchCast() }
+            promptEnableWifi(PendingWifiActionType.LIVE_CAST) { checkLandscapeAndLaunchCast() }
             return
         }
         if (appSettings.isTftCastForceLandscapeEnabled && !android.provider.Settings.System.canWrite(this)) {
@@ -5099,6 +5144,8 @@ class MainActivity : AppCompatActivity() {
                 bleManager.connectionState.collectLatest { state ->
                 when (state) {
                     is BleConnectionState.Disconnected -> {
+                        stopStatusDotPulse(binding.viewStatusDot)
+                        stopStatusDotPulse(binding.viewTopConnectionDot)
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
                         binding.tvConnectionStatus.text = "Disconnected"
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
@@ -5118,6 +5165,8 @@ class MainActivity : AppCompatActivity() {
                         binding.tvTopConnectionStatus.setTextColor(currentTheme.textTertiaryColor)
                     }
                     is BleConnectionState.Scanning -> {
+                        startStatusDotPulse(binding.viewStatusDot)
+                        startStatusDotPulse(binding.viewTopConnectionDot)
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_scanning)
                         binding.tvConnectionStatus.text = "Searching for bike..."
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
@@ -5133,6 +5182,8 @@ class MainActivity : AppCompatActivity() {
                         binding.tvTopConnectionStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_scanning))
                     }
                     is BleConnectionState.Connecting -> {
+                        startStatusDotPulse(binding.viewStatusDot)
+                        startStatusDotPulse(binding.viewTopConnectionDot)
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_scanning)
                         binding.tvConnectionStatus.text = "Connecting..."
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
@@ -5147,6 +5198,8 @@ class MainActivity : AppCompatActivity() {
                         binding.tvTopConnectionStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_scanning))
                     }
                     is BleConnectionState.Connected -> {
+                        stopStatusDotPulse(binding.viewStatusDot)
+                        stopStatusDotPulse(binding.viewTopConnectionDot)
                         BikeBleForegroundService.start(this@MainActivity)
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_connected)
                         binding.tvConnectionStatus.text = "Connected • ${state.deviceName}"
@@ -5165,6 +5218,8 @@ class MainActivity : AppCompatActivity() {
                         recordSyncTime()
                     }
                     is BleConnectionState.Error -> {
+                        stopStatusDotPulse(binding.viewStatusDot)
+                        stopStatusDotPulse(binding.viewTopConnectionDot)
                         binding.viewStatusDot.backgroundTintList = ColorStateList.valueOf(currentTheme.accentColor)
                         binding.tvConnectionStatus.text = state.message
                         binding.btnScan.text = "Scan"
@@ -5277,19 +5332,40 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "Mirror HUD" else "Map Mirror"
+                val isHandshaking = mirror.status == TftMirrorStatus.CONNECTING_WIFI ||
+                    mirror.status == TftMirrorStatus.WIFI_CONNECTED_WAITING_TCP
+                binding.progressTftHandshake.visibility = if (isHandshaking) View.VISIBLE else View.GONE
+                if (isHandshaking) {
+                    binding.progressTftHandshake.setIndicatorColor(
+                        if (mirror.status == TftMirrorStatus.CONNECTING_WIFI)
+                            ContextCompat.getColor(this@MainActivity, R.color.amber_accent)
+                        else
+                            ContextCompat.getColor(this@MainActivity, R.color.mint_accent)
+                    )
+                }
+
+                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "HUD Mirror\n(Screen Off)" else "Map Mirror\n(Screen Off)"
                 binding.btnToggleTftHudMirror.text = if (active) "Stop Mirror" else prefIdleBtn
                 binding.btnCastLiveScreen.text = if (active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST) {
                     "Stop Cast"
                 } else {
-                    "Cast Maps"
+                    "Cast Maps\n(Google Maps)"
                 }
+                binding.btnToggleTftHudMirror.isEnabled = !isHandshaking
+                binding.btnCastLiveScreen.isEnabled = !isHandshaking
 
-                if (active && (mirror.source == TftMirrorSource.LIVE_SCREEN_CAST || mirror.source == TftMirrorSource.LIVE_MAP)) {
+                val isLiveCast = active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST
+                if (isLiveCast) {
+                    wasLiveCastActive = true
                     window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 } else {
-                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    if (requestedOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                    if (active && mirror.source == TftMirrorSource.LIVE_MAP) {
+                        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                    if (wasLiveCastActive && requestedOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                        wasLiveCastActive = false
                         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     }
                 }
@@ -5960,7 +6036,7 @@ class MainActivity : AppCompatActivity() {
                 textSize = 12f
                 setTextColor(ContextCompat.getColor(this@MainActivity, R.color.amber_accent))
                 setOnClickListener {
-                    promptEnableWifi()
+                    promptEnableWifi(PendingWifiActionType.CONFIG_DIALOG) { showTftWifiConfigDialog() }
                 }
             }
             wifiWarningCard.addView(tvWarn)
@@ -6932,11 +7008,18 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .setNeutralButton("Delete Entry") { _, _ ->
-                fuelLogManager.deleteFuelEntry(entry.id)
-                recordSyncTime()
-                updateHeroRangeDisplay()
-                provideHapticFeedback()
-                showFeedback("Refuel entry deleted")
+                MaterialAlertDialogBuilder(this)
+                    .setTitle("Delete Fuel Entry?")
+                    .setMessage("Are you sure you want to delete this refuel record (${entry.formattedDate})? This cannot be undone.")
+                    .setPositiveButton("Delete") { _, _ ->
+                        fuelLogManager.deleteFuelEntry(entry.id)
+                        recordSyncTime()
+                        updateHeroRangeDisplay()
+                        provideHapticFeedback()
+                        showFeedback("Refuel entry deleted")
+                    }
+                    .setNegativeButton("Keep Entry", null)
+                    .show()
             }
             .setNegativeButton("Cancel", null)
             .show()
