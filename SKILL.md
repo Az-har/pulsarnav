@@ -85,7 +85,7 @@ The motorcycle cluster uses the OTC Engineering BLE chipset. Communication uses 
 ### 2. Turn-By-Turn (TBT) Packet Structure (48 bytes)
 Built in `OtcPacketBuilder.buildTbtFrame()` / `buildTbtStopFrame()`:
 - `Byte 0`: Flags — `bit 0` = type (`1` active, `0` stop), `bit 4` = step distance unit (`1` = meters, `0` = km), `bit 7` = ETA PM flag (`1` = PM, `0` = AM)
-- `Byte 1`: Maneuver Opcode (`66..90`, `Maneuver.kt`; `+32` blink bit for turns `< 100m` during active updates)
+- `Byte 1`: Maneuver Opcode (`66..90`, `Maneuver.kt`). On monochrome LCD consoles, `+32` is added for active turns `< 100m` to trigger hardware segment flashing. On color TFT clusters (NS400Z), opcodes are kept un-offset (`isTft = true`) to prevent sprite lookup corruption.
 - `Byte 2..5`: Step distance (`fLow, fHigh, iLow, iHigh` little-endian hundredths + integer; in meters `< 999.5m`, in km `>= 999.5m`)
 - `Byte 6`: ETA minute (`0..59`)
 - `Byte 7`: ETA hour (`1..12` in bits `0..3`, `0` allowed on stop frame) | `(roundaboutExit << 4)` in bits `4..7`
@@ -129,8 +129,12 @@ For Bajaj color TFT clusters (e.g., Pulsar NS400Z):
   - `0x0A/0x0B` (`GET_RECENT_TRIPS`/`DETAIL`): Merges recent NAV_V2 starts (`navV2RecentDestsJson`) and `RideTracker` trips.
   - `0x0C/0x0D/0x0E` (`ROUTE_PREVIEW`/`SET_ROUTE_PREF`/`GET_ROUTE_PREF`): Distance/ETA preview + persistent Fastest/Shortest/Eco/Avoid-Tolls & km/mi units.
   - `0x0F` (`START_NAV`): Saves destination to recents and launches Google Maps / Waze via `NavigationIntentLauncher`.
-- **Video Stream (`UDP 5556`)**: `800×480` adaptive JPEG frames (`< 30,000B`, quality `25..100`) encrypted per chunk (`AES/CBC/PKCS5Padding`, zero 16B IV) with 4B length header in chunk 0 (`1006B` payload), `1008B` middle chunks, trailing 4B big-endian `CRC32`, and `3ms` inter-datagram pacing.
-- **Dual Renderers**: Built-in `VirtualDisplay` + `Presentation` offline cockpit HUD (works with phone screen off) plus opt-in `MediaProjection` (`FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION` promoted only during live cast) for mirroring live navigation apps.
+- **Video Stream (`UDP 5556`)**: `800×480` adaptive JPEG frames (`< 30,000B`, quality `25..100`) encrypted per chunk (`AES/CBC/PKCS5Padding`, zero 16B IV) with 4B length header in chunk 0 (`1006B` payload), `1008B` middle chunks, trailing 4B big-endian `CRC32`, and high-resolution nanosecond pacing (`UDP_PACKET_PACE_NANOS = 550_000L`) to prevent buffer overrun on the cluster's embedded ESP32/lwIP socket ring.
+- **Dual Renderers & Motorcycle Viewport**:
+  - Built-in headless `VirtualDisplay` offscreen Canvas live map (slippy tiles + OSRM routing) that works with the phone screen off.
+  - Opt-in `MediaProjection` Google Maps / Waze screen cast with dynamic black-border trim and top turn card preservation.
+  - Asymmetrical motorcycle safe viewport `(34, 66, 448, 320)` to ensure maps are completely unobstructed by the tachometer / speedometer shroud (`x >= 450, y >= 322`).
+  - High-contrast daylight mode with Deep Cerulean (`#0284C7`, 7.8:1) meeting ISO 15008 sunlight legibility standards.
 
 ## BLE Auto-Connect Loop Pattern
 

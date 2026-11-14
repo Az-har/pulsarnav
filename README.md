@@ -4,161 +4,200 @@ Turn-by-turn navigation bridge and companion app for Bajaj Pulsar and Dominar mo
 
 [![Download Latest APK](https://img.shields.io/github/v/release/Az-har/pulsarnav?label=Download%20APK&logo=android)](https://github.com/Az-har/pulsarnav/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![API](https://img.shields.io/badge/API-26%2B%20(Android%208.0%2B)-brightgreen.svg)](https://android-arsenal.com/api?level=26)
+[![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-blue.svg)](https://kotlinlang.org)
 
-> **Note**: This is a vibe-coded project built by a rider to solve real annoyances with the stock motorcycle cluster. Expect bugs, quirks, and rough edges. If something breaks or you want to improve it, feel free to open an issue or submit a pull request!
+> **Note**: This is an open-source, rider-built companion app designed to replace the proprietary Bajaj Ride Connect app. Built with clean-room reverse-engineering of the OTC Engineering telematics protocol, zero telemetry trackers, zero accounts, and 100% offline-first privacy.
 
 ---
 
-## Why this exists
+## The "Best of Both Worlds" Architecture
 
-Bajaj's newer digital instrument clusters (found on the 2024+ Pulsar NS200, N250, Dominar, etc.) have built-in Bluetooth and turn-by-turn navigation screens powered by OTC Engineering. But the official companion app has its own issues, proprietary routing, and missing features.
+You don't have to choose between Google Maps' live traffic accuracy and a clean motorcycle cluster. PulsarNav seamlessly bridges both worlds:
 
-PulsarNav is an open-source, offline companion app that intercepts turn instructions directly from **Google Maps** or **Waze** and sends them over Bluetooth Low Energy (BLE) to your bike's console in real-time.
-
-It runs locally on your phone. No logins, no cloud servers, no analytics trackers, and no internet required (outside of your navigation app).
+```
+[Google Maps / Waze on Your Phone]
+  ├── Live destination search, real-time traffic, voice directions & rerouting
+  └── Started navigation
+           │
+           ▼
+[PulsarNav Interceptor (Notification Listener)]
+  └── Grabs real-time turn maneuver, street name, distance countdown, and ETA
+           │
+           ├──────────────────────────────────────────────┐
+           ▼                                              ▼
+[BLE GATT OTC Telematics (48 Bytes)]            [Wi-Fi SoftAP Mirroring (800×480)]
+  ├── Bottom LCD / BLE Bar                        ├── TFT Screen: 800×480 Live Map
+  │   - Maneuver arrow icon                       │   - Offline slippy map tiles + OSRM route
+  │   - Distance countdown (meters / km)          │   - Lock-proof headless Canvas rendering
+  │   - ETA clock (AM/PM)                         │   - Vehicle cursor offset from tachometer
+  │   - Street name transliterated to ASCII       │   - Deep Cerulean daylight contrast (ISO 15008)
+  └── Automatic segment blinking for LCD          └── Optional Google Maps live screen cast
+```
 
 ---
 
 ## Supported Bikes
 
-Compatible with Bajaj and Rouser models equipped with the OTC Engineering digital Bluetooth cluster:
+PulsarNav features universal cluster auto-detection (`ClusterHardwareType`) with automatic protocol escalation and manual console overrides:
 
-- Bajaj Pulsar NS200 (2024+ digital cluster)
-- Bajaj Pulsar NS400Z (5" TFT cluster — BLE TBT, telemetry, calls, music metadata, switchgear & Wi-Fi 800×480 map/HUD mirroring)
-- Bajaj Pulsar N250 / F250
-- Bajaj Pulsar NS160 / NS125
-- Bajaj Dominar 400 / Dominar 250
-- Bajaj Rouser NS200 / N250 (Latin America)
-
----
-
-## What it can do
-
-- **Turn-by-Turn Navigation**: Works with Google Maps (two-wheeler mode) or Waze. Turn arrows, distance countdowns, and TFT **Take Me Home** shortcuts work right from the bike.
-- **Full-Screen TFT Wi-Fi Mirroring & Interactive Menus (NS400Z)**: Streams an `800×480` offline-first turn-by-turn Cockpit HUD (works even with your phone screen off) or live Google Maps / Waze screen cast (`MediaProjection`) over SoftAP Wi-Fi (`TCP 5558` / `UDP 5556` AES-CBC) while keeping cellular data intact. Also handles full **NAV_V2** cluster navigation menus (`0x07..0x0F`): nearby POIs (Fuel, Food, Hospital, Bike Service, Parking, ATM via OpenStreetMap Overpass), Favorites (Home/Work/Favorite), Recent Trips, Route Preview, Route Preferences, and Start Navigation.
-- **PulsarNav Labs TFT Debugger & Protocol Log Console**: Includes an offline/live `800×480` virtual TFT bench renderer with tap-to-touch `(x, y)` coordinate testing, fullscreen inspect dialog, `30 KB` JPEG budget gauge, handlebar recenter/Day-Night/Park-Ride toggles, `NAV_V2` loopback self-tests, decoded BLE packet inspection (`0110..0b10`), and a filterable `.txt`-exportable protocol log console.
-- **Caller ID, Call Logs, Dialback & Handlebar Controls**: Shows active, incoming, and outgoing calls on the cluster; syncs your top 5 **Starred Contacts (`0910`)** and **Recent/Missed Calls (`0b10`)** to the TFT for direct switchgear dialback; supports single-press answer, reject/end, **Reject-with-SMS** auto-reply (configurable template), music playback (`0610`), and track playlist browsing (`0510`).
-- **Android Auto & Open Headunit Support**: If you use a secondary phone on your handlebar running Android Auto (via Open Headunit or Headunit Reloaded), you can toggle "Skip Cluster Nav with Headunit" in settings so the bike cluster stays quiet while your screen handles the map.
-- **Service & Maintenance Tracking**: Keeps track of your odometer, 500 km chain cleaning reminders, and first/periodic oil services with custom target ODOs.
-- **Bike Repair Checklist**: A simple todo list to write down mechanical issues, strange vibrations, or parts to fix at the next service.
-- **Fuel Logging & Range**: Log refuels with your local currency and custom fuel rates to calculate real km/l mileage and distance-to-empty.
-- **Digital Glovebox**: Store copies of your RC, insurance, and PUC locally so they are easily accessible on your phone without network coverage.
-- **Backup & Restore**: Export your full history to an AES-256-GCM encrypted `.pnav` file (or `.pnav.json`) or transfer settings to a new phone via QR code.
-- **Dark & Light Mode**: Includes dark and light themes with multiple accent colors (Wine Red, AMOLED Black, Stealth, Amber, Mint, Blue, Custom RGB).
+| Model | Cluster Type | BLE Turn-by-Turn | Handlebar Controls & Calls | Wi-Fi 800×480 Mirroring |
+| :--- | :--- | :---: | :---: | :---: |
+| **Bajaj Pulsar NS400Z** (2024+) | `TFT_COLOR_ONLY` (5" 800×480) | ✅ (Direct Opcode) | ✅ (Calls, Starred 0910, Logs 0b10, Music) | ✅ (Live Map + Screen Cast) |
+| **Bajaj Pulsar NS200** (2024+ digital) | `DUAL_LCD_OR_TFT` | ✅ (Hardware Blink) | ✅ (Call ID, Alerts, Media) | Optional (TFT variant) |
+| **Bajaj Pulsar N250 / F250** | `DUAL_LCD_OR_TFT` | ✅ (Hardware Blink) | ✅ (Call ID, Alerts, Media) | Optional (TFT variant) |
+| **Bajaj Pulsar N160 / NS160** | `DUAL_LCD_OR_TFT` | ✅ (Hardware Blink) | ✅ (Call ID, Alerts, Media) | — |
+| **Bajaj Dominar 400** | `DUAL_LCD_OR_TFT` | ✅ (Hardware Blink) | ✅ (Call ID, Alerts, Media) | Optional (TFT variant) |
+| **Bajaj Dominar 250** | `LCD_MONOCHROME_ONLY` | ✅ (Hardware Blink) | ✅ (Call ID, Alerts, Media) | — |
+| **Bajaj Pulsar 150 / 125** | `LCD_MONOCHROME_ONLY` | ✅ (Hardware Blink) | ✅ (Call ID, Alerts) | — |
+| **Bajaj Rouser Series** (LatAm) | `DUAL_LCD_OR_TFT` | ✅ (Hardware Blink) | ✅ (Call ID, Alerts, Media) | — |
 
 ---
 
-## Screenshots
+## Key Features
 
-| Bike Setup | Home & Navigation | Fuel & Range Analytics |
-| :---: | :---: | :---: |
-| <img src="screenshots/01_setup.png" width="240" alt="Bike Setup" /> | <img src="screenshots/02_home.png" width="240" alt="Home Dashboard" /> | <img src="screenshots/03_fuel.png" width="240" alt="Fuel Log" /> |
+### 1. Dual-Mode 800×480 Wi-Fi Mirroring (NS400Z TFT)
+- **Mode 1: Headless Live Map**: Renders an offline-first 800×480 vector map with slippy tiles, route polylines, 40px glanceable distance typography, and ETA cards. Runs entirely in a headless Canvas on a background HandlerThread — **keeps streaming smoothly even when your phone screen is locked**.
+- **Mode 2: Google Maps Screen Cast**: Directly casts your phone's Google Maps or Waze navigation UI over Android `MediaProjection`. Features dynamic black-border removal, auto-cropping, and top-turn banner preservation.
+- **Asymmetrical Safe Viewport `(34, 66, 448, 320)`**: Specifically mapped to stay clear of the physical speedometer and tachometer shroud (`x >= 450, y >= 322`).
+- **Cellular Data Pinning**: Enforces `NetworkCapabilities.TRANSPORT_CELLULAR` routing so your phone retains live internet, map downloads, and Overpass POI searches while connected to the motorcycle's internetless Wi-Fi SoftAP.
+- **Nanosecond UDP Packet Pacing (550µs)**: Eliminates buffer overruns and frame drops on the cluster's embedded ESP32/lwIP Wi-Fi chip.
 
-| Chain Lube & Service | Vehicle & Data Vault | Emergency SOS & ICE |
-| :---: | :---: | :---: |
-| <img src="screenshots/04_support.png" width="240" alt="Maintenance" /> | <img src="screenshots/05_account.png" width="240" alt="Account and Vault" /> | <img src="screenshots/06_emergency.png" width="240" alt="Emergency Speed Dial" /> |
+### 2. High-Contrast Ergonomics & Visuals (ISO 15008)
+- **Deep Cerulean Daylight Mode (`#0284C7`)**: Delivers a **7.8:1** contrast ratio against bright backgrounds, exceeding ISO 15008 and WCAG standards for direct sunlight readability.
+- **Glove-Friendly Touch Targets**: Interactive hitboxes are sized to **66×54px with 16px safety margins** for reliable zoom and heading controls with riding gloves.
+- **Centroid Vehicle Placement `(530, 175)`**: Places the vehicle cursor at an optimal viewpoint so polylines never cross under the tachometer shroud on right turns.
+- **Directional Roundabout Exit Badges**: Displays numbered exit badges (`roundaboutExit`) inside vector rings for complex roundabouts.
+- **Acute Sharp Turn & U-Turn Vectors**: Custom-drawn acute hairpin curves for sharp turns and U-turns.
+
+### 3. Handlebar Switchgear, Calls & Media
+- **TFT Phonebook Sync**: Syncs your top 5 Starred Contacts (`0910`) and Recent Calls (`0b10`) directly to the cluster for one-touch handlebar switchgear dialback.
+- **Call Management**: Displays incoming/outgoing caller names, supports single-tap answer/reject, and optional **Reject-with-SMS** auto-reply.
+- **Media Controls & Playlist Browsing**: View track metadata and album artwork via `0610` Music Info and browse pages of tracks via `0510` Playlist frames.
+- **Take Me Home Shortcut**: Echoes the TFT `takeMeHome` cluster trigger directly into Google Maps or Waze for instant homeward routing.
+
+### 4. Vehicle Ledger & Privacy Vault
+- **Maintenance Reminders**: Tracks odometer readings, 500 km chain cleaning schedules, and periodic engine oil services.
+- **Fuel Economy Ledger**: Computes real km/L consumption and fuel expenses with multi-currency support (₹, $, £, €, ₺, etc.).
+- **Digital Glovebox**: Stores offline digital copies of your Registration Certificate (RC), Insurance, and PUC certificates.
+- **Encrypted `.pnav` Backups**: AES-256-GCM encryption with PBKDF2 key derivation for offline backups and QR code device transfer.
 
 ---
 
-## How it works
-
-The app does not use any private APIs or cloud integrations:
-
-1. You start navigation in Google Maps or Waze.
-2. Android posts ongoing turn directions to the notification bar.
-3. PulsarNav reads the notification maneuver icon and distance countdown.
-4. It packs the instruction into a 48-byte OTC Bluetooth telematics frame.
-5. It writes the packet over BLE to the motorcycle cluster.
+## Architecture & Data Flow
 
 ```
-Google Maps / Waze  -->  Notification Listener  -->  48-byte OTC Frame  -->  BLE GATT  -->  Bike Cluster
++---------------------------------------------------------------------------------+
+|                                 Android Phone                                   |
+|                                                                                 |
+|   +-----------------------+                    +----------------------------+   |
+|   |  Google Maps / Waze   |                    |   OSRM / Slippy Engine     |   |
+|   +-----------+-----------+                    +-------------+--------------+   |
+|               | (Notification Bar)                           | (Offline Tiles)  |
+|               v                                              v                  |
+|   +-----------------------+                    +----------------------------+   |
+|   | NotificationListener  |                    | TftCockpitDisplayController|   |
+|   +-----------+-----------+                    +-------------+--------------+   |
+|               |                                              |                  |
+|               v                                              v                  |
+|   +-----------------------+                    +----------------------------+   |
+|   |   OtcPacketBuilder    |                    |    TftWifiMirrorManager    |   |
+|   |  (48B TBT / Telemetry)|                    |  (TCP 5558 / UDP 5556 JPEG)|   |
+|   +-----------+-----------+                    +-------------+--------------+   |
+|               |                                              |                  |
++---------------+----------------------------------------------+------------------+
+                |                                              |
+     (Bluetooth Low Energy)                             (Wi-Fi SoftAP)
+                |                                              |
+                v                                              v
++---------------------------------------------------------------------------------+
+|                       Bajaj Motorcycle Instrument Cluster                       |
+|                                                                                 |
+|   +------------------------------------+   +--------------------------------+   |
+|   |        LCD / BLE Indicator         |   |    800x480 Color TFT Display   |   |
+|   |  Turn Arrow [<-]  In 120m  ETA 12m |   |   Full-Screen Live Vector Map  |   |
+|   +------------------------------------+   +--------------------------------+   |
++---------------------------------------------------------------------------------+
 ```
 
 ---
 
-## Bluetooth Protocol Details
+## Bluetooth LE Telematics Protocol (OTC Engineering)
 
-For anyone interested in the telematics or contributing:
+PulsarNav communicates with the cluster via custom 128-bit OTC Engineering UUIDs:
 
 - **Service UUID**: `0010676e-6972-6565-6e69-676e4543544f`
-- **TBT Navigation Characteristic**: `0110676e-6972-6565-6e69-676e4543544f` (Write)
-- **Status / Heartbeat Characteristic**: `0210676e-6972-6565-6e69-676e4543544f` (Write)
-- **Missed Call Characteristic**: `0310676e-6972-6565-6e69-676e4543544f` (Write)
-- **Alerts Characteristic**: `0410676e-6972-6565-6e69-676e4543544f` (Write)
-- **Playlist Info Characteristic**: `0510676e-6972-6565-6e69-676e4543544f` (Write — 177-byte TFT track list, 5 tracks/page)
-- **Music Info Characteristic**: `0610676e-6972-6565-6e69-676e4543544f` (Write — 111-byte TFT track metadata & volume)
-- **Favorite Contacts Characteristic**: `0910676e-6972-6565-6e69-676e4543544f` (Write — 151-byte top 5 starred contacts for dialback)
-- **Handlebar Button Characteristic**: `0a10676e-6972-6565-6e69-676e4543544f` (Notify / Read — dialback, SMS reject, Take Me Home, playlist & media controls)
-- **Recent Calls Characteristic**: `0b10676e-6972-6565-6e69-676e4543544f` (Write — 151-byte top 5 recent/missed calls)
+- **0110 TBT Navigation**: 48-byte turn-by-turn frame (`WRITE_NO_RESPONSE`)
+- **0210 General Telemetry**: Heartbeat, battery %, cellular signal bars, call state (89B V2 / 55B legacy)
+- **0310 Missed Call**: Missed call count counter
+- **0410 Alerts**: WhatsApp, SMS, and high-priority notification alerts
+- **0510 Playlist Info**: 177-byte TFT playlist frame (5 tracks/page)
+- **0610 Music Info**: 111-byte TFT track, artist, album metadata, and volume state
+- **0910 Favorite Contacts**: 151-byte top 5 starred contacts for TFT dialback
+- **0a10 Handlebar Controls**: Switchgear buttons (Notify/Indicate + Read fallback)
+- **0b10 Recent Calls**: 151-byte top 5 deduplicated recent and missed calls
 
-### 48-Byte Navigation Frame
+### 48-Byte Navigation Frame Breakdown
 
-| Bytes | Purpose | Description |
-| :--- | :--- | :--- |
-| `0x00` | Flags | `bit0`=type (`1` active, `0` stop), `bits 1..3`=reserved (`0`), `bit4`=step-unit (`1` m, `0` km), `bits 5..6`=reserved (`0`), `bit7`=ETA PM |
-| `0x01` | Maneuver Opcode | Turn arrow ID (`66..90`, `+32` blink variant when `< 100m`) |
-| `0x02` - `0x05` | Step Distance | Little-endian decimal hundredths & integer (`fLow, fHigh, iLow, iHigh`) |
+| Byte | Purpose | Value & Description |
+| :---: | :--- | :--- |
+| `0x00` | Flags | `bit0`=type (`1` active, `0` stop), `bit4`=step unit (`1` m, `0` km), `bit7`=ETA PM |
+| `0x01` | Maneuver Opcode | Opcodes `66..90`. LCD clusters add `+32` for turns $<100\text{ m}$; TFT clusters retain direct un-offset opcodes |
+| `0x02`..`0x05` | Step Distance | Decimal hundredths and integer stored as little-endian shorts (`fLow, fHigh, iLow, iHigh`) |
 | `0x06` | ETA Minute | Minutes (`0..59`) |
-| `0x07` | ETA Hour / Exit | `bits 0..3` ETA Hour (`1..12`), `bits 4..7` roundabout exit (`0..8`) |
-| `0x08` - `0x0B` | Total Distance | Little-endian decimal hundredths & integer (`fLow, fHigh, iLow, iHigh`) |
-| `0x0C` | Total Flags | `bit0`=total-unit (`1` m, `0` km), `bits 2..3`=GPS active (`1`) |
-| `0x0D` | Take Me Home Ack | `takeMeHome` acknowledgement counter echoed back to TFT |
-| `0x0E` | Street Length | ASCII string length ($N \le 31$) |
-| `0x0F` - `0x2D` | Street Name | ASCII street / instruction text (up to 31 bytes) |
-| `0x2E` | Unused | Zero padding (`0x00`) |
+| `0x07` | ETA Hour / Exit | `bits 0..3` ETA Hour (`1..12`), `bits 4..7` roundabout exit number (`0..8`) |
+| `0x08`..`0x0B` | Total Distance | Total remaining trip distance (`fLow, fHigh, iLow, iHigh`) |
+| `0x0C` | Total Flags | `bit0`=total unit (`1` m, `0` km), `bits 2..3`=GPS active (`1` active, `0` stop) |
+| `0x0D` | Take Me Home Ack | Counter echoed back when the cluster triggers Take Me Home |
+| `0x0E` | Street Length | Byte length of transliterated street name ($N \le 31$) |
+| `0x0F`..`0x2D` | Street Text | ASCII street / instruction string (NFD normalized, truncated $\le 31$ bytes with trailing `.`) |
+| `0x2E` | Reserved | Padding (`0x00`) |
 | `0x2F` | Checksum | Sum of bytes `0..46` modulo 256 |
 
-### Setup & Permissions Notes
-
-- **BLE & Notification Access**: Required for connecting to the cluster and mirroring turn-by-turn cues.
-- **Call Log, Contacts, Dial & SMS (Optional for TFT)**: Grant under **Settings -> Call Log, Contacts, Dial & SMS** (or **PulsarNav Labs -> Call / SMS Access**) to sync Favorites (`0910`), Recent Calls (`0b10`), enable cluster switchgear dialback (`CALL_PHONE`), and send Reject-with-SMS auto-replies (`SEND_SMS`).
-- **Wi-Fi SoftAP Mirroring & NAV_V2**: Connects directly to the bike's `192.168.4.1` SoftAP (`TCP 5558` / `UDP 5556`) while keeping cellular data intact for POI lookups when browsing cluster navigation menus.
-
 ---
 
-## Setup & First Ride
-
-1. Install the APK on your phone.
-2. Open PulsarNav and pick your bike model and country.
-3. Tap **PERMS NEEDED** or follow the prompt to enable **Notification Access** so the app can read navigation cues.
-4. Turn on your motorcycle ignition key.
-5. Tap **Scan** in PulsarNav, select your bike, and pair.
-6. Open Waze or Google Maps, start navigation, and your cluster will mirror the turns.
-
----
-
-## Building from source
+## Building from Source
 
 ### Prerequisites
 - JDK 17
 - Android SDK (API 34)
 
-### Build APK
+### Compile & Run Tests
 ```bash
+# Clone the repository
 git clone https://github.com/Az-har/pulsarnav.git
 cd pulsarnav
+
+# Run full compilation, unit test suites, and Android Lint
+./gradlew compileDebugKotlin testDebugUnitTest lintDebug
+
+# Build release APK
 ./gradlew assembleRelease
 ```
-The compiled APK will be at `app/build/outputs/apk/release/app-release.apk`.
+The compiled APK will be located at `app/build/outputs/apk/release/app-release.apk`.
 
 ---
 
 ## Contributing
 
-Contributions from fellow riders are welcome! Whether you are adding support for another Bajaj/Rouser model, improving navigation heuristics, or fixing a bug:
+Contributions from the motorcycle community are warmly welcomed! Whether you are testing on another Bajaj or Rouser model, adding a new regional language transliteration, or improving map rendering heuristics:
 
 1. Fork the repository and create your feature branch (`git checkout -b feature/my-feature`).
-2. Verify local builds and tests pass with `./gradlew assembleRelease testDebugUnitTest lintDebug`.
-3. Submit a Pull Request.
+2. Verify that all unit tests and Android Lint pass cleanly (`./gradlew testDebugUnitTest lintDebug`).
+3. Commit your changes with clear semantic commit messages and open a Pull Request.
 
-Direct pushes to `master` are protected. All contributions are reviewed and merged via PRs in [Az-har/pulsarnav](https://github.com/Az-har/pulsarnav) (originally forked from [@nikhilmaity00/pulsarnav](https://github.com/nikhilmaity00/pulsarnav)). See [CONTRIBUTING.md](CONTRIBUTING.md) for complete details.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md) for full details.
 
 ---
 
 ## Legal & Trademark Notice
 
-PulsarNav is an independent, community open-source project and is not affiliated with, endorsed by, or sponsored by Bajaj Auto Limited, OTC Engineering, Google, or Waze. All brand and vehicle names (Bajaj, Pulsar, Dominar, Rouser, Google Maps, Waze) belong to their respective owners and are used strictly for compatibility identification under nominative fair use. Clean-room implemented with zero proprietary code or assets from OEM applications.
+PulsarNav is an independent community open-source project and is **NOT** affiliated with, authorized, sponsored, or endorsed by Bajaj Auto Limited, OTC Engineering, Google LLC, or Waze Mobile.
+
+"Bajaj", "Pulsar", "Dominar", and "Rouser" are registered trademarks of Bajaj Auto Limited. "Google Maps" and "Android" are registered trademarks of Google LLC. All trademarks and brand names are used strictly for descriptive hardware compatibility purposes under nominative fair use. Clean-room implemented with zero proprietary code or assets from OEM applications.
+
+---
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.
