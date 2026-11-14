@@ -640,6 +640,9 @@ class BikeBleForegroundService : Service {
             TftWifiMirrorManager.getInstance(this).stopMirroring()
         } catch (_: Exception) {}
         try {
+            com.pulsarnav.app.wifi.CellularNetworkHttp.releaseCellularPin()
+        } catch (_: Exception) {}
+        try {
             updateWifiLock(false)
         } catch (_: Exception) {}
         try {

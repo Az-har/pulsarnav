@@ -175,7 +175,6 @@ object TftScreenCastTransform {
     }
 
     private val rowScratch = ThreadLocal<IntArray?>()
-    private val colScratch = ThreadLocal<IntArray?>()
 
     /**
      * Scans sparse scanlines on [bitmap] to locate non-black active content bounds when
@@ -194,17 +193,11 @@ object TftScreenCastTransform {
         }
 
         val sampleYs = intArrayOf(h / 5, (h * 2) / 5, h / 2, (h * 3) / 5, (h * 4) / 5)
-        val sampleXs = intArrayOf(w / 5, (w * 2) / 5, w / 2, (w * 3) / 5, (w * 4) / 5)
 
         var rowBuf = rowScratch.get()
         if (rowBuf == null || rowBuf.size < w) {
             rowBuf = IntArray(w)
             rowScratch.set(rowBuf)
-        }
-        var colBuf = colScratch.get()
-        if (colBuf == null || colBuf.size < h) {
-            colBuf = IntArray(h)
-            colScratch.set(colBuf)
         }
 
         var left = w
@@ -221,18 +214,46 @@ object TftScreenCastTransform {
             }
         }
 
-        var top = h
-        var bottom = -1
-        for (x in sampleXs) {
-            bitmap.getPixels(colBuf, 0, 1, x, 0, 1, h)
-            var y = 0
-            while (y < h) {
-                if (isNonBlackPixel(colBuf[y])) {
-                    if (y < top) top = y
-                    if (y > bottom) bottom = y
+        var top = 0
+        var bottom = h
+        // Row-major sequential scans from top and bottom to eliminate CPU L1/L2 cache misses
+        val stepY = (h / 24).coerceAtLeast(8)
+        var yScan = 0
+        while (yScan < h / 2) {
+            bitmap.getPixels(rowBuf, 0, w, 0, yScan, w, 1)
+            var hasNonBlack = false
+            var x = 0
+            while (x < w) {
+                if (isNonBlackPixel(rowBuf[x])) {
+                    hasNonBlack = true
+                    break
                 }
-                y += 8
+                x += 16
             }
+            if (hasNonBlack) {
+                top = yScan
+                break
+            }
+            yScan += stepY
+        }
+
+        yScan = h - 1
+        while (yScan > h / 2) {
+            bitmap.getPixels(rowBuf, 0, w, 0, yScan, w, 1)
+            var hasNonBlack = false
+            var x = 0
+            while (x < w) {
+                if (isNonBlackPixel(rowBuf[x])) {
+                    hasNonBlack = true
+                    break
+                }
+                x += 16
+            }
+            if (hasNonBlack) {
+                bottom = yScan + 1
+                break
+            }
+            yScan -= stepY
         }
 
         if (right <= left || bottom <= top) return fallback

@@ -318,6 +318,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         stopLiveMapIfUnused()
         unregisterWifiCallback()
         closeSockets()
+        CellularNetworkHttp.releaseCellularPin()
         tcpSessionJob?.cancel()
         tcpSessionJob = null
         udpLoopFuture?.cancel(true)
@@ -623,7 +624,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                     )
 
                     val input = sock.getInputStream()
-                    val accum = ByteArray(8192)
+                    var accum = ByteArray(8192)
                     var accumLen = 0
                     val readTmp = ByteArray(2048)
 
@@ -635,7 +636,12 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                         }
                         if (readCount < 0) break
                         if (accumLen + readCount > accum.size) {
-                            accumLen = 0
+                            val newCap = (accum.size * 2).coerceAtMost(32768)
+                            if (newCap > accum.size && newCap >= accumLen + readCount) {
+                                accum = accum.copyOf(newCap)
+                            } else {
+                                accumLen = 0
+                            }
                         }
                         System.arraycopy(readTmp, 0, accum, accumLen, readCount)
                         accumLen += readCount

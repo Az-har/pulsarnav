@@ -4748,6 +4748,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTftHudMirror() {
+        if (bleManager.isLinkReady && !bleManager.isConnectedToTftCluster()) {
+            showFeedback("Wi-Fi mirroring is for 5\" TFT clusters (NS400Z). LCD clusters receive navigation via Bluetooth.", isAlert = true)
+            return
+        }
         if (!isWifiEnabled()) {
             promptEnableWifi(PendingWifiActionType.MIRROR_HUD) { startTftHudMirror() }
             return
@@ -4763,6 +4767,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkLandscapeAndLaunchCast() {
+        if (bleManager.isLinkReady && !bleManager.isConnectedToTftCluster()) {
+            showFeedback("Wi-Fi screen cast is for 5\" TFT clusters (NS400Z). LCD clusters receive navigation via Bluetooth.", isAlert = true)
+            return
+        }
         if (!isWifiEnabled()) {
             promptEnableWifi(PendingWifiActionType.LIVE_CAST) { checkLandscapeAndLaunchCast() }
             return
