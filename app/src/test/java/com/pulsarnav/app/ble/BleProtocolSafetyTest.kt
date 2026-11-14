@@ -40,6 +40,34 @@ class BleProtocolSafetyTest {
     }
 
     @Test
+    fun classifyCluster_correctlyCategorizesLcdVsTftModels() {
+        assertEquals(
+            BleProtocolSafety.ClusterCategory.LCD_MONOCHROME,
+            BleProtocolSafety.classifyCluster("Pulsar NS200", "ns200", false)
+        )
+        assertEquals(
+            BleProtocolSafety.ClusterCategory.LCD_MONOCHROME,
+            BleProtocolSafety.classifyCluster("Pulsar N250", "n250", false)
+        )
+        assertEquals(
+            BleProtocolSafety.ClusterCategory.LCD_MONOCHROME,
+            BleProtocolSafety.classifyCluster("Dominar 400", "dominar400", false)
+        )
+        assertEquals(
+            BleProtocolSafety.ClusterCategory.TFT_COLOR,
+            BleProtocolSafety.classifyCluster("Pulsar NS400Z", "ns400z", false)
+        )
+        assertEquals(
+            BleProtocolSafety.ClusterCategory.TFT_COLOR,
+            BleProtocolSafety.classifyCluster("UNKNOWN_CLUSTER", "ns200", true)
+        )
+        assertEquals(
+            BleProtocolSafety.ClusterCategory.AUTO_PROBE,
+            BleProtocolSafety.classifyCluster("GENERIC_BT", "", false)
+        )
+    }
+
+    @Test
     fun fitsSingleAttWrite_blocksOversizedOrDefaultMtuLongWrites() {
         // Default ATT MTU = 23 -> max single-PDU payload = 20 bytes
         assertEquals(20, BleProtocolSafety.maxSingleWritePayload(23))

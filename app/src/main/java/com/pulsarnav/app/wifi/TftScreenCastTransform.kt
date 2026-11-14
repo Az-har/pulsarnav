@@ -124,24 +124,37 @@ object TftScreenCastTransform {
         layoutMode: String
     ): IntRect {
         val isPortraitSource = srcH > srcW
-        return if (isPortraitSource && layoutMode != AppSettings.CAST_LAYOUT_ROT90) {
-            // Unobstructed left cockpit pocket: 406x310 (x=34..440, y=66..376).
-            // Completely to the left of the speedometer/tachometer shroud (x >= 450)!
-            IntRect(
-                left = TftWifiProtocol.NS400Z_SAFE_LEFT,
-                top = TftWifiProtocol.NS400Z_SAFE_TOP,
-                right = TftWifiProtocol.NS400Z_POCKET_RIGHT,
-                bottom = TftWifiProtocol.NS400Z_POCKET_BOTTOM
-            )
-        } else {
-            // Unobstructed top safe panorama: 750x208 (x=34..784, y=66..274).
-            // Strictly above the speedometer/tachometer shroud (which starts at y=278)!
-            IntRect(
-                left = TftWifiProtocol.NS400Z_SAFE_LEFT,
-                top = TftWifiProtocol.NS400Z_SAFE_TOP,
-                right = TftWifiProtocol.NS400Z_SAFE_RIGHT,
-                bottom = TftWifiProtocol.NS400Z_SAFE_BOTTOM
-            )
+        return when {
+            isPortraitSource && layoutMode != AppSettings.CAST_LAYOUT_ROT90 -> {
+                // Unobstructed left cockpit pocket: 406x310 (x=34..440, y=66..376).
+                // Completely to the left of the speedometer/tachometer shroud (x >= 450)!
+                IntRect(
+                    left = TftWifiProtocol.NS400Z_SAFE_LEFT,
+                    top = TftWifiProtocol.NS400Z_SAFE_TOP,
+                    right = TftWifiProtocol.NS400Z_POCKET_RIGHT,
+                    bottom = TftWifiProtocol.NS400Z_POCKET_BOTTOM
+                )
+            }
+            layoutMode == AppSettings.CAST_LAYOUT_FILL -> {
+                // Full-bleed cluster viewport (matches Bajaj official companion in Photo 7):
+                // Fills the entire 800x480 frame so no artificial black voids or letterbox bands appear!
+                IntRect(
+                    left = 0,
+                    top = 0,
+                    right = TftWifiProtocol.TFT_WIDTH,
+                    bottom = TftWifiProtocol.TFT_HEIGHT
+                )
+            }
+            else -> {
+                // FIT mode: Unobstructed top safe panorama: 750x208 (x=34..784, y=66..274).
+                // Strictly above the speedometer/tachometer shroud (which starts at y=278)!
+                IntRect(
+                    left = TftWifiProtocol.NS400Z_SAFE_LEFT,
+                    top = TftWifiProtocol.NS400Z_SAFE_TOP,
+                    right = TftWifiProtocol.NS400Z_SAFE_RIGHT,
+                    bottom = TftWifiProtocol.NS400Z_SAFE_BOTTOM
+                )
+            }
         }
     }
 

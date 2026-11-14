@@ -38,10 +38,53 @@ object BleProtocolSafety {
     const val BOND_STATE_BONDING = 11
     const val BOND_STATE_BONDED = 12
 
-    private val TFT_NAME_REGEX = Regex("^pulsar\\d{4,}$")
+    enum class ClusterCategory {
+        LCD_MONOCHROME,
+        TFT_COLOR,
+        AUTO_PROBE
+    }
+
+    enum class BleProtocolStrategy {
+        OLD_LCD_LEGACY,
+        NEW_TFT_MODERN
+    }
+
+    private val EXPLICIT_TFT_PATTERNS = listOf(
+        "ns400", "ns400z", "pulsar 400", "dominar tft", "pulsar tft"
+    )
+
+    private val EXPLICIT_LCD_PATTERNS = listOf(
+        "ns200", "ns160", "ns125",
+        "n250", "f250", "n160", "n150", "n125",
+        "pulsar 150", "pulsar 220", "pulsar 125", "220f",
+        "dominar 400", "dominar 250",
+        "rouser", "chetak"
+    )
 
     fun normalizeBleName(raw: String?): String =
         raw?.substringBefore('\u0000')?.trim().orEmpty()
+
+    /**
+     * Classifies a cluster into LCD_MONOCHROME, TFT_COLOR, or AUTO_PROBE based on the bike's
+     * Bluetooth name, the selected model profile, and discovered GATT characteristics.
+     */
+    fun classifyCluster(
+        deviceName: String?,
+        selectedModelId: String?,
+        hasMediaInfoCharacteristic: Boolean
+    ): ClusterCategory {
+        if (hasMediaInfoCharacteristic) return ClusterCategory.TFT_COLOR
+        val normalized = normalizeBleName(deviceName).lowercase()
+        if (EXPLICIT_TFT_PATTERNS.any { normalized.contains(it) } || normalized.contains("1854") ||
+            selectedModelId.equals("ns400z", ignoreCase = true)) {
+            return ClusterCategory.TFT_COLOR
+        }
+        if (EXPLICIT_LCD_PATTERNS.any { normalized.contains(it) } ||
+            (selectedModelId != null && !selectedModelId.equals("ns400z", ignoreCase = true) && selectedModelId.isNotBlank())) {
+            return ClusterCategory.LCD_MONOCHROME
+        }
+        return ClusterCategory.AUTO_PROBE
+    }
 
     /**
      * Identifies Bajaj TFT clusters (e.g. Pulsar NS400Z / PULSAR1854).
@@ -54,9 +97,11 @@ object BleProtocolSafety {
         hasMediaInfoCharacteristic: Boolean
     ): Boolean {
         if (hasMediaInfoCharacteristic) return true
-        if (selectedModelId == "ns400z") return true
         val normalized = normalizeBleName(deviceName).lowercase()
-        return normalized.contains("ns400") || TFT_NAME_REGEX.matches(normalized)
+        if (normalized.contains("1854") || EXPLICIT_TFT_PATTERNS.any { normalized.contains(it) }) return true
+        if (selectedModelId == "ns400z") return true
+        if (EXPLICIT_LCD_PATTERNS.any { normalized.contains(it) }) return false
+        return false
     }
 
     fun maxSingleWritePayload(negotiatedMtu: Int): Int =

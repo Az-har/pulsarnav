@@ -211,6 +211,7 @@ class BajajBleManager private constructor(private val context: Context) {
     private var isWaitingForBondCompletion = false
     private var bondFailedForSession = false
     private var isBondReceiverRegistered = false
+    @Volatile private var activeProtocolStrategy: BleProtocolSafety.BleProtocolStrategy = BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY
 
     private val initialTftSyncRunnable = Runnable {
         if (isLinkReady && !isDisconnecting) {
@@ -289,8 +290,7 @@ class BajajBleManager private constructor(private val context: Context) {
             Log.i(TAG, "Bond wait timeout resolved: device already BOND_BONDED")
             proceedAfterBondSettled(gatt)
         } else if (tft) {
-            bondFailedForSession = true
-            abortHandshakeAndReconnect("TFT bonding timed out (bondState=$bondState)")
+            fallbackToLegacyLcdProtocol("TFT bonding timed out (bondState=$bondState)")
         } else {
             proceedAfterBondSettled(gatt)
         }
@@ -327,9 +327,8 @@ class BajajBleManager private constructor(private val context: Context) {
                             bleHandler.removeCallbacks(bondTimeoutRunnable)
                             val wasWaiting = isWaitingForBondCompletion
                             isWaitingForBondCompletion = false
-                            if (isTftCluster()) {
-                                bondFailedForSession = true
-                                abortHandshakeAndReconnect("TFT bonding failed (BOND_NONE from $prevState)", allowReconnect = false)
+                            if (activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.NEW_TFT_MODERN) {
+                                fallbackToLegacyLcdProtocol("TFT bonding failed (BOND_NONE from $prevState)")
                             } else if (wasWaiting) {
                                 proceedAfterBondSettled(gatt)
                             }
@@ -916,6 +915,53 @@ class BajajBleManager private constructor(private val context: Context) {
         }
     }
 
+    private fun switchToModernTftProtocol(gatt: BluetoothGatt, reason: String) {
+        if (activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.NEW_TFT_MODERN && isWaitingForBondCompletion) return
+        Log.i(TAG, "Upgrading BLE protocol: OLD_LCD_LEGACY -> NEW_TFT_MODERN ($reason)")
+        DebugLogRepository.bleEvent("BLE protocol switch -> NEW_TFT_MODERN ($reason)")
+        activeProtocolStrategy = BleProtocolSafety.BleProtocolStrategy.NEW_TFT_MODERN
+
+        ensureBondReceiverRegistered()
+        val device = gatt.device
+        val bondState = try { device.bondState } catch (_: SecurityException) { BluetoothDevice.BOND_NONE }
+        when (bondState) {
+            BluetoothDevice.BOND_NONE -> {
+                try {
+                    val bondStarted = device.createBond()
+                    Log.i(TAG, "Initiated Just-Works bonding for TFT cluster: $bondStarted")
+                    if (bondStarted || device.bondState == BluetoothDevice.BOND_BONDING) {
+                        isWaitingForBondCompletion = true
+                        bleHandler.removeCallbacks(bondTimeoutRunnable)
+                        bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
+                        return
+                    }
+                } catch (se: SecurityException) {
+                    Log.w(TAG, "createBond failed: ${se.message}")
+                }
+            }
+            BluetoothDevice.BOND_BONDING -> {
+                isWaitingForBondCompletion = true
+                bleHandler.removeCallbacks(bondTimeoutRunnable)
+                bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
+                return
+            }
+            BluetoothDevice.BOND_BONDED -> {
+                // Already bonded, proceed directly with MTU negotiation and TFT sync
+            }
+        }
+        startMtuNegotiation(gatt, resetRetries = true)
+    }
+
+    private fun fallbackToLegacyLcdProtocol(reason: String) {
+        Log.w(TAG, "Falling back BLE protocol: NEW_TFT_MODERN -> OLD_LCD_LEGACY ($reason)")
+        DebugLogRepository.bleEvent("BLE protocol fallback -> OLD_LCD_LEGACY ($reason)")
+        activeProtocolStrategy = BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY
+        isWaitingForBondCompletion = false
+        bondFailedForSession = false
+        bleHandler.removeCallbacks(bondTimeoutRunnable)
+        onLinkReady("fallback-to-lcd-legacy: $reason")
+    }
+
     private fun startMtuNegotiation(gatt: BluetoothGatt, resetRetries: Boolean) {
         if (resetRetries) {
             mtuRetryCount = 0
@@ -1064,38 +1110,17 @@ class BajajBleManager private constructor(private val context: Context) {
                     bondFailedForSession = false
                     ensureBondReceiverRegistered()
 
-                    var deferDiscoveryForBond = false
-                    if (isTftCluster(name)) {
-                        when (device.bondState) {
-                            BluetoothDevice.BOND_NONE -> {
-                                try {
-                                    val bondStarted = device.createBond()
-                                    Log.i(TAG, "Initiated Just-Works SMP bonding for TFT cluster ($name): $bondStarted")
-                                    if (bondStarted || device.bondState == BluetoothDevice.BOND_BONDING) {
-                                        deferDiscoveryForBond = true
-                                    }
-                                } catch (se: SecurityException) {
-                                    Log.w(TAG, "createBond skipped due to missing BT permission: ${se.message}")
-                                    bondFailedForSession = true
-                                    abortHandshakeAndReconnect("TFT createBond permission error", allowReconnect = false)
-                                    return@runOnBle
-                                }
-                            }
-                            BluetoothDevice.BOND_BONDING -> {
-                                Log.i(TAG, "TFT cluster ($name) already bonding; deferring service discovery until BOND_BONDED")
-                                deferDiscoveryForBond = true
-                            }
-                        }
-                    }
+                    // Universal dual-protocol connection strategy:
+                    // Condition 1: Check Bike's Name & Model Profile.
+                    // Condition 2: First test the OLD code (legacy LCD connection) without pre-bonding blocks.
+                    // If an error is detected during write (e.g. Auth/Encryption) or 0610 Media Info
+                    // characteristic is present, dynamically upgrade to NEW_TFT_MODERN.
+                    activeProtocolStrategy = BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY
+                    Log.i(TAG, "Initiating universal handshake for $name (testing OLD_LCD_LEGACY protocol first)")
 
                     bleHandler.removeCallbacks(discoverServicesRunnable)
                     bleHandler.removeCallbacks(bondTimeoutRunnable)
-                    if (deferDiscoveryForBond) {
-                        isWaitingForBondCompletion = true
-                        bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
-                    } else {
-                        bleHandler.postDelayed(discoverServicesRunnable, 350)
-                    }
+                    bleHandler.postDelayed(discoverServicesRunnable, 350)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
                     Log.w(TAG, "Disconnected / connect failure on $name (status=$status, newState=$newState)")
                     if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -1137,41 +1162,23 @@ class BajajBleManager private constructor(private val context: Context) {
                     buttonCharacteristic = service.getCharacteristic(BUTTON_CONTROL_CHAR_UUID)
                     recentCallsCharacteristic = service.getCharacteristic(RECENT_CALLS_CHAR_UUID)
 
-                    if (isTftCluster()) {
-                        ensureBondReceiverRegistered()
-                        when (gatt.device.bondState) {
-                            BluetoothDevice.BOND_NONE -> {
-                                Log.i(TAG, "TFT cluster not bonded during discovery; initiating Just-Works bonding")
-                                val bondStarted = try {
-                                    gatt.device.createBond()
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "createBond failed: ${e.message}")
-                                    false
-                                }
-                                val currentBondState = try { gatt.device.bondState } catch (_: SecurityException) { BluetoothDevice.BOND_NONE }
-                                if (bondStarted || currentBondState == BluetoothDevice.BOND_BONDING) {
-                                    isWaitingForBondCompletion = true
-                                    bleHandler.removeCallbacks(bondTimeoutRunnable)
-                                    bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
-                                    return@runOnBle
-                                } else if (currentBondState != BluetoothDevice.BOND_BONDED) {
-                                    bondFailedForSession = true
-                                    abortHandshakeAndReconnect("TFT Just-Works createBond() unavailable/rejected", allowReconnect = false)
-                                    return@runOnBle
-                                }
-                            }
-                            BluetoothDevice.BOND_BONDING -> {
-                                Log.i(TAG, "TFT cluster bonding in progress; deferring MTU & writes until BOND_BONDED")
-                                isWaitingForBondCompletion = true
-                                bleHandler.removeCallbacks(bondTimeoutRunnable)
-                                bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
-                                return@runOnBle
-                            }
-                        }
+                    // Condition 1 & 2 Check:
+                    // Does the cluster expose 0610 (Media Info) or explicit TFT model profile?
+                    val clusterCategory = BleProtocolSafety.classifyCluster(
+                        deviceName = connectedDeviceName,
+                        selectedModelId = com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId,
+                        hasMediaInfoCharacteristic = mediaInfoCharacteristic != null
+                    )
+
+                    if (clusterCategory == BleProtocolSafety.ClusterCategory.TFT_COLOR) {
+                        Log.i(TAG, "TFT cluster capability detected for $connectedDeviceName -> testing/switching to NEW_TFT_MODERN")
+                        switchToModernTftProtocol(gatt, "TFT hardware/profile detected")
+                        return@runOnBle
                     }
 
-                    Log.i(TAG, "Discovered Bajaj GATT Services. Negotiating MTU 256...")
-                    // Critical: Request MTU 256 for 48B TBT, 89B General, and 111B Media frames
+                    // Otherwise test the OLD code (legacy LCD handshake):
+                    Log.i(TAG, "Discovered Bajaj GATT Services on $connectedDeviceName. Testing OLD_LCD_LEGACY protocol...")
+                    activeProtocolStrategy = BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY
                     startMtuNegotiation(gatt, resetRetries = true)
                 } else {
                     abortHandshakeAndReconnect("Bajaj Service UUID $OTC_SERVICE_UUID not found")
@@ -1313,6 +1320,11 @@ class BajajBleManager private constructor(private val context: Context) {
                     Log.w(TAG, "Write error status=$status on ${characteristic.uuid}")
                     DebugLogRepository.error("BLE_GATT", "Write failed (${charShortUuid(characteristic.uuid)}) status=$status")
                     if (BleProtocolSafety.isAuthOrEncryptionError(status)) {
+                        if (activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY) {
+                            Log.i(TAG, "OLD protocol write rejected (status=$status). Switching to NEW_TFT_MODERN protocol!")
+                            switchToModernTftProtocol(gatt, "Auth error status=$status during OLD protocol test")
+                            return@runOnBle
+                        }
                         consecutiveAuthWriteErrors++
                         if (consecutiveAuthWriteErrors >= MAX_CONSECUTIVE_AUTH_ERRORS) {
                             handleStaleBondAuthFailure(status)
@@ -1334,6 +1346,11 @@ class BajajBleManager private constructor(private val context: Context) {
                 } else {
                     Log.w(TAG, "Descriptor write error status=$status on ${descriptor.uuid}")
                     if (BleProtocolSafety.isAuthOrEncryptionError(status)) {
+                        if (activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY) {
+                            Log.i(TAG, "OLD protocol CCCD write rejected (status=$status). Switching to NEW_TFT_MODERN protocol!")
+                            switchToModernTftProtocol(gatt, "Auth error status=$status on CCCD during OLD protocol test")
+                            return@runOnBle
+                        }
                         consecutiveAuthWriteErrors++
                         if (consecutiveAuthWriteErrors >= MAX_CONSECUTIVE_AUTH_ERRORS) {
                             handleStaleBondAuthFailure(status)
@@ -1879,11 +1896,13 @@ class BajajBleManager private constructor(private val context: Context) {
         BleProtocolSafety.normalizeBleName(raw)
 
     private fun isTftCluster(deviceName: String = connectedDeviceName): Boolean =
-        BleProtocolSafety.isTftCluster(
-            deviceName = deviceName,
-            selectedModelId = com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId,
-            hasMediaInfoCharacteristic = mediaInfoCharacteristic != null
-        )
+        activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.NEW_TFT_MODERN ||
+        (activeProtocolStrategy != BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY &&
+            BleProtocolSafety.isTftCluster(
+                deviceName = deviceName,
+                selectedModelId = com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId,
+                hasMediaInfoCharacteristic = mediaInfoCharacteristic != null
+            ))
 
     fun isConnectedToTftCluster(): Boolean = isTftCluster()
 
@@ -1893,48 +1912,48 @@ class BajajBleManager private constructor(private val context: Context) {
         if (!isLinkReady && !allowInspectorPreviewWhenDisconnected) {
             return
         }
-        val pkt = OtcPacketBuilder.buildGeneralPacketV2(
-            batteryPercent = currentBattery,
-            volumeLevel = currentVolume,
-            signalBars = currentSignal,
-            callState = currentCallState,
-            callerName = currentCallerName,
-            callAcceptAck = callAcceptAckCount,
-            callRejectAck = callRejectAckCount,
-            callRejectSmsAck = callRejectSmsAckCount,
-            missedCallCount = currentMissedCount,
-            missedCallGetAck = missedCallGetAckCount,
-            resumeSongAck = resumeSongAckCount,
-            pauseSongAck = pauseSongAckCount,
-            skipToNextAck = skipToNextAckCount,
-            skipToPrevAck = skipToPrevAckCount,
-            stopSongAck = stopSongAckCount,
-            launchMediaPlayerAck = launchMediaPlayerAckCount,
-            alertsGetAck = alertGetAckCount,
-            selectPlaylistSongAck = selectPlaylistSongAckCount
-        )
+        val target = generalCharacteristic ?: return
+
+        val pkt = if (activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY) {
+            OtcPacketBuilder.buildGeneralPacketLegacy(
+                batteryPercent = currentBattery,
+                volumeLevel = currentVolume,
+                callState = currentCallState,
+                callerName = currentCallerName,
+                callRejectAck = callRejectAckCount,
+                callRejectSmsAck = callRejectSmsAckCount,
+                missedCallCount = currentMissedCount,
+                missedCallGetAck = missedCallGetAckCount
+            )
+        } else {
+            OtcPacketBuilder.buildGeneralPacketV2(
+                batteryPercent = currentBattery,
+                volumeLevel = currentVolume,
+                signalBars = currentSignal,
+                callState = currentCallState,
+                callerName = currentCallerName,
+                callAcceptAck = callAcceptAckCount,
+                callRejectAck = callRejectAckCount,
+                callRejectSmsAck = callRejectSmsAckCount,
+                missedCallCount = currentMissedCount,
+                missedCallGetAck = missedCallGetAckCount,
+                resumeSongAck = resumeSongAckCount,
+                pauseSongAck = pauseSongAckCount,
+                skipToNextAck = skipToNextAckCount,
+                skipToPrevAck = skipToPrevAckCount,
+                stopSongAck = stopSongAckCount,
+                launchMediaPlayerAck = launchMediaPlayerAckCount,
+                alertsGetAck = alertGetAckCount,
+                selectPlaylistSongAck = selectPlaylistSongAckCount
+            )
+        }
+
         if (isLinkReady || allowInspectorPreviewWhenDisconnected) {
             _lastSentPacket.value = pkt
         }
-        generalCharacteristic?.let { target ->
-            if (isLinkReady) {
-                val isUrgentCall = currentCallState != CallState.NO_CALL
-                enqueueWrite(target, pkt, priority = isUrgentCall)
-                // If there is an active/incoming call on LCD clusters, also send the 55-byte legacy frame
-                // to support older cluster firmware that does not accept 89-byte V2 frames
-                if (isUrgentCall && !isTftCluster()) {
-                    val legacyPkt = OtcPacketBuilder.buildGeneralPacketLegacy(
-                        batteryPercent = currentBattery,
-                        volumeLevel = currentVolume,
-                        callState = currentCallState,
-                        callerName = currentCallerName,
-                        callRejectAck = callRejectAckCount,
-                        callRejectSmsAck = 0,
-                        missedCallCount = currentMissedCount
-                    )
-                    enqueueWrite(target, legacyPkt, priority = true)
-                }
-            }
+        if (isLinkReady) {
+            val isUrgentCall = currentCallState != CallState.NO_CALL
+            enqueueWrite(target, pkt, priority = isUrgentCall)
         }
     }
 

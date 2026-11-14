@@ -53,6 +53,7 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
@@ -881,6 +882,12 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     private val rectTmp = RectF()
     private val arrowPath = Path()
 
+    @Volatile private var lastGpsFixTimestampMs = 0L
+    @Volatile private var lastGpsFixLat = 0.0
+    @Volatile private var lastGpsFixLng = 0.0
+    @Volatile private var lastGpsFixSpeedMps = 0f
+    @Volatile private var lastGpsFixBearingDeg = 0f
+
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             onNewLocation(location)
@@ -979,6 +986,12 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
                 speedKmh = speedKmh
             )
         }
+
+        lastGpsFixTimestampMs = SystemClock.elapsedRealtime()
+        lastGpsFixLat = loc.latitude
+        lastGpsFixLng = loc.longitude
+        lastGpsFixSpeedMps = if (loc.hasSpeed()) loc.speed else 0f
+        lastGpsFixBearingDeg = _uiState.value.bearingDeg
 
         val pending = pendingRouteTarget
         val route = activeRoutePlan
@@ -1337,8 +1350,23 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         val anchorX = if (step != null) 460f else 400f
         val anchorY = if (state.headingUp) 195f else 185f
 
-        val camLat = if (state.hasGpsFix) state.lat else (state.previewLat ?: state.lat)
-        val camLng = if (state.hasGpsFix) state.lng else (state.previewLng ?: state.lng)
+        val now = SystemClock.elapsedRealtime()
+        val dtSec = ((now - lastGpsFixTimestampMs) / 1000f).coerceIn(0f, 1.2f)
+        val extrapolatedLat: Double
+        val extrapolatedLng: Double
+        if (state.hasGpsFix && lastGpsFixSpeedMps >= 1.5f && dtSec in 0.04f..1.2f) {
+            val distM = (lastGpsFixSpeedMps * dtSec).toDouble()
+            val radBearing = Math.toRadians(lastGpsFixBearingDeg.toDouble())
+            val deltaLat = (distM * Math.cos(radBearing)) / 111320.0
+            val deltaLng = (distM * Math.sin(radBearing)) / (111320.0 * Math.cos(Math.toRadians(lastGpsFixLat)))
+            extrapolatedLat = lastGpsFixLat + deltaLat
+            extrapolatedLng = lastGpsFixLng + deltaLng
+        } else {
+            extrapolatedLat = state.lat
+            extrapolatedLng = state.lng
+        }
+        val camLat = if (state.hasGpsFix) extrapolatedLat else (state.previewLat ?: state.lat)
+        val camLng = if (state.hasGpsFix) extrapolatedLng else (state.previewLng ?: state.lng)
 
         canvas.save()
         // Map tiles span the full 800x480 canvas so the cluster's hardware gauges sit seamlessly on top
@@ -1422,8 +1450,13 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             canvas.rotate(-bearingDeg)
         }
 
-        // When rotated, cover bounding radius diagonal so corners never show un-tiled holes
-        val halfDiag = sqrt((w * w + h * h).toDouble()).toFloat() * 0.65f
+        // When rotated, cover bounding radius diagonal so corners never show un-tiled holes.
+        // When North-up (no rotation), use tight bounds saving ~40% off-screen tile fetches.
+        val halfDiag = if (bearingDeg != 0f) {
+            sqrt((w * w + h * h).toDouble()).toFloat() * 0.65f
+        } else {
+            max(w, h) * 0.55f
+        }
         val minWx = centerWx - halfDiag
         val maxWx = centerWx + halfDiag
         val minWy = centerWy - halfDiag
@@ -1472,10 +1505,23 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             routePath.reset()
             val normX = route.normMercatorX
             val normY = route.normMercatorY
+            val boundLimit = halfDiag * 1.5f
+            var pathStarted = false
             for (i in normX.indices) {
                 val sx = (normX[i] * worldScale - centerWx).toFloat()
                 val sy = (normY[i] * worldScale - centerWy).toFloat()
-                if (i == 0) routePath.moveTo(sx, sy) else routePath.lineTo(sx, sy)
+                val isNear = abs(sx) <= boundLimit && abs(sy) <= boundLimit
+                if (!isNear && pathStarted) {
+                    routePath.lineTo(sx, sy)
+                    pathStarted = false
+                    continue
+                }
+                if (!pathStarted) {
+                    routePath.moveTo(sx, sy)
+                    pathStarted = true
+                } else {
+                    routePath.lineTo(sx, sy)
+                }
             }
             canvas.drawPath(routePath, routeCasingPaint)
             canvas.drawPath(routePath, routeFillPaint)
@@ -1531,8 +1577,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     private fun drawTbtCornerCard(canvas: Canvas, step: ParsedNavigationStep, daylight: Boolean) {
         rectTmp.set(36f, 72f, 350f, 172f)
         cardPaint.color = if (daylight) Color.parseColor("#0A3E34") else Color.parseColor("#0F5145")
-        borderPaint.color = Color.parseColor("#34D399")
-        borderPaint.strokeWidth = 2f
+        val isImminentTurn = step.distanceMeters in 1..100
+        borderPaint.color = if (isImminentTurn) Color.parseColor("#10B981") else Color.parseColor("#34D399")
+        borderPaint.strokeWidth = if (isImminentTurn) 3.5f else 2f
         canvas.drawRoundRect(rectTmp, 18f, 18f, cardPaint)
         canvas.drawRoundRect(rectTmp, 18f, 18f, borderPaint)
 

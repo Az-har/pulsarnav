@@ -66,6 +66,7 @@ class TftCockpitDisplayController(
         private const val TAG = "TftCockpitDisplay"
         private const val REDRAW_INTERVAL_MS = 65L
         private const val LOCAL_PREVIEW_IDLE_REDRAW_MS = 140L
+        private const val STATIC_KEEPALIVE_INTERVAL_MS = 600L
 
         // Unified 800x480 interactive hitboxes placed strictly inside NS400Z unobstructed safe zones
         const val FOOTER_THEME_LEFT = TftWifiProtocol.NS400Z_POCKET_LEFT
@@ -205,7 +206,7 @@ class TftCockpitDisplayController(
         override fun run() {
             if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST || previewPaused) return
             renderAndEmitHeadlessFrame()
-            val delayMs = if (clusterStationary) LOCAL_PREVIEW_IDLE_REDRAW_MS else REDRAW_INTERVAL_MS
+            val delayMs = if (clusterStationary) STATIC_KEEPALIVE_INTERVAL_MS else REDRAW_INTERVAL_MS
             workerHandler?.postDelayed(this, delayMs)
         }
     }
