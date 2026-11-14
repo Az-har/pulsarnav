@@ -612,8 +612,17 @@ class TftCockpitDisplayController(
                     srcRectTmp = copySrcRect,
                     dstRectTmp = copyDstRect,
                     srcClipRect = if (rowPadding > 0) IntRect(0, 0, srcW, srcH) else null,
-                    cachedContentBounds = contentBounds
+                    cachedContentBounds = contentBounds,
+                    alignLeft = appSettings.isTftCastAlignLeftEnabled
                 )
+
+                if (appSettings.isTftCastAlignLeftEnabled && copyDstRect.right <= 480) {
+                    val compLeft = (copyDstRect.right + 14).coerceAtLeast(460).toFloat()
+                    val compTop = TftWifiProtocol.NS400Z_SAFE_TOP.toFloat()
+                    val compRight = TftWifiProtocol.NS400Z_SAFE_RIGHT.toFloat()
+                    val compBottom = TftWifiProtocol.NS400Z_SAFE_BOTTOM.toFloat()
+                    hudRenderer.drawCastCompanionCard(dstCanvas, compLeft, compTop, compRight, compBottom)
+                }
 
                 val encoded = encodeAdaptiveJpeg(dstBmp) ?: return
                 lastCaptureTimestampMs = now
@@ -1148,6 +1157,81 @@ class TftCockpitDisplayController(
             canvas.drawText(line1Buf, 0, line1Buf.length, x, y, paint)
             if (line2Buf.isNotEmpty()) {
                 canvas.drawText(ellipsizeText(line2Buf.toString(), maxWidth, paint), x, y + lineHeight, paint)
+            }
+        }
+
+        fun drawCastCompanionCard(canvas: Canvas, left: Float, top: Float, right: Float, bottom: Float) {
+            val highContrast = daylightHighContrast
+            val cardColor = if (highContrast) Color.rgb(255, 255, 255) else Color.rgb(22, 26, 34)
+            val borderColor = if (highContrast) Color.rgb(200, 208, 220) else Color.rgb(44, 52, 68)
+            val primaryText = if (highContrast) Color.rgb(15, 20, 28) else Color.rgb(246, 248, 252)
+            val secondaryText = if (highContrast) Color.rgb(75, 86, 104) else Color.rgb(160, 172, 194)
+            val accentColor = Color.rgb(230, 57, 70)
+            val cyanAccent = Color.rgb(56, 189, 248)
+
+            cardPaint.color = cardColor
+            cardRect.set(left, top, right, bottom)
+            canvas.drawRoundRect(cardRect, 14f, 14f, cardPaint)
+            borderPaint.color = borderColor
+            canvas.drawRoundRect(cardRect, 14f, 14f, borderPaint)
+
+            val availableWidth = (right - left - 28f).coerceAtLeast(60f)
+            val media = mediaManager.getActiveMediaSnapshot()
+            val navStep: com.pulsarnav.app.parser.ParsedNavigationStep? = mapEngine.getCurrentStepForHud() ?: bleManager.simulatedNavStep.value
+
+            textPaint.textAlign = Paint.Align.LEFT
+            if (navStep != null && navStep.distanceMeters > 0) {
+                textPaint.typeface = boldTypeface
+                textPaint.color = accentColor
+                textPaint.textSize = 13f
+                canvas.drawText("NEXT TURN", left + 14f, top + 26f, textPaint)
+
+                textPaint.color = primaryText
+                textPaint.textSize = 22f
+                val distStr = if (navStep.distanceMeters >= 1000) {
+                    "${(navStep.distanceMeters / 100) / 10.0} km"
+                } else {
+                    "${navStep.distanceMeters} m"
+                }
+                canvas.drawText(distStr, left + 14f, top + 56f, textPaint)
+
+                textPaint.typeface = normalTypeface
+                textPaint.color = secondaryText
+                textPaint.textSize = 14f
+                val street = navStep.streetName.ifBlank { "Continue on route" }
+                canvas.drawText(ellipsizeText(street, availableWidth, textPaint), left + 14f, top + 80f, textPaint)
+            } else if (media.title.isNotBlank()) {
+                textPaint.typeface = boldTypeface
+                textPaint.color = cyanAccent
+                textPaint.textSize = 13f
+                val statusStr = if (media.playStatus == 2) "NOW PLAYING" else "PAUSED"
+                canvas.drawText(statusStr, left + 14f, top + 26f, textPaint)
+
+                textPaint.color = primaryText
+                textPaint.textSize = 18f
+                canvas.drawText(ellipsizeText(media.title, availableWidth, textPaint), left + 14f, top + 54f, textPaint)
+
+                textPaint.typeface = normalTypeface
+                textPaint.color = secondaryText
+                textPaint.textSize = 14f
+                val artist = media.artist.ifBlank { "Media Controller" }
+                canvas.drawText(ellipsizeText(artist, availableWidth, textPaint), left + 14f, top + 78f, textPaint)
+            } else {
+                textPaint.typeface = boldTypeface
+                textPaint.color = accentColor
+                textPaint.textSize = 13f
+                canvas.drawText("PULSARNAV COCKPIT", left + 14f, top + 26f, textPaint)
+
+                textPaint.color = primaryText
+                textPaint.textSize = 22f
+                canvas.drawText(currentClockString(), left + 14f, top + 58f, textPaint)
+
+                textPaint.typeface = normalTypeface
+                textPaint.color = secondaryText
+                textPaint.textSize = 13f
+                val isConnected = bleManager.isLinkReady
+                val statStr = if (isConnected) "Cluster Link: Active" else "Screen Cast Mode"
+                canvas.drawText(statStr, left + 14f, top + 82f, textPaint)
             }
         }
 

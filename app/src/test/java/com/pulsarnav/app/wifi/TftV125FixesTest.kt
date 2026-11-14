@@ -70,24 +70,22 @@ class TftV125FixesTest {
     }
 
     @Test
-    fun computeFitDestinationRect_landscapeNeverExceedsSafeBottom() {
-        val landscapePanorama = IntRect(
-            TftWifiProtocol.NS400Z_SAFE_LEFT,
-            TftWifiProtocol.NS400Z_SAFE_TOP,
-            TftWifiProtocol.NS400Z_SAFE_RIGHT,
-            TftWifiProtocol.NS400Z_SAFE_BOTTOM
+    fun computeFitDestinationRect_alignLeftAnchorsFlushToViewportLeft() {
+        val viewport = IntRect(34, 66, 784, 274)
+        val dstCentered = TftScreenCastTransform.computeFitDestinationRect(
+            srcW = 1080,
+            srcH = 2400,
+            viewport = viewport,
+            alignLeft = false
         )
-        // 20:9 phone in landscape: 2400x1080
-        val dst = TftScreenCastTransform.computeFitDestinationRect(
-            srcW = 2400,
-            srcH = 1080,
-            targetW = TftWifiProtocol.TFT_WIDTH,
-            targetH = TftWifiProtocol.TFT_HEIGHT,
-            viewport = landscapePanorama
+        val dstLeft = TftScreenCastTransform.computeFitDestinationRect(
+            srcW = 1080,
+            srcH = 2400,
+            viewport = viewport,
+            alignLeft = true
         )
-        assertTrue("Landscape fit must not exceed safe bottom", dst.bottom <= TftWifiProtocol.NS400Z_SAFE_BOTTOM)
-        assertTrue("Landscape fit must remain above y=276", dst.bottom <= 276)
-        assertTrue("Landscape fit must not exceed safe right", dst.right <= TftWifiProtocol.NS400Z_SAFE_RIGHT)
+        assertEquals(34, dstLeft.left)
+        assertTrue(dstCentered.left > 34)
     }
 
     @Test

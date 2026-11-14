@@ -6164,6 +6164,14 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(cbAutoOpenMaps)
 
+        val cbAlignLeft = android.widget.CheckBox(this).apply {
+            text = "Reposition Cast to Left (Split Cockpit • Anti-Tachometer)"
+            isChecked = appSettings.isTftCastAlignLeftEnabled
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        container.addView(cbAlignLeft)
+
         val canWriteRotation = android.provider.Settings.System.canWrite(this)
         val cbForceLandscape = android.widget.CheckBox(this).apply {
             text = if (canWriteRotation) {
@@ -6208,6 +6216,7 @@ class MainActivity : AppCompatActivity() {
                     else -> AppSettings.CAST_LAYOUT_FIT
                 }
                 appSettings.isTftCastAutoOpenMapsEnabled = cbAutoOpenMaps.isChecked
+                appSettings.isTftCastAlignLeftEnabled = cbAlignLeft.isChecked
                 appSettings.isTftCastForceLandscapeEnabled = cbForceLandscape.isChecked
                 TftWifiMirrorManager.getInstance(this).switchHeadlessModeIfActive(nextMode)
                 if (!isWifiEnabled()) {

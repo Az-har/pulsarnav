@@ -100,14 +100,15 @@ object TftScreenCastTransform {
         srcH: Int,
         targetW: Int = TftWifiProtocol.TFT_WIDTH,
         targetH: Int = TftWifiProtocol.TFT_HEIGHT,
-        viewport: IntRect = IntRect(0, 0, targetW, targetH)
+        viewport: IntRect = IntRect(0, 0, targetW, targetH),
+        alignLeft: Boolean = false
     ): IntRect {
         val vpW = viewport.width
         val vpH = viewport.height
         val scale = min(vpW.toFloat() / srcW.coerceAtLeast(1), vpH.toFloat() / srcH.coerceAtLeast(1))
         val drawW = (srcW * scale).roundToInt().coerceIn(1, vpW)
         val drawH = (srcH * scale).roundToInt().coerceIn(1, vpH)
-        val left = viewport.left + (vpW - drawW) / 2
+        val left = if (alignLeft) viewport.left else viewport.left + (vpW - drawW) / 2
         val top = viewport.top + (vpH - drawH) / 2
         return IntRect(left, top, left + drawW, top + drawH)
     }
@@ -226,7 +227,8 @@ object TftScreenCastTransform {
         srcRectTmp: android.graphics.Rect,
         dstRectTmp: android.graphics.Rect,
         srcClipRect: IntRect? = null,
-        cachedContentBounds: IntRect? = null
+        cachedContentBounds: IntRect? = null,
+        alignLeft: Boolean = true
     ) {
         val dstW = dstBitmap.width
         val dstH = dstBitmap.height
@@ -251,7 +253,8 @@ object TftScreenCastTransform {
                     srcH = content.height,
                     targetW = dstW,
                     targetH = dstH,
-                    viewport = safeViewport
+                    viewport = safeViewport,
+                    alignLeft = alignLeft
                 )
                 srcRectTmp.set(content.left, content.top, content.right, content.bottom)
                 dstRectTmp.set(dstRect.left, dstRect.top, dstRect.right, dstRect.bottom)
