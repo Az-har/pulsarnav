@@ -14,6 +14,7 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.pulsarnav.app.debug.DebugLogRepository
@@ -97,6 +98,7 @@ class BajajBleManager private constructor(private val context: Context) {
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         private const val TBT_STREAM_CADENCE_MS = 500L
+        private const val TBT_STATIC_KEEPALIVE_MS = 1500L
         private const val GEN_HEARTBEAT_PERIOD_MS = 5000L
         private const val CTL_POLL_MS = 700L
         private const val CTL_READ_TIMEOUT_MS = 1500L
@@ -426,6 +428,8 @@ class BajajBleManager private constructor(private val context: Context) {
     private var activeNavStep: ParsedNavigationStep? = null
     private var isNavigationActive = false
     private var alertDisplayHoldUntilMs = 0L
+    private var lastSentTbtFrame: ByteArray? = null
+    private var lastTbtSendTimeMs = 0L
 
     // Runnables
     private val tbtStreamRunnable = object : Runnable {
@@ -449,9 +453,16 @@ class BajajBleManager private constructor(private val context: Context) {
                             streetText = step.streetName,
                             takeMeHomeAck = takeMeHomeAckCount
                         )
-                        _lastSentPacket.value = frame
-                        if (isLinkReady) {
-                            tbtCharacteristic?.let { enqueueWrite(it, frame, priority = true) }
+                        val now = SystemClock.elapsedRealtime()
+                        val isSameFrame = lastSentTbtFrame?.contentEquals(frame) == true
+                        val keepaliveExpired = (now - lastTbtSendTimeMs) >= TBT_STATIC_KEEPALIVE_MS
+                        if (!isSameFrame || keepaliveExpired) {
+                            lastSentTbtFrame = frame
+                            lastTbtSendTimeMs = now
+                            _lastSentPacket.value = frame
+                            if (isLinkReady) {
+                                tbtCharacteristic?.let { enqueueWrite(it, frame, priority = true) }
+                            }
                         }
                     }
                 }
@@ -1750,13 +1761,23 @@ class BajajBleManager private constructor(private val context: Context) {
      * Starts continuous 800 ms streaming to the bike cluster.
      */
     fun updateNavigationStep(step: ParsedNavigationStep) = runOnBle {
+        val wasDifferent = activeNavStep == null ||
+            activeNavStep?.distanceMeters != step.distanceMeters ||
+            activeNavStep?.maneuver != step.maneuver ||
+            activeNavStep?.streetName != step.streetName ||
+            activeNavStep?.etaHour != step.etaHour ||
+            activeNavStep?.etaMinute != step.etaMinute
         activeNavStep = step
         isNavigationActive = true
         _simulatedNavStep.value = null
         _currentActiveManeuver.value = step.maneuver
 
-        bleHandler.removeCallbacks(tbtStreamRunnable)
-        bleHandler.post(tbtStreamRunnable)
+        if (wasDifferent) {
+            lastTbtSendTimeMs = 0L
+            lastSentTbtFrame = null
+            bleHandler.removeCallbacks(tbtStreamRunnable)
+            bleHandler.post(tbtStreamRunnable)
+        }
     }
 
     /**
@@ -1768,6 +1789,8 @@ class BajajBleManager private constructor(private val context: Context) {
         activeNavStep = null
         _simulatedNavStep.value = null
         _currentActiveManeuver.value = null
+        lastSentTbtFrame = null
+        lastTbtSendTimeMs = 0L
         bleHandler.removeCallbacks(tbtStreamRunnable)
 
         val stopFrame = OtcPacketBuilder.buildTbtStopFrame()

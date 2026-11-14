@@ -749,10 +749,10 @@ object TftUdpFrameEncoder {
         )
     }
 
-    fun computeCrc32Int(data: ByteArray): Int {
+    fun computeCrc32Int(data: ByteArray, offset: Int = 0, length: Int = data.size): Int {
         val crc = crcThreadLocal.get() ?: CRC32().also { crcThreadLocal.set(it) }
         crc.reset()
-        crc.update(data)
+        crc.update(data, offset, length)
         return crc.value.toInt()
     }
 
@@ -770,17 +770,19 @@ object TftUdpFrameEncoder {
 
     /**
      * Splits a compressed JPEG (< 30,000 bytes) into AES-CBC-encrypted <=1024-byte UDP packets.
+     * Supports slicing into a pooled buffer via [length] to eliminate per-frame allocations.
      */
     fun encodeJpegFrameChunks(
         jpeg: ByteArray,
-        cipher: Cipher = createEncryptCipher()
+        cipher: Cipher = createEncryptCipher(),
+        length: Int = jpeg.size
     ): List<ByteArray> {
-        if (jpeg.isEmpty() || jpeg.size >= TftWifiProtocol.UDP_MAX_JPEG_BYTES) {
+        val totalLen = length.coerceIn(0, jpeg.size)
+        if (totalLen == 0 || totalLen >= TftWifiProtocol.UDP_MAX_JPEG_BYTES) {
             return emptyList()
         }
 
-        val totalLen = jpeg.size
-        val crc = computeCrc32Int(jpeg)
+        val crc = computeCrc32Int(jpeg, 0, totalLen)
         val packets = ArrayList<ByteArray>((totalLen / TftWifiProtocol.UDP_NEXT_CHUNK_BYTES) + 2)
 
         if (totalLen <= TftWifiProtocol.UDP_FIRST_CHUNK_BYTES) {

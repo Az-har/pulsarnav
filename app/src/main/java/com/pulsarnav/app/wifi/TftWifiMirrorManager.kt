@@ -705,7 +705,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                             continue
                         }
 
-                        val chunks = TftUdpFrameEncoder.encodeJpegFrameChunks(jpeg, cipher)
+                        val chunks = TftUdpFrameEncoder.encodeJpegFrameChunks(jpeg, cipher, latestEncodedBytes)
                         if (chunks.isEmpty()) continue
 
                         for (i in chunks.indices) {
@@ -763,7 +763,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
 
         if (localPreview || _latestDebugFrame.subscriptionCount.value > 0) {
             _latestDebugFrame.value = TftDebugFrame(
-                jpegBytes = jpeg,
+                jpegBytes = if (jpeg.size == bytes) jpeg else jpeg.copyOf(bytes),
                 width = TftWifiProtocol.TFT_WIDTH,
                 height = TftWifiProtocol.TFT_HEIGHT,
                 quality = quality,

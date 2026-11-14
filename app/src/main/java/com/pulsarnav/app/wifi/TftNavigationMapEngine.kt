@@ -752,6 +752,41 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         private val CONTROLS_HDG = arrayOf("+", "-", "HDG")
         private val CONTROLS_NORTH = arrayOf("+", "-", "N↑")
 
+        // Precompiled high-contrast color palette (zero string parsing/allocations in 15-20 FPS loop)
+        private const val COLOR_BG_DARK = 0xFF0B0F17.toInt()
+        private const val COLOR_BG_DAYLIGHT = 0xFFE8ECEF.toInt()
+        private const val COLOR_MAP_NIGHT_BG = 0xFF0D1117.toInt()
+        private const val COLOR_ROUTE_CASING = 0xFF0B3B8C.toInt()
+        private const val COLOR_ROUTE_FILL = 0xFF38BDF8.toInt()
+        private const val COLOR_MARKER_HALO = 0x4038BDF8.toInt()
+        private const val COLOR_DEST_PIN = 0xFFEF4444.toInt()
+        private const val COLOR_ALERT_CALL = 0xFFDC2626.toInt()
+        private const val COLOR_ALERT_SMS = 0xFF0284C7.toInt()
+        private const val COLOR_ALERT_WA = 0xFF059669.toInt()
+        private const val COLOR_TOAST_BG = 0xE61D4ED8.toInt()
+        private const val COLOR_GRID_DARK = 0xFF243044.toInt()
+        private const val COLOR_GRID_LIGHT = 0xFFCBD5E1.toInt()
+        private const val COLOR_FALLBACK_GRID_DAY = 0xFFD1D5DB.toInt()
+        private const val COLOR_FALLBACK_GRID_NIGHT = 0xFF1E293B.toInt()
+        private const val COLOR_CARD_DAY = 0xFF0A3E34.toInt()
+        private const val COLOR_CARD_NIGHT = 0xFF0F5145.toInt()
+        private const val COLOR_BORDER_IMMINENT = 0xFF10B981.toInt()
+        private const val COLOR_BORDER_NORMAL = 0xFF34D399.toInt()
+        private const val COLOR_SUBTEXT_LIGHT = 0xFFE2E8F0.toInt()
+        private const val COLOR_TEXT_ACCENT = 0xFF6EE7B7.toInt()
+        private const val COLOR_STATUS_DAY = 0xE61E293B.toInt()
+        private const val COLOR_STATUS_NIGHT = 0xDF111827.toInt()
+        private const val COLOR_STATUS_BORDER = 0xFF475569.toInt()
+        private const val COLOR_PILL_DAY_BG = 0xE6FFFFFF.toInt()
+        private const val COLOR_PILL_NIGHT_BG = 0xDD0F172A.toInt()
+        private const val COLOR_PILL_DAY_FG = 0xFF0F172A.toInt()
+        private const val COLOR_PILL_DAY_STROKE = 0xFF94A3B8.toInt()
+        private const val COLOR_PILL_NIGHT_STROKE = 0xFF334155.toInt()
+        private const val COLOR_STRIP_DAY = 0xF00F172A.toInt()
+        private const val COLOR_STRIP_NIGHT = 0xE60B1120.toInt()
+        private const val COLOR_TELEMETRY_ACCENT = 0xFF38BDF8.toInt()
+        private const val COLOR_TEXT_MUTED = 0xFFCBD5E1.toInt()
+
         @Volatile
         private var instance: TftNavigationMapEngine? = null
 
@@ -836,21 +871,21 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         strokeWidth = 12f
-        color = Color.parseColor("#0B3B8C")
+        color = COLOR_ROUTE_CASING
     }
     private val routeFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         strokeWidth = 7f
-        color = Color.parseColor("#38BDF8")
+        color = COLOR_ROUTE_FILL
     }
     private val markerHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#4038BDF8")
+        color = COLOR_MARKER_HALO
     }
     private val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.parseColor("#38BDF8")
+        color = COLOR_ROUTE_FILL
     }
     private val markerBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -858,7 +893,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         color = Color.WHITE
     }
     private val destPinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#EF4444")
+        color = COLOR_DEST_PIN
     }
     private val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -881,6 +916,13 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     }
     private val rectTmp = RectF()
     private val arrowPath = Path()
+    private val bikeCursorPath = Path().apply {
+        moveTo(0f, -15f)
+        lineTo(11f, 12f)
+        lineTo(0f, 6f)
+        lineTo(-11f, 12f)
+        close()
+    }
 
     @Volatile private var lastGpsFixTimestampMs = 0L
     @Volatile private var lastGpsFixLat = 0.0
@@ -1338,7 +1380,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     ) {
         val w = width.toFloat()
         val h = height.toFloat()
-        bgPaint.color = if (daylightMode) Color.parseColor("#0B0F17") else Color.parseColor("#0B0F17")
+        bgPaint.color = COLOR_BG_DARK
         canvas.drawRect(0f, 0f, w, h, bgPaint)
 
         val state = _uiState.value
@@ -1370,7 +1412,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
         canvas.save()
         // Map tiles span the full 800x480 canvas so the cluster's hardware gauges sit seamlessly on top
-        bgPaint.color = if (daylightMode) Color.parseColor("#E8ECEF") else Color.parseColor("#0D1117")
+        bgPaint.color = if (daylightMode) COLOR_BG_DAYLIGHT else COLOR_MAP_NIGHT_BG
         canvas.drawRect(0f, 0f, w, h, bgPaint)
         if (state.hasGpsFix || (state.previewLat != null && state.previewLng != null)) {
             drawMapTilesAndRoute(
@@ -1399,7 +1441,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
         // Top-Right Call / SMS / WhatsApp alert pill below OEM bar (y >= 68)
         if (!incomingCaller.isNullOrBlank()) {
-            drawTopRightAlertPill(canvas, "CALL: $incomingCaller", Color.parseColor("#DC2626"))
+            drawTopRightAlertPill(canvas, "CALL: $incomingCaller", COLOR_ALERT_CALL)
         } else if (!whatsAppSender.isNullOrBlank()) {
             val isSms = whatsAppSender.startsWith("SMS:", ignoreCase = true)
             val label = if (isSms || whatsAppSender.startsWith("WA:", ignoreCase = true)) {
@@ -1407,7 +1449,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             } else {
                 "WA: $whatsAppSender"
             }
-            val badgeColor = if (isSms) Color.parseColor("#0284C7") else Color.parseColor("#059669")
+            val badgeColor = if (isSms) COLOR_ALERT_SMS else COLOR_ALERT_WA
             drawTopRightAlertPill(canvas, label, badgeColor)
         }
 
@@ -1419,7 +1461,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
         if (!toastBanner.isNullOrBlank()) {
             rectTmp.set(220f, 68f, 580f, 100f)
-            cardPaint.color = Color.parseColor("#E61D4ED8")
+            cardPaint.color = COLOR_TOAST_BG
             canvas.drawRoundRect(rectTmp, 14f, 14f, cardPaint)
             textPaint.color = Color.WHITE
             textPaint.textSize = 14f
@@ -1484,7 +1526,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             }
         }
         if (anyTileMissing) {
-            gridPaint.color = if (darkMode) Color.parseColor("#243044") else Color.parseColor("#CBD5E1")
+            gridPaint.color = if (darkMode) COLOR_GRID_DARK else COLOR_GRID_LIGHT
             var gx = floor(minWx / 64.0) * 64.0
             while (gx <= maxWx) {
                 val sx = (gx - centerWx).toFloat()
@@ -1545,21 +1587,15 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             canvas.rotate(_uiState.value.bearingDeg)
         }
         canvas.drawCircle(0f, 0f, 20f, markerHaloPaint)
-        arrowPath.reset()
-        arrowPath.moveTo(0f, -15f)
-        arrowPath.lineTo(11f, 12f)
-        arrowPath.lineTo(0f, 6f)
-        arrowPath.lineTo(-11f, 12f)
-        arrowPath.close()
-        canvas.drawPath(arrowPath, markerPaint)
-        canvas.drawPath(arrowPath, markerBorderPaint)
+        canvas.drawPath(bikeCursorPath, markerPaint)
+        canvas.drawPath(bikeCursorPath, markerBorderPaint)
         canvas.restore()
 
         canvas.restore()
     }
 
     private fun drawGridFallback(canvas: Canvas, anchorX: Float, anchorY: Float, daylight: Boolean) {
-        gridPaint.color = if (daylight) Color.parseColor("#D1D5DB") else Color.parseColor("#1E293B")
+        gridPaint.color = if (daylight) COLOR_FALLBACK_GRID_DAY else COLOR_FALLBACK_GRID_NIGHT
         var x = 0
         while (x <= 800) {
             canvas.drawLine(x.toFloat(), 0f, x.toFloat(), 480f, gridPaint)
@@ -1576,9 +1612,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
     private fun drawTbtCornerCard(canvas: Canvas, step: ParsedNavigationStep, daylight: Boolean) {
         rectTmp.set(36f, 72f, 350f, 172f)
-        cardPaint.color = if (daylight) Color.parseColor("#0A3E34") else Color.parseColor("#0F5145")
+        cardPaint.color = if (daylight) COLOR_CARD_DAY else COLOR_CARD_NIGHT
         val isImminentTurn = step.distanceMeters in 1..100
-        borderPaint.color = if (isImminentTurn) Color.parseColor("#10B981") else Color.parseColor("#34D399")
+        borderPaint.color = if (isImminentTurn) COLOR_BORDER_IMMINENT else COLOR_BORDER_NORMAL
         borderPaint.strokeWidth = if (isImminentTurn) 3.5f else 2f
         canvas.drawRoundRect(rectTmp, 18f, 18f, cardPaint)
         canvas.drawRoundRect(rectTmp, 18f, 18f, borderPaint)
@@ -1592,7 +1628,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         textPaint.typeface = boldTypeface
         canvas.drawText(distStr, 114f, 106f, textPaint)
 
-        subTextPaint.color = Color.parseColor("#E2E8F0")
+        subTextPaint.color = COLOR_SUBTEXT_LIGHT
         subTextPaint.textSize = 15f
         subTextPaint.typeface = normalTypeface
         val street = step.streetName.ifBlank { step.maneuver.description }
@@ -1610,7 +1646,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             lastRouteSnapshot?.let { TftMapMathAndParser.formatEtaDuration(it.remainingDurationSeconds) }
                 ?: "Active Navigation"
         }
-        textPaint.color = Color.parseColor("#6EE7B7")
+        textPaint.color = COLOR_TEXT_ACCENT
         textPaint.textSize = 13f
         textPaint.typeface = boldTypeface
         canvas.drawText(etaBadge, 46f, 162f, textPaint)
@@ -1619,8 +1655,8 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
     private fun drawStatusPill(canvas: Canvas, message: String, daylight: Boolean) {
         rectTmp.set(38f, 68f, 360f, 108f)
-        cardPaint.color = if (daylight) Color.parseColor("#E61E293B") else Color.parseColor("#DF111827")
-        borderPaint.color = Color.parseColor("#475569")
+        cardPaint.color = if (daylight) COLOR_STATUS_DAY else COLOR_STATUS_NIGHT
+        borderPaint.color = COLOR_STATUS_BORDER
         canvas.drawRoundRect(rectTmp, 12f, 12f, cardPaint)
         canvas.drawRoundRect(rectTmp, 12f, 12f, borderPaint)
         textPaint.color = Color.WHITE
@@ -1642,9 +1678,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         daylight: Boolean,
         headingUp: Boolean
     ) {
-        val pillBg = if (daylight) Color.parseColor("#E6FFFFFF") else Color.parseColor("#DD0F172A")
-        val pillFg = if (daylight) Color.parseColor("#0F172A") else Color.WHITE
-        val pillStroke = if (daylight) Color.parseColor("#94A3B8") else Color.parseColor("#334155")
+        val pillBg = if (daylight) COLOR_PILL_DAY_BG else COLOR_PILL_NIGHT_BG
+        val pillFg = if (daylight) COLOR_PILL_DAY_FG else Color.WHITE
+        val pillStroke = if (daylight) COLOR_PILL_DAY_STROKE else COLOR_PILL_NIGHT_STROKE
 
         val btnLabels = if (headingUp) CONTROLS_HDG else CONTROLS_NORTH
         val rightEdge = TftWifiProtocol.NS400Z_SAFE_RIGHT.toFloat()
@@ -1676,13 +1712,13 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         val right = TftWifiProtocol.NS400Z_POCKET_RIGHT.toFloat()
         val bottom = TftWifiProtocol.NS400Z_POCKET_BOTTOM.toFloat()
         rectTmp.set(left, top, right, bottom)
-        cardPaint.color = if (daylight) Color.parseColor("#F00F172A") else Color.parseColor("#E60B1120")
-        borderPaint.color = Color.parseColor("#334155")
+        cardPaint.color = if (daylight) COLOR_STRIP_DAY else COLOR_STRIP_NIGHT
+        borderPaint.color = COLOR_PILL_NIGHT_STROKE
         canvas.drawRoundRect(rectTmp, 12f, 12f, cardPaint)
         canvas.drawRoundRect(rectTmp, 12f, 12f, borderPaint)
 
         val spd = state.speedKmh.roundToInt()
-        textPaint.color = Color.parseColor("#38BDF8")
+        textPaint.color = COLOR_TELEMETRY_ACCENT
         textPaint.textSize = 18f
         canvas.drawText("$spd km/h", left + 14f, bottom - 17f, textPaint)
 
@@ -1695,11 +1731,11 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             state.hasGpsFix -> "MAPS • Z${state.zoomLevel}"
             else -> "GPS SEARCH"
         }
-        subTextPaint.color = Color.parseColor("#E2E8F0")
+        subTextPaint.color = COLOR_SUBTEXT_LIGHT
         subTextPaint.textSize = 14f
         canvas.drawText(midLabel, left + 106f, bottom - 18f, subTextPaint)
 
-        textPaint.color = Color.parseColor("#CBD5E1")
+        textPaint.color = COLOR_TEXT_MUTED
         textPaint.textSize = 13f
         textPaint.textAlign = Paint.Align.RIGHT
         val parkLabel = if (isStationary) "PARK" else "RIDE"

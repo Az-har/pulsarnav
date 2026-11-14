@@ -137,9 +137,15 @@ class TftCockpitDisplayController(
     private var cachedBoundsAgeFrames = 0
     private val castMatrix = Matrix()
     private val castFilterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private class FastByteArrayOutputStream(capacity: Int) : ByteArrayOutputStream(capacity) {
+        val rawBuffer: ByteArray get() = buf
+    }
+
     private val copySrcRect = Rect()
     private val copyDstRect = Rect()
-    private val jpegBuffer = ByteArrayOutputStream(32_768)
+    private val jpegBuffer = FastByteArrayOutputStream(32_768)
+    private val frameBufferPool = arrayOf(ByteArray(32_768), ByteArray(32_768))
+    private var poolIndex = 0
 
     @Volatile
     private var running = false
@@ -536,7 +542,7 @@ class TftCockpitDisplayController(
 
             val encoded = encodeAdaptiveJpeg(bmp) ?: return
             lastCaptureTimestampMs = SystemClock.elapsedRealtime()
-            onEncodedFrameReady(encoded, currentQuality, encoded.size)
+            onEncodedFrameReady(encoded, currentQuality, jpegBuffer.size())
         }
     }
 
@@ -627,7 +633,7 @@ class TftCockpitDisplayController(
 
                 val encoded = encodeAdaptiveJpeg(dstBmp) ?: return
                 lastCaptureTimestampMs = now
-                onEncodedFrameReady(encoded, currentQuality, encoded.size)
+                onEncodedFrameReady(encoded, currentQuality, jpegBuffer.size())
             } catch (e: Exception) {
                 Log.w(TAG, "Frame capture/encode skipped: ${e.message}")
             } finally {
@@ -672,11 +678,17 @@ class TftCockpitDisplayController(
                 return null
             }
             currentQuality = TftWifiProtocol.UDP_MIN_JPEG_QUALITY
-            return jpegBuffer.toByteArray()
+            val target = frameBufferPool[poolIndex]
+            poolIndex = (poolIndex + 1) and 1
+            System.arraycopy(jpegBuffer.rawBuffer, 0, target, 0, size)
+            return target
         }
 
         currentQuality = TftUdpFrameEncoder.selectNextQuality(q, size)
-        return jpegBuffer.toByteArray()
+        val target = frameBufferPool[poolIndex]
+        poolIndex = (poolIndex + 1) and 1
+        System.arraycopy(jpegBuffer.rawBuffer, 0, target, 0, size)
+        return target
     }
 
     private fun compressJpegSize(bitmap: Bitmap, quality: Int): Int {
