@@ -51,7 +51,6 @@ object TftWifiProtocol {
     const val UDP_DEFAULT_JPEG_QUALITY = 60
     const val UDP_MAX_REENCODE_ATTEMPTS = 1
     const val UDP_MIN_CAPTURE_INTERVAL_MS = 50L
-    const val UDP_TX_PACING_MS = 1L
     const val UDP_TX_BURST_PACKETS = 4
     const val UDP_PACKET_PACE_NANOS = 550_000L // 550 microseconds inter-packet spacing
 
@@ -66,7 +65,6 @@ object TftWifiProtocol {
 
     // Frame types
     const val TYPE_CLUSTER_REQUEST = 0x00
-    const val TYPE_PHONE_PUSH = 0x00
     const val TYPE_PHONE_RESPONSE = 0x01
 
     // Groups
@@ -85,7 +83,6 @@ object TftWifiProtocol {
     const val CMD_SCREEN_INFO = 0x01
     const val CMD_SCREEN_CONTROL = 0x02
 
-    const val SCREEN_MODE_CLUSTER = 1
     const val SCREEN_MODE_ROUTE_MAP = 2
     const val SCREEN_MODE_TBT_NAV = 3
 

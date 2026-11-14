@@ -34,11 +34,6 @@ object CellularNetworkHttp {
     private var persistentCellCallback: ConnectivityManager.NetworkCallback? = null
     private var persistentCellCm: ConnectivityManager? = null
 
-    fun hasInternetPath(context: Context): Boolean {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
-        return findExistingCellularInternet(cm) != null || hasUsableDefaultInternet(cm)
-    }
-
     fun getText(
         context: Context,
         url: String,

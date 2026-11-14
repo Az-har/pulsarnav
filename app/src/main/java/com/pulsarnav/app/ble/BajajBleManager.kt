@@ -324,12 +324,9 @@ class BajajBleManager private constructor(private val context: Context) {
                         if (prevState == BluetoothDevice.BOND_BONDING || isWaitingForBondCompletion) {
                             Log.w(TAG, "Bonding ended without pairing (BOND_NONE from $prevState)")
                             bleHandler.removeCallbacks(bondTimeoutRunnable)
-                            val wasWaiting = isWaitingForBondCompletion
                             isWaitingForBondCompletion = false
                             if (activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.NEW_TFT_MODERN) {
                                 fallbackToLegacyLcdProtocol("TFT bonding failed (BOND_NONE from $prevState)")
-                            } else if (wasWaiting) {
-                                proceedAfterBondSettled(gatt)
                             }
                         }
                     }

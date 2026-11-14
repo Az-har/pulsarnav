@@ -41,7 +41,6 @@ import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 
 /**
  * Manages the 800x480 framebuffer pipeline for Bajaj TFT Wi-Fi mirroring:
@@ -65,7 +64,6 @@ class TftCockpitDisplayController(
     companion object {
         private const val TAG = "TftCockpitDisplay"
         private const val REDRAW_INTERVAL_MS = 65L
-        private const val LOCAL_PREVIEW_IDLE_REDRAW_MS = 140L
         private const val STATIC_KEEPALIVE_INTERVAL_MS = 600L
 
         // Unified 800x480 interactive hitboxes placed strictly inside NS400Z unobstructed safe zones
@@ -103,7 +101,6 @@ class TftCockpitDisplayController(
         }
     }
 
-    private val mainHandler = Handler(Looper.getMainLooper())
     private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
     private val appSettings = AppSettings.getInstance(context)
     private val mapEngine = TftNavigationMapEngine.getInstance(context)
@@ -169,8 +166,6 @@ class TftCockpitDisplayController(
     @Volatile
     private var activeSource = TftMirrorSource.LIVE_MAP
     @Volatile
-    private var previewPaused = false
-    @Volatile
     private var debugOverlayEnabled = false
     @Volatile
     private var currentCaptureSize = IntSize(TftWifiProtocol.TFT_WIDTH, TftWifiProtocol.TFT_HEIGHT)
@@ -215,7 +210,7 @@ class TftCockpitDisplayController(
 
     private val headlessTickRunnable = object : Runnable {
         override fun run() {
-            if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST || previewPaused) return
+            if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST) return
             renderAndEmitHeadlessFrame()
             val gpsSpeed = try {
                 RideTracker.getInstance(context).getLiveRideSnapshot().currentSpeedKmh
@@ -226,18 +221,6 @@ class TftCockpitDisplayController(
             val delayMs = if (isStationary) STATIC_KEEPALIVE_INTERVAL_MS else REDRAW_INTERVAL_MS
             workerHandler?.postDelayed(this, delayMs)
         }
-    }
-
-    fun setPreviewPaused(paused: Boolean) {
-        previewPaused = paused
-        workerHandler?.removeCallbacks(headlessTickRunnable)
-        if (!paused && running && activeSource != TftMirrorSource.LIVE_SCREEN_CAST) {
-            workerHandler?.post(headlessTickRunnable)
-        }
-    }
-
-    fun startCockpitHud() {
-        startHeadless(TftMirrorSource.COCKPIT_HUD)
     }
 
     fun startHeadless(source: TftMirrorSource) {
@@ -409,8 +392,6 @@ class TftCockpitDisplayController(
 
     fun isDebugOverlayEnabled(): Boolean = debugOverlayEnabled
 
-    fun isDaylightHighContrast(): Boolean = daylightHighContrast
-
     fun isBikeStationaryMode(): Boolean = clusterStationary
 
     fun toggleDaylightHighContrast(): Boolean {
@@ -420,7 +401,7 @@ class TftCockpitDisplayController(
     }
 
     fun refreshFrameNow() {
-        if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST || previewPaused) return
+        if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST) return
         val handler = workerHandler ?: return
         handler.removeCallbacks(immediateRefreshRunnable)
         handler.post(immediateRefreshRunnable)

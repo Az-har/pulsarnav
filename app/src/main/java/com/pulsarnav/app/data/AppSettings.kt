@@ -671,16 +671,6 @@ class AppSettings(context: Context) {
             prefs.edit().putString(KEY_CLUSTER_CONSOLE_TYPE, normalized).apply()
         }
 
-    fun cycleTftCastLayoutMode(): String {
-        val next = when (tftCastLayoutMode) {
-            CAST_LAYOUT_FIT -> CAST_LAYOUT_FILL
-            CAST_LAYOUT_FILL -> CAST_LAYOUT_ROT90
-            else -> CAST_LAYOUT_FIT
-        }
-        tftCastLayoutMode = next
-        return next
-    }
-
     var isTftCastAutoOpenMapsEnabled: Boolean
         get() = getSafeBoolean(KEY_TFT_CAST_AUTO_OPEN_MAPS, true)
         set(value) {

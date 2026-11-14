@@ -259,15 +259,6 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         startInternal(preferred, null)
     }
 
-    fun startLiveMapMirroring() {
-        appSettings.tftMirrorMode = AppSettings.TFT_MODE_LIVE_MAP
-        startInternal(TftMirrorSource.LIVE_MAP, null)
-    }
-
-    fun startCockpitHudMirroring() {
-        startInternal(TftMirrorSource.COCKPIT_HUD, null)
-    }
-
     fun triggerRecenter() {
         displayController.onHandlebarRecenter()
     }
