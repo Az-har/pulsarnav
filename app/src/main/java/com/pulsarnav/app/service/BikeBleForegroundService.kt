@@ -249,12 +249,10 @@ class BikeBleForegroundService : Service {
         try {
             if (enable) {
                 val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                // Note: WIFI_MODE_FULL_LOW_LATENCY is explicitly deactivated by Android OS when the screen turns off.
+                // WIFI_MODE_FULL_HIGH_PERF keeps the Wi-Fi radio active and awake continuously, even when the screen is locked/off.
                 val lock = wifiLock ?: wm?.createWifiLock(
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-                    } else {
-                        android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
-                    },
+                    android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF,
                     "PulsarNav:TftSoftApWifiLock"
                 )?.apply {
                     setReferenceCounted(false)
@@ -262,7 +260,7 @@ class BikeBleForegroundService : Service {
                 wifiLock = lock
                 if (lock != null && !lock.isHeld) {
                     lock.acquire()
-                    Log.d(TAG, "High-performance WifiLock acquired for screen-off TFT SoftAP streaming")
+                    Log.d(TAG, "High-performance screen-off WifiLock acquired for TFT SoftAP streaming")
                 }
             } else {
                 wifiLock?.let {
@@ -480,14 +478,17 @@ class BikeBleForegroundService : Service {
         allowWifiWithoutBt: Boolean = false,
         allowLocationOnly: Boolean = false
     ): Boolean {
+        val wasAlreadyRunning = isRunning
         val hasBtConnect = hasBtConnectPermission()
         val hasLocation = hasLocationPermission()
         val canPromoteForLocation = allowLocationOnly && hasLocation
         if (!hasBtConnect && !allowWifiWithoutBt && !includeMediaProjection && !canPromoteForLocation) {
             Log.w(TAG, "Aborting promoteToForeground: neither BLUETOOTH_CONNECT nor active Wi-Fi/Location FGS permission.")
-            promoteMinimalBeforeAbort()
-            isRunning = false
-            stopSelf()
+            if (!wasAlreadyRunning) {
+                promoteMinimalBeforeAbort()
+                isRunning = false
+                stopSelf()
+            }
             return false
         }
         try {
@@ -502,6 +503,36 @@ class BikeBleForegroundService : Service {
                 "Pulsar Navigation Active",
                 notifContent
             )
+            val manager = getSystemService(NotificationManager::class.java)
+
+            // CRITICAL: When the service is ALREADY active in foreground (e.g. dropping media projection
+            // on screen lock), updating via NotificationManager is 100% safe from the background / screen-off state.
+            // On Android 14+ (API 34), calling startForeground() from the background throws
+            // ForegroundServiceStartNotAllowedException if types are changed. Updating the notification via
+            // NotificationManager preserves the existing foreground service and keeps the peer-to-peer Wi-Fi alive.
+            if (wasAlreadyRunning && !includeMediaProjection) {
+                try {
+                    manager?.notify(NOTIFICATION_ID, notification)
+                } catch (_: Exception) {}
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        var desiredTypes = 0
+                        if (hasBtConnect || allowWifiWithoutBt) {
+                            desiredTypes = desiredTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                        }
+                        if (hasLocation) {
+                            desiredTypes = desiredTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                        }
+                        if (desiredTypes != 0) {
+                            startForeground(NOTIFICATION_ID, notification, desiredTypes)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Screen-off/background FGS type update skipped (foreground status preserved): ${e.message}")
+                    }
+                }
+                return true
+            }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 var desiredTypes = 0
                 if (hasBtConnect || allowWifiWithoutBt) {
@@ -514,8 +545,10 @@ class BikeBleForegroundService : Service {
                     desiredTypes = desiredTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 }
                 if (desiredTypes == 0) {
-                    isRunning = false
-                    stopSelf()
+                    if (!wasAlreadyRunning) {
+                        isRunning = false
+                        stopSelf()
+                    }
                     return false
                 }
                 try {
@@ -548,11 +581,20 @@ class BikeBleForegroundService : Service {
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to promote service to foreground: ${e.message}", e)
-            isRunning = false
-            // CRITICAL: If startForeground fails on Android 12+, stopSelf immediately
-            // to fulfill OS contract and avoid ForegroundServiceDidNotStartInTimeException
-            stopSelf()
-            return false
+            if (!wasAlreadyRunning) {
+                isRunning = false
+                // CRITICAL: If initial startForeground fails on Android 12+, stopSelf immediately
+                // to fulfill OS contract and avoid ForegroundServiceDidNotStartInTimeException
+                stopSelf()
+                return false
+            } else {
+                // If service was already running in foreground, do NOT kill it!
+                try {
+                    val manager = getSystemService(NotificationManager::class.java)
+                    manager?.notify(NOTIFICATION_ID, buildNotification("Pulsar Navigation Active", "Maintaining cluster connection"))
+                } catch (_: Exception) {}
+                return true
+            }
         }
     }
 

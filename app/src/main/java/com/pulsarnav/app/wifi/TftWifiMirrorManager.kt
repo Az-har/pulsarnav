@@ -338,7 +338,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
 
             // Reuse active SoftAP connection & TCP/UDP workers across HUD <-> Live Cast transitions
             // so Android never tears down WifiNetworkSpecifier or re-prompts the OS Wi-Fi consent sheet.
-            val canPreserveSoftAp = isActiveSession.get() && activeNetwork != null && ssid == activeSsid
+            val canPreserveSoftAp = isActiveSession.get() && activeNetwork != null
             if (canPreserveSoftAp) {
                 activeSourceMode = source
                 isLocalPreviewActive.set(false)

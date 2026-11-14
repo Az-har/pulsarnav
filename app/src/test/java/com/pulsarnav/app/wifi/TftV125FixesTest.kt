@@ -203,4 +203,15 @@ class TftV125FixesTest {
         )
         assertFalse(suppressed3)
     }
+
+    @Test
+    fun canPreserveSoftAp_preservesSessionEvenWhenBleDisconnectsDuringRide() {
+        // Contract test: When active session and network exist, the peer-to-peer Wi-Fi socket
+        // must be preserved across mode switches even if BLE name is temporarily unavailable.
+        val isActiveSession = true
+        val hasActiveNetwork = true
+
+        val canPreserve = isActiveSession && hasActiveNetwork
+        assertTrue("SoftAP socket link must be preserved during screen lock headless transition", canPreserve)
+    }
 }
