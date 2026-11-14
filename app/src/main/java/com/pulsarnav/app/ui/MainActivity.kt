@@ -5326,7 +5326,7 @@ class MainActivity : AppCompatActivity() {
                         val prefLabel = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) {
                             "Cockpit HUD (works screen-off)"
                         } else {
-                            "Live Maps 800×480 (maps-only • works locked)"
+                            "Live Maps 800×480 (Google Maps Sync • works locked)"
                         }
                         "$prefLabel. $credHint"
                     }
@@ -5344,12 +5344,12 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
 
-                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "HUD Mirror\n(Screen Off)" else "Map Mirror\n(Screen Off)"
+                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "HUD Mirror\n(Screen Off)" else "Live Map Mirror\n(Google Maps Sync)"
                 binding.btnToggleTftHudMirror.text = if (active) "Stop Mirror" else prefIdleBtn
                 binding.btnCastLiveScreen.text = if (active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST) {
                     "Stop Cast"
                 } else {
-                    "Cast Maps\n(Google Maps)"
+                    "Screen Cast\n(Phone Screen)"
                 }
                 binding.btnToggleTftHudMirror.isEnabled = !isHandshaking
                 binding.btnCastLiveScreen.isEnabled = !isHandshaking

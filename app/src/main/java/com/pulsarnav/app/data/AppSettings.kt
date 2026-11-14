@@ -629,12 +629,12 @@ class AppSettings(context: Context) {
         }
 
     var tftMirrorMode: String
-        get() = when (getSafeString(KEY_TFT_MIRROR_MODE, TFT_MODE_HUD)) {
-            TFT_MODE_LIVE_MAP -> TFT_MODE_LIVE_MAP
-            else -> TFT_MODE_HUD
+        get() = when (getSafeString(KEY_TFT_MIRROR_MODE, TFT_MODE_LIVE_MAP)) {
+            TFT_MODE_HUD -> TFT_MODE_HUD
+            else -> TFT_MODE_LIVE_MAP
         }
         set(value) {
-            val normalized = if (value == TFT_MODE_LIVE_MAP) TFT_MODE_LIVE_MAP else TFT_MODE_HUD
+            val normalized = if (value == TFT_MODE_HUD) TFT_MODE_HUD else TFT_MODE_LIVE_MAP
             prefs.edit().putString(KEY_TFT_MIRROR_MODE, normalized).apply()
         }
 
