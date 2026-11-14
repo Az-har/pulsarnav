@@ -866,7 +866,7 @@ class TftCockpitDisplayController(
                 radarRect.set(safeL + 14f, 120f, safeL + 132f, 238f)
                 cardPaint.color = if (highContrast) Color.rgb(232, 238, 246) else Color.rgb(30, 36, 48)
                 canvas.drawRoundRect(radarRect, 16f, 16f, cardPaint)
-                drawManeuverVector(canvas, resolvedNavStep.maneuver, radarRect, accentColor, cyanAccent)
+                drawManeuverVector(canvas, resolvedNavStep.maneuver, radarRect, accentColor, cyanAccent, resolvedNavStep.roundaboutExit)
 
                 textPaint.textAlign = Paint.Align.LEFT
                 textPaint.typeface = boldTypeface
@@ -1211,25 +1211,28 @@ class TftCockpitDisplayController(
 
             textPaint.textAlign = Paint.Align.LEFT
             if (navStep != null && navStep.distanceMeters > 0) {
+                radarRect.set(right - 88f, top + 14f, right - 14f, top + 88f)
+                val radarBg = if (highContrast) Color.rgb(232, 238, 246) else Color.rgb(30, 36, 48)
+                cardPaint.color = radarBg
+                canvas.drawRoundRect(radarRect, 10f, 10f, cardPaint)
+                drawManeuverVector(canvas, navStep.maneuver, radarRect, accentColor, cyanAccent, navStep.roundaboutExit)
+
+                val textAvail = (right - left - 104f).coerceAtLeast(60f)
                 textPaint.typeface = boldTypeface
                 textPaint.color = accentColor
                 textPaint.textSize = 13f
                 canvas.drawText("NEXT TURN", left + 14f, top + 26f, textPaint)
 
                 textPaint.color = primaryText
-                textPaint.textSize = 22f
-                val distStr = if (navStep.distanceMeters >= 1000) {
-                    "${(navStep.distanceMeters / 100) / 10.0} km"
-                } else {
-                    "${navStep.distanceMeters} m"
-                }
-                canvas.drawText(distStr, left + 14f, top + 56f, textPaint)
+                textPaint.textSize = 32f
+                val distStr = formatDistanceShort(navStep.distanceMeters, navStep.rawDistanceText)
+                canvas.drawText(distStr, left + 14f, top + 60f, textPaint)
 
-                textPaint.typeface = normalTypeface
+                textPaint.typeface = boldTypeface
                 textPaint.color = secondaryText
-                textPaint.textSize = 14f
+                textPaint.textSize = 16f
                 val street = navStep.streetName.ifBlank { "Continue on route" }
-                canvas.drawText(ellipsizeText(street, availableWidth, textPaint), left + 14f, top + 80f, textPaint)
+                canvas.drawText(ellipsizeText(street, textAvail, textPaint), left + 14f, top + 86f, textPaint)
             } else if (media.title.isNotBlank()) {
                 textPaint.typeface = boldTypeface
                 textPaint.color = cyanAccent
@@ -1270,7 +1273,8 @@ class TftCockpitDisplayController(
             maneuver: Maneuver,
             box: RectF,
             primary: Int,
-            secondary: Int
+            secondary: Int,
+            exitNumber: Int = 0
         ) {
             arrowStrokePaint.strokeWidth = 11f
             TftManeuverVectorDrawer.draw(
@@ -1284,7 +1288,9 @@ class TftCockpitDisplayController(
                 path = arrowPath,
                 arcRect = tmpRect,
                 primaryColor = primary,
-                secondaryColor = secondary
+                secondaryColor = secondary,
+                exitNumber = exitNumber,
+                textPaint = textPaint
             )
         }
     }

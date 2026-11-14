@@ -123,10 +123,24 @@ object TftScreenCastTransform {
     fun computeSafeViewport(
         srcW: Int,
         srcH: Int,
-        layoutMode: String
+        layoutMode: String,
+        alignLeft: Boolean = false
     ): IntRect {
         val isPortraitSource = srcH > srcW
         return when {
+            alignLeft -> {
+                // Asymmetrical Motorcycle Viewport:
+                // Unobstructed left cockpit window: 414x254 (x=34..448, y=66..320).
+                // Keeps casted Google Maps safely to the left of the speedometer/tachometer shroud (x >= 450)
+                // and below OEM top status bar (y <= 66).
+                // Leaves right shelf (x >= 452) free for PulsarNav Companion Turn Card!
+                IntRect(
+                    left = TftWifiProtocol.NS400Z_SAFE_LEFT,
+                    top = TftWifiProtocol.NS400Z_SAFE_TOP,
+                    right = 448,
+                    bottom = 320
+                )
+            }
             isPortraitSource && layoutMode != AppSettings.CAST_LAYOUT_ROT90 -> {
                 // Unobstructed left cockpit pocket: 406x310 (x=34..440, y=66..376).
                 // Completely to the left of the speedometer/tachometer shroud (x >= 450)!
@@ -258,7 +272,7 @@ object TftScreenCastTransform {
         } else {
             rawContent
         }
-        val safeViewport = computeSafeViewport(content.width, content.height, layoutMode)
+        val safeViewport = computeSafeViewport(content.width, content.height, layoutMode, alignLeft)
         dstCanvas.drawColor(Color.BLACK)
 
         when (layoutMode) {
@@ -351,7 +365,9 @@ internal object TftManeuverVectorDrawer {
         path: Path,
         arcRect: RectF,
         primaryColor: Int,
-        secondaryColor: Int
+        secondaryColor: Int,
+        exitNumber: Int = 0,
+        textPaint: Paint? = null
     ) {
         strokePaint.color = primaryColor
         path.reset()
@@ -394,7 +410,7 @@ internal object TftManeuverVectorDrawer {
                 path.lineTo(cx + s * 0.45f, cy - s * 0.35f)
                 arcRect.set(cx - s * 0.45f, cy - s * 0.9f, cx + s * 0.45f, cy)
                 path.arcTo(arcRect, 0f, -180f, false)
-                path.lineTo(cx - s * 0.45f, cy + s * 0.55f)
+                path.lineTo(cx - s * 0.45f, cy + s * 0.65f)
                 path.moveTo(cx - s * 0.78f, cy + s * 0.25f)
                 path.lineTo(cx - s * 0.45f, cy + s * 0.65f)
                 path.lineTo(cx - s * 0.12f, cy + s * 0.25f)
@@ -404,7 +420,7 @@ internal object TftManeuverVectorDrawer {
                 path.lineTo(cx - s * 0.45f, cy - s * 0.35f)
                 arcRect.set(cx - s * 0.45f, cy - s * 0.9f, cx + s * 0.45f, cy)
                 path.arcTo(arcRect, 180f, 180f, false)
-                path.lineTo(cx + s * 0.45f, cy + s * 0.55f)
+                path.lineTo(cx + s * 0.45f, cy + s * 0.65f)
                 path.moveTo(cx + s * 0.12f, cy + s * 0.25f)
                 path.lineTo(cx + s * 0.45f, cy + s * 0.65f)
                 path.lineTo(cx + s * 0.78f, cy + s * 0.25f)
@@ -424,6 +440,19 @@ internal object TftManeuverVectorDrawer {
                 path.moveTo(exitX - dir * s * 0.25f, exitY)
                 path.lineTo(exitX, exitY)
                 path.lineTo(exitX, exitY + s * 0.25f)
+
+                if (exitNumber > 0 && textPaint != null) {
+                    val prevAlign = textPaint.textAlign
+                    val prevSize = textPaint.textSize
+                    val prevColor = textPaint.color
+                    textPaint.textAlign = Paint.Align.CENTER
+                    textPaint.textSize = s * 0.52f
+                    textPaint.color = primaryColor
+                    canvas.drawText(exitNumber.toString(), cx, cy - s * 0.1f + s * 0.18f, textPaint)
+                    textPaint.textAlign = prevAlign
+                    textPaint.textSize = prevSize
+                    textPaint.color = prevColor
+                }
             }
             Maneuver.DESTINATION_REACHED -> {
                 val destGreen = Color.rgb(34, 197, 94)

@@ -1624,7 +1624,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         canvas.drawRoundRect(rectTmp, 18f, 18f, borderPaint)
 
         // Turn arrow badge on left in crisp white
-        drawManeuverVector(canvas, step.maneuver, 76f, 126f, 28f, Color.WHITE)
+        drawManeuverVector(canvas, step.maneuver, 76f, 126f, 28f, Color.WHITE, step.roundaboutExit)
 
         val distStr = step.rawDistanceText.ifBlank { TftMapMathAndParser.formatDistanceMeters(step.distanceMeters) }
         textPaint.color = Color.WHITE
@@ -1755,7 +1755,15 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         textPaint.textAlign = Paint.Align.LEFT
     }
 
-    private fun drawManeuverVector(canvas: Canvas, maneuver: Maneuver, cx: Float, cy: Float, r: Float, color: Int) {
+    private fun drawManeuverVector(
+        canvas: Canvas,
+        maneuver: Maneuver,
+        cx: Float,
+        cy: Float,
+        r: Float,
+        color: Int,
+        exitNumber: Int = 0
+    ) {
         TftManeuverVectorDrawer.draw(
             canvas = canvas,
             maneuver = maneuver,
@@ -1767,7 +1775,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             path = arrowPath,
             arcRect = rectTmp,
             primaryColor = color,
-            secondaryColor = Color.WHITE
+            secondaryColor = Color.WHITE,
+            exitNumber = exitNumber,
+            textPaint = textPaint
         )
     }
 
