@@ -139,10 +139,10 @@ class TftV125FixesTest {
         )
         // With targetAspect = 2.945, rawCropH = 2400 / 2.945 = ~815px.
         // Slack = 1080 - 815 = 265px.
-        // Top offset with 0.05f bias should be ~13px (near 0, top-anchored), NEVER centered (132px).
+        // Top offset with 0.0f bias must be 0px (strictly top-anchored, never slicing top banner or arrow).
         assertEquals(0, crop.left)
         assertEquals(2400, crop.right)
-        assertTrue("Top offset ${crop.top} should be <= 20px to preserve turn header", crop.top <= 20)
+        assertEquals(0, crop.top)
         assertTrue("Bottom should cover at least 70% of screen height", crop.bottom >= 800)
     }
 

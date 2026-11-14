@@ -5894,17 +5894,17 @@ class MainActivity : AppCompatActivity() {
             orientation = android.widget.RadioGroup.VERTICAL
         }
         val rbCastFit = android.widget.RadioButton(this).apply {
-            text = "Fit Full App Inside NS400Z Safe Area (Uncropped)"
+            text = "Fit Full Width (754px • Uncropped • No Black Sidebars)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
         val rbCastFill = android.widget.RadioButton(this).apply {
-            text = "Fill Top Panorama Above Speedo (754×256)"
+            text = "Fill Safe Panorama (754×256 • Top-Anchored • Above Speedo)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
         val rbCastRot90 = android.widget.RadioButton(this).apply {
-            text = "Rotate 90° into Top Panorama + Fill"
+            text = "Auto-Panorama (Rotate Portrait -90° • Direct Fill in Landscape)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }

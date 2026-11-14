@@ -72,7 +72,7 @@ object TftScreenCastTransform {
             val isLandscapePhone = cw > ch
             val bias = when {
                 isTallPortrait -> 0.12f // Top-biased for vertical phone
-                isLandscapePhone -> 0.05f // Top-anchored for landscape Google Maps to keep green turn card & road names
+                isLandscapePhone -> 0.0f // Strict top-anchor for landscape Google Maps: preserve 100% of turn banner & arrow
                 else -> 0.15f
             }
             val topOffset = (slack * bias).roundToInt().coerceIn(0, slack)
@@ -154,6 +154,12 @@ object TftScreenCastTransform {
         val h = bitmap.height
         val fallback = IntRect(0, 0, w, h)
         if (w < 64 || h < 64) return fallback
+
+        if (w >= h) {
+            // Landscape phone: Android display fills the virtual display natively.
+            // Never trim top/bottom boundaries to prevent falsely cutting status bar / turn cards.
+            return fallback
+        }
 
         val sampleYs = intArrayOf(h / 5, (h * 2) / 5, h / 2, (h * 3) / 5, (h * 4) / 5)
         val sampleXs = intArrayOf(w / 5, (w * 2) / 5, w / 2, (w * 3) / 5, (w * 4) / 5)
@@ -238,18 +244,40 @@ object TftScreenCastTransform {
 
         when (layoutMode) {
             AppSettings.CAST_LAYOUT_FIT -> {
-                val dstRect = computeFitDestinationRect(content.width, content.height, dstW, dstH, safeViewport)
+                val isLandscape = content.width > content.height
+                val dstRect = if (isLandscape) {
+                    // Full-width landscape fit: scale to fill 754px safe width uncropped!
+                    // Eliminates the massive black sidebars (utilization jumps from 37% -> 66%)
+                    // and anchors below top OEM status bar (y=66).
+                    val scale = safeViewport.width.toFloat() / content.width.toFloat()
+                    val drawW = safeViewport.width
+                    val maxH = dstH - safeViewport.top
+                    val drawH = (content.height * scale).roundToInt().coerceIn(1, maxH)
+                    IntRect(
+                        left = safeViewport.left,
+                        top = safeViewport.top,
+                        right = safeViewport.left + drawW,
+                        bottom = safeViewport.top + drawH
+                    )
+                } else {
+                    computeFitDestinationRect(content.width, content.height, dstW, dstH, safeViewport)
+                }
                 srcRectTmp.set(content.left, content.top, content.right, content.bottom)
                 dstRectTmp.set(dstRect.left, dstRect.top, dstRect.right, dstRect.bottom)
                 dstCanvas.drawBitmap(srcBitmap, srcRectTmp, dstRectTmp, filterPaint)
             }
             AppSettings.CAST_LAYOUT_ROT90 -> {
                 if (content.width >= content.height) {
-                    // Phone is already in landscape! Do not rotate -90° (which scrambles horizontal navigation);
-                    // fit cleanly inside the NS400Z safe viewport instead.
-                    val dstRect = computeFitDestinationRect(content.width, content.height, dstW, dstH, safeViewport)
-                    srcRectTmp.set(content.left, content.top, content.right, content.bottom)
-                    dstRectTmp.set(dstRect.left, dstRect.top, dstRect.right, dstRect.bottom)
+                    // Phone is already in landscape! Do not rotate -90°;
+                    // fill the NS400Z safe panorama directly with top-anchoring!
+                    val crop = computeSourceCropRect(
+                        contentRect = content,
+                        targetW = safeViewport.width,
+                        targetH = safeViewport.height,
+                        layoutMode = AppSettings.CAST_LAYOUT_FILL
+                    )
+                    srcRectTmp.set(crop.left, crop.top, crop.right, crop.bottom)
+                    dstRectTmp.set(safeViewport.left, safeViewport.top, safeViewport.right, safeViewport.bottom)
                     dstCanvas.drawBitmap(srcBitmap, srcRectTmp, dstRectTmp, filterPaint)
                 } else {
                     // Rotate portrait content -90 deg (counter-clockwise so top of phone lands on left of TFT)
