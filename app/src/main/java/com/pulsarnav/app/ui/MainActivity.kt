@@ -159,7 +159,7 @@ class MainActivity : AppCompatActivity() {
             BikeBleForegroundService.startForTftLiveCast(this, result.resultCode, data)
             if (appSettings.isTftCastAutoOpenMapsEnabled) {
                 showFeedback("Starting 800×480 live cast & opening Maps...")
-                mainUiHandler.postDelayed({ proceedWithGoogleMapsLaunch() }, 250L)
+                mainUiHandler.postDelayed({ proceedWithGoogleMapsLaunch() }, 700L)
             } else {
                 showFeedback("Starting 800×480 live screen cast to TFT cluster...")
             }
@@ -1247,29 +1247,50 @@ class MainActivity : AppCompatActivity() {
         BikeBleForegroundService.start(this)
         if (appSettings.preferredNavApp == AppSettings.NAV_APP_WAZE) {
             try {
+                val launchIntent = packageManager.getLaunchIntentForPackage("com.waze")?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+                }
+                if (launchIntent != null) {
+                    startActivity(launchIntent)
+                    return
+                }
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse("waze://?navigate=yes")).apply {
                     setPackage("com.waze")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 startActivity(intent)
                 return
             } catch (_: Exception) {
                 try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://waze.com/ul?navigate=yes")))
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://waze.com/ul?navigate=yes")).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    })
                     return
                 } catch (_: Exception) {}
             }
         }
-        val mode = if (appSettings.isTwoWheelerMode) "l" else "d"
         try {
-            val gmmIntentUri = Uri.parse("google.navigation:q=&mode=$mode")
-            val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri).apply {
+            // First: launch Google Maps directly via launch intent (preserves active navigation or opens to current GPS location)
+            val launchIntent = packageManager.getLaunchIntentForPackage("com.google.android.apps.maps")?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+            if (launchIntent != null) {
+                startActivity(launchIntent)
+                return
+            }
+            val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=maps")).apply {
                 setPackage("com.google.android.apps.maps")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(mapIntent)
         } catch (e: Exception) {
             try {
                 val travelMode = if (appSettings.isTwoWheelerMode) "two_wheeler" else "driving"
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com?travelmode=$travelMode")))
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com?travelmode=$travelMode")).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
             } catch (e2: Exception) {
                 showFeedback("Could not open navigation app", isAlert = true)
             }
