@@ -48,7 +48,8 @@ object TftScreenCastTransform {
         contentRect: IntRect,
         targetW: Int = TftWifiProtocol.TFT_WIDTH,
         targetH: Int = TftWifiProtocol.TFT_HEIGHT,
-        layoutMode: String = AppSettings.CAST_LAYOUT_FILL
+        layoutMode: String = AppSettings.CAST_LAYOUT_FILL,
+        alignLeft: Boolean = false
     ): IntRect {
         if (layoutMode == AppSettings.CAST_LAYOUT_FIT) {
             return contentRect
@@ -83,9 +84,10 @@ object TftScreenCastTransform {
                 bottom = contentRect.top + topOffset + rawCropH
             )
         } else {
-            // Ultra-wide landscape (e.g. 20:9 phone rotated): center-crop sides to 5:3.
+            // Ultra-wide landscape (e.g. 20:9 phone rotated): crop sides to 5:3.
+            // When alignLeft is true, anchor leftward to ensure turn maneuver cards remain fully visible.
             val rawCropW = (ch * targetAspect).roundToInt().coerceIn(1, cw)
-            val leftOffset = ((cw - rawCropW) / 2).coerceIn(0, cw - rawCropW)
+            val leftOffset = if (alignLeft) 0 else ((cw - rawCropW) / 2).coerceIn(0, cw - rawCropW)
             IntRect(
                 left = contentRect.left + leftOffset,
                 top = contentRect.top,
@@ -281,7 +283,8 @@ object TftScreenCastTransform {
                         contentRect = content,
                         targetW = safeViewport.width,
                         targetH = safeViewport.height,
-                        layoutMode = AppSettings.CAST_LAYOUT_FILL
+                        layoutMode = AppSettings.CAST_LAYOUT_FILL,
+                        alignLeft = alignLeft
                     )
                     srcRectTmp.set(crop.left, crop.top, crop.right, crop.bottom)
                     dstRectTmp.set(safeViewport.left, safeViewport.top, safeViewport.right, safeViewport.bottom)
@@ -317,7 +320,8 @@ object TftScreenCastTransform {
                     contentRect = content,
                     targetW = safeViewport.width,
                     targetH = safeViewport.height,
-                    layoutMode = AppSettings.CAST_LAYOUT_FILL
+                    layoutMode = AppSettings.CAST_LAYOUT_FILL,
+                    alignLeft = alignLeft
                 )
                 srcRectTmp.set(crop.left, crop.top, crop.right, crop.bottom)
                 dstRectTmp.set(safeViewport.left, safeViewport.top, safeViewport.right, safeViewport.bottom)

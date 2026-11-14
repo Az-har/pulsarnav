@@ -15,8 +15,8 @@ android {
         applicationId = "com.pulsarnav.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 27
-        versionName = "1.3.7"
+        versionCode = 28
+        versionName = "1.3.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

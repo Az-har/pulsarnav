@@ -1050,7 +1050,13 @@ class MainActivity : AppCompatActivity() {
             provideHapticFeedback()
             val wifiMgr = TftWifiMirrorManager.getInstance(this)
             val mirrorState = wifiMgr.mirrorState.value
-            if (mirrorState.status != TftMirrorStatus.IDLE && mirrorState.status != TftMirrorStatus.ERROR) {
+            val isSessionActive = mirrorState.status != TftMirrorStatus.IDLE && mirrorState.status != TftMirrorStatus.ERROR
+            if (isSessionActive && mirrorState.source == TftMirrorSource.LIVE_SCREEN_CAST) {
+                // Seamlessly switch from Screen Cast to lock-proof Live Map / HUD
+                requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                wifiMgr.startPreferredHeadlessMirroring()
+                showFeedback("Switched to lock-proof ${if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "HUD" else "Live Map"}")
+            } else if (isSessionActive) {
                 BikeBleForegroundService.stopTftMirror(this)
                 showFeedback("TFT Wi-Fi mirror stopped")
             } else {
@@ -5344,12 +5350,19 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
 
-                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "HUD Mirror\n(Screen Off)" else "Live Map Mirror\n(Google Maps Sync)"
-                binding.btnToggleTftHudMirror.text = if (active) "Stop Mirror" else prefIdleBtn
-                binding.btnCastLiveScreen.text = if (active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST) {
-                    "Stop Cast"
-                } else {
-                    "Screen Cast\n(Phone Screen)"
+                val isScreenCastActive = active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST
+                val isHeadlessActive = active && mirror.source != TftMirrorSource.LIVE_SCREEN_CAST
+
+                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "HUD Mirror\n(Screen Off)" else "Live Map (800×480)\n(Google Maps Sync)"
+                binding.btnToggleTftHudMirror.text = when {
+                    isHeadlessActive -> "Stop Mirror"
+                    isScreenCastActive -> "Switch to\nLive Map"
+                    else -> prefIdleBtn
+                }
+                binding.btnCastLiveScreen.text = when {
+                    isScreenCastActive -> "Stop Cast"
+                    isHeadlessActive -> "Switch to\nScreen Cast"
+                    else -> "Cast Google Maps\n(Screen Mirror)"
                 }
                 binding.btnToggleTftHudMirror.isEnabled = !isHandshaking
                 binding.btnCastLiveScreen.isEnabled = !isHandshaking
@@ -6141,17 +6154,17 @@ class MainActivity : AppCompatActivity() {
             orientation = android.widget.RadioGroup.VERTICAL
         }
         val rbLiveMap = android.widget.RadioButton(this).apply {
-            text = "PulsarNav Live Map (OSM + GPS test only)"
+            text = "PulsarNav Live Map (Google Maps TBT Sync • Full 800×480 • Lock-Proof)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
         val rbHud = android.widget.RadioButton(this).apply {
-            text = "Cockpit HUD (Default • GMap TBT, lock-proof)"
+            text = "Cockpit HUD (Minimalist TBT Dashboard • Lock-Proof)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
-        rgMirrorMode.addView(rbHud)
         rgMirrorMode.addView(rbLiveMap)
+        rgMirrorMode.addView(rbHud)
         if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_LIVE_MAP) rbLiveMap.isChecked = true else rbHud.isChecked = true
         container.addView(rgMirrorMode)
 

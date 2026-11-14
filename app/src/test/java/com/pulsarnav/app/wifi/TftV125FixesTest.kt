@@ -176,6 +176,31 @@ class TftV125FixesTest {
     }
 
     @Test
+    fun computeSourceCropRect_ultraWideLandscapeAlignLeftPreservesTurnCard() {
+        // Ultra-wide landscape phone 2400x1080 (aspect 2.222) cast into 800x480 (aspect 1.667)
+        val content = IntRect(0, 0, 2400, 1080)
+        val cropCentered = TftScreenCastTransform.computeSourceCropRect(
+            contentRect = content,
+            targetW = 800,
+            targetH = 480,
+            layoutMode = AppSettings.CAST_LAYOUT_FILL,
+            alignLeft = false
+        )
+        assertEquals(300, cropCentered.left)
+        assertEquals(2100, cropCentered.right)
+
+        val cropAlignLeft = TftScreenCastTransform.computeSourceCropRect(
+            contentRect = content,
+            targetW = 800,
+            targetH = 480,
+            layoutMode = AppSettings.CAST_LAYOUT_FILL,
+            alignLeft = true
+        )
+        assertEquals(0, cropAlignLeft.left)
+        assertEquals(1800, cropAlignLeft.right)
+    }
+
+    @Test
     fun computeSourceCropRect_tallPortraitUsesTopBias() {
         // Tall portrait phone 1080x2400 (aspect 0.45) cast into safe panorama 754x256
         val content = IntRect(0, 0, 1080, 2400)
