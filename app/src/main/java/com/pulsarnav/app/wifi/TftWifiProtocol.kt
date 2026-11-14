@@ -25,12 +25,12 @@ object TftWifiProtocol {
     const val TFT_DPI = 240
 
     // Bajaj NS400Z cluster draws fixed OEM overlays (top status + BLE TBT y=0..64, left tab x=0..34,
-    // bottom-left ETD/TBT y=380..480, bottom-right speedometer/fuel gauge x=416..800 y=322..480).
+    // bottom-left ETD/TBT y=380..480, bottom-right speedometer/fuel gauge x=450..800 y=278..480).
     // Keeping rendered UI inside these bounds prevents OEM overlap and cuts JPEG payload entropy.
     const val NS400Z_SAFE_LEFT = 34
     const val NS400Z_SAFE_TOP = 66
-    const val NS400Z_SAFE_RIGHT = 788
-    const val NS400Z_SAFE_BOTTOM = 322
+    const val NS400Z_SAFE_RIGHT = 784
+    const val NS400Z_SAFE_BOTTOM = 274
     const val NS400Z_POCKET_LEFT = 34
     const val NS400Z_POCKET_TOP = 326
     const val NS400Z_POCKET_RIGHT = 412

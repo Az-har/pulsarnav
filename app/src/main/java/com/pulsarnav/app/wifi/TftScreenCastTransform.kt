@@ -72,7 +72,7 @@ object TftScreenCastTransform {
             val isLandscapePhone = cw > ch
             val bias = when {
                 isTallPortrait -> 0.12f // Top-biased for vertical phone
-                isLandscapePhone -> 0.0f // Strict top-anchor for landscape Google Maps: preserve 100% of turn banner & arrow
+                isLandscapePhone -> 0.22f // Biased to keep BOTH top turn banner and vehicle location arrow visible
                 else -> 0.15f
             }
             val topOffset = (slack * bias).roundToInt().coerceIn(0, slack)
@@ -123,8 +123,9 @@ object TftScreenCastTransform {
         layoutMode: String
     ): IntRect {
         val isPortraitSource = srcH > srcW
-        return if (layoutMode == AppSettings.CAST_LAYOUT_FIT && isPortraitSource) {
-            // Tall left-column pocket: 380x312 gives 22% more height for uncropped portrait navigation
+        return if (isPortraitSource && layoutMode != AppSettings.CAST_LAYOUT_ROT90) {
+            // Unobstructed left cockpit pocket: 406x310 (x=34..440, y=66..376).
+            // Completely to the left of the speedometer/tachometer shroud (x >= 450)!
             IntRect(
                 left = TftWifiProtocol.NS400Z_SAFE_LEFT,
                 top = TftWifiProtocol.NS400Z_SAFE_TOP,
@@ -132,7 +133,8 @@ object TftScreenCastTransform {
                 bottom = TftWifiProtocol.NS400Z_POCKET_BOTTOM
             )
         } else {
-            // Wide top safe panorama: 754x256 completely above speedo (y=324) & below OEM strip (y=64)
+            // Unobstructed top safe panorama: 750x208 (x=34..784, y=66..274).
+            // Strictly above the speedometer/tachometer shroud (which starts at y=278)!
             IntRect(
                 left = TftWifiProtocol.NS400Z_SAFE_LEFT,
                 top = TftWifiProtocol.NS400Z_SAFE_TOP,
@@ -244,24 +246,13 @@ object TftScreenCastTransform {
 
         when (layoutMode) {
             AppSettings.CAST_LAYOUT_FIT -> {
-                val isLandscape = content.width > content.height
-                val dstRect = if (isLandscape) {
-                    // Full-width landscape fit: scale to fill 754px safe width uncropped!
-                    // Eliminates the massive black sidebars (utilization jumps from 37% -> 66%)
-                    // and anchors below top OEM status bar (y=66).
-                    val scale = safeViewport.width.toFloat() / content.width.toFloat()
-                    val drawW = safeViewport.width
-                    val maxH = dstH - safeViewport.top
-                    val drawH = (content.height * scale).roundToInt().coerceIn(1, maxH)
-                    IntRect(
-                        left = safeViewport.left,
-                        top = safeViewport.top,
-                        right = safeViewport.left + drawW,
-                        bottom = safeViewport.top + drawH
-                    )
-                } else {
-                    computeFitDestinationRect(content.width, content.height, dstW, dstH, safeViewport)
-                }
+                val dstRect = computeFitDestinationRect(
+                    srcW = content.width,
+                    srcH = content.height,
+                    targetW = dstW,
+                    targetH = dstH,
+                    viewport = safeViewport
+                )
                 srcRectTmp.set(content.left, content.top, content.right, content.bottom)
                 dstRectTmp.set(dstRect.left, dstRect.top, dstRect.right, dstRect.bottom)
                 dstCanvas.drawBitmap(srcBitmap, srcRectTmp, dstRectTmp, filterPaint)

@@ -12,17 +12,15 @@ import org.junit.Test
 class TftV125FixesTest {
 
     @Test
-    fun computeSafeViewport_usesLeftPocketOnlyForPortraitFit() {
+    fun computeSafeViewport_usesLeftPocketOnlyForPortraitFitAndFill() {
         val portraitFit = TftScreenCastTransform.computeSafeViewport(432, 960, AppSettings.CAST_LAYOUT_FIT)
-        assertEquals(
-            IntRect(
-                TftWifiProtocol.NS400Z_POCKET_LEFT,
-                TftWifiProtocol.NS400Z_SAFE_TOP,
-                TftWifiProtocol.NS400Z_POCKET_RIGHT,
-                TftWifiProtocol.NS400Z_POCKET_BOTTOM
-            ),
-            portraitFit
+        val pocketZone = IntRect(
+            TftWifiProtocol.NS400Z_POCKET_LEFT,
+            TftWifiProtocol.NS400Z_SAFE_TOP,
+            TftWifiProtocol.NS400Z_POCKET_RIGHT,
+            TftWifiProtocol.NS400Z_POCKET_BOTTOM
         )
+        assertEquals(pocketZone, portraitFit)
 
         val landscapeFit = TftScreenCastTransform.computeSafeViewport(960, 432, AppSettings.CAST_LAYOUT_FIT)
         val portraitFill = TftScreenCastTransform.computeSafeViewport(432, 960, AppSettings.CAST_LAYOUT_FILL)
@@ -34,8 +32,20 @@ class TftV125FixesTest {
             TftWifiProtocol.NS400Z_SAFE_BOTTOM
         )
         assertEquals(widePanorama, landscapeFit)
-        assertEquals(widePanorama, portraitFill)
+        assertEquals(pocketZone, portraitFill)
         assertEquals(widePanorama, portraitRot90)
+    }
+
+    @Test
+    fun ns400zSafeBounds_guaranteesClearanceAboveSpeedometerShroud() {
+        // Motorcycle speedometer/fuel shroud on NS400Z begins at y=278 on the right side (x >= 450).
+        // Wide panorama safe bottom must be <= 276 to prevent any overlay overlap.
+        assertTrue(TftWifiProtocol.NS400Z_SAFE_BOTTOM <= 276)
+        assertTrue(TftWifiProtocol.NS400Z_SAFE_RIGHT <= 788)
+        // Left pocket right boundary must be <= 450 to avoid the curved shroud slope
+        assertTrue(TftWifiProtocol.NS400Z_POCKET_RIGHT <= 450)
+        // Bottom-left ETD bar begins at y=378
+        assertTrue(TftWifiProtocol.NS400Z_POCKET_BOTTOM <= 378)
     }
 
     @Test
@@ -57,6 +67,27 @@ class TftV125FixesTest {
         assertTrue(dst.top >= TftWifiProtocol.NS400Z_SAFE_TOP)
         assertTrue(dst.right <= TftWifiProtocol.NS400Z_POCKET_RIGHT)
         assertTrue(dst.bottom <= TftWifiProtocol.NS400Z_POCKET_BOTTOM)
+    }
+
+    @Test
+    fun computeFitDestinationRect_landscapeNeverExceedsSafeBottom() {
+        val landscapePanorama = IntRect(
+            TftWifiProtocol.NS400Z_SAFE_LEFT,
+            TftWifiProtocol.NS400Z_SAFE_TOP,
+            TftWifiProtocol.NS400Z_SAFE_RIGHT,
+            TftWifiProtocol.NS400Z_SAFE_BOTTOM
+        )
+        // 20:9 phone in landscape: 2400x1080
+        val dst = TftScreenCastTransform.computeFitDestinationRect(
+            srcW = 2400,
+            srcH = 1080,
+            targetW = TftWifiProtocol.TFT_WIDTH,
+            targetH = TftWifiProtocol.TFT_HEIGHT,
+            viewport = landscapePanorama
+        )
+        assertTrue("Landscape fit must not exceed safe bottom", dst.bottom <= TftWifiProtocol.NS400Z_SAFE_BOTTOM)
+        assertTrue("Landscape fit must remain above y=276", dst.bottom <= 276)
+        assertTrue("Landscape fit must not exceed safe right", dst.right <= TftWifiProtocol.NS400Z_SAFE_RIGHT)
     }
 
     @Test
@@ -128,7 +159,7 @@ class TftV125FixesTest {
     }
 
     @Test
-    fun computeSourceCropRect_landscapeAnchorToTopPreservesTurnBanner() {
+    fun computeSourceCropRect_landscapeBiasedToPreserveTurnBannerAndVehicleIcon() {
         // Landscape phone 2400x1080 (aspect 2.222) cast into safe panorama 754x256 (aspect 2.945)
         val content = IntRect(0, 0, 2400, 1080)
         val crop = TftScreenCastTransform.computeSourceCropRect(
@@ -139,11 +170,11 @@ class TftV125FixesTest {
         )
         // With targetAspect = 2.945, rawCropH = 2400 / 2.945 = ~815px.
         // Slack = 1080 - 815 = 265px.
-        // Top offset with 0.0f bias must be 0px (strictly top-anchored, never slicing top banner or arrow).
+        // Top offset with 0.22f bias ~ 58px (crops status bar, preserves turn banner & vehicle arrow).
         assertEquals(0, crop.left)
         assertEquals(2400, crop.right)
-        assertEquals(0, crop.top)
-        assertTrue("Bottom should cover at least 70% of screen height", crop.bottom >= 800)
+        assertTrue("Top offset should be small to preserve turn banner", crop.top in 0..100)
+        assertTrue("Bottom should cover vehicle location icon at ~71% height", crop.bottom >= 800)
     }
 
     @Test

@@ -6131,17 +6131,17 @@ class MainActivity : AppCompatActivity() {
             orientation = android.widget.RadioGroup.VERTICAL
         }
         val rbCastFit = android.widget.RadioButton(this).apply {
-            text = "Fit Full Width (754px • Uncropped • No Black Sidebars)"
+            text = "Fit Viewport (Uncropped • Above Speedo)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
         val rbCastFill = android.widget.RadioButton(this).apply {
-            text = "Fill Safe Panorama (754×256 • Top-Anchored • Above Speedo)"
+            text = "Fill Safe Viewport (Top-Anchored • Above Speedo)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }
         val rbCastRot90 = android.widget.RadioButton(this).apply {
-            text = "Auto-Panorama (Rotate Portrait -90° • Direct Fill in Landscape)"
+            text = "Auto-Panorama (Full 784px Wide • Above Speedo)"
             setTextColor(currentTheme.textSecondaryColor)
             textSize = 12f
         }

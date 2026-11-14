@@ -85,7 +85,7 @@ class AppSettings(context: Context) {
         const val KEY_TFT_MIRROR_MODE = "tft_mirror_mode"
         const val KEY_TFT_CAST_LAYOUT = "tft_cast_layout"
         const val KEY_TFT_CAST_AUTO_OPEN_MAPS = "tft_cast_auto_open_maps"
-        const val KEY_TFT_CAST_FORCE_LANDSCAPE = "tft_cast_force_landscape"
+        const val KEY_TFT_CAST_FORCE_LANDSCAPE = "tft_cast_force_landscape_v2"
         const val KEY_TFT_MAP_ZOOM = "tft_map_zoom"
         const val KEY_TFT_MAP_HEADING_UP = "tft_map_heading_up"
         const val KEY_AUTO_WIFI_MIRROR_ENABLED = "auto_wifi_mirror_enabled"
@@ -674,7 +674,7 @@ class AppSettings(context: Context) {
         }
 
     var isTftCastForceLandscapeEnabled: Boolean
-        get() = getSafeBoolean(KEY_TFT_CAST_FORCE_LANDSCAPE, true)
+        get() = getSafeBoolean(KEY_TFT_CAST_FORCE_LANDSCAPE, false)
         set(value) {
             prefs.edit().putBoolean(KEY_TFT_CAST_FORCE_LANDSCAPE, value).apply()
         }
