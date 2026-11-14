@@ -144,7 +144,12 @@ class TftCockpitDisplayController(
     private val copySrcRect = Rect()
     private val copyDstRect = Rect()
     private val jpegBuffer = FastByteArrayOutputStream(32_768)
-    private val frameBufferPool = arrayOf(ByteArray(32_768), ByteArray(32_768))
+    private val frameBufferPool = arrayOf(
+        ByteArray(32_768),
+        ByteArray(32_768),
+        ByteArray(32_768),
+        ByteArray(32_768)
+    )
     private var poolIndex = 0
 
     @Volatile
@@ -212,7 +217,13 @@ class TftCockpitDisplayController(
         override fun run() {
             if (!running || activeSource == TftMirrorSource.LIVE_SCREEN_CAST || previewPaused) return
             renderAndEmitHeadlessFrame()
-            val delayMs = if (clusterStationary) STATIC_KEEPALIVE_INTERVAL_MS else REDRAW_INTERVAL_MS
+            val gpsSpeed = try {
+                RideTracker.getInstance(context).getLiveRideSnapshot().currentSpeedKmh
+            } catch (_: Exception) {
+                0f
+            }
+            val isStationary = clusterStationary && (gpsSpeed < 4.0f)
+            val delayMs = if (isStationary) STATIC_KEEPALIVE_INTERVAL_MS else REDRAW_INTERVAL_MS
             workerHandler?.postDelayed(this, delayMs)
         }
     }
@@ -287,7 +298,7 @@ class TftCockpitDisplayController(
                 }
                 activeProjection = mediaProjection
                 activeProjectionCallback = callback
-                mediaProjection.registerCallback(callback, mainHandler)
+                mediaProjection.registerCallback(callback, handler)
 
                 virtualDisplay = try {
                     mediaProjection.createVirtualDisplay(
@@ -375,7 +386,13 @@ class TftCockpitDisplayController(
     }
 
     fun updateBikeStationary(stationary: Boolean) {
-        clusterStationary = stationary
+        val gpsSpeed = try {
+            RideTracker.getInstance(context).getLiveRideSnapshot().currentSpeedKmh
+        } catch (_: Exception) {
+            0f
+        }
+        val actuallyStationary = stationary && (gpsSpeed < 4.0f)
+        clusterStationary = actuallyStationary
         refreshFrameNow()
     }
 
@@ -498,9 +515,9 @@ class TftCockpitDisplayController(
                 } catch (_: Exception) {}
             }
 
-            if (oldThread != null && Thread.currentThread() !== oldThread) {
+            if (oldThread != null && Thread.currentThread() !== oldThread && Looper.myLooper() != Looper.getMainLooper()) {
                 try {
-                    oldThread?.join(500L)
+                    oldThread?.join(150L)
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                 }
@@ -679,14 +696,14 @@ class TftCockpitDisplayController(
             }
             currentQuality = TftWifiProtocol.UDP_MIN_JPEG_QUALITY
             val target = frameBufferPool[poolIndex]
-            poolIndex = (poolIndex + 1) and 1
+            poolIndex = (poolIndex + 1) and 3
             System.arraycopy(jpegBuffer.rawBuffer, 0, target, 0, size)
             return target
         }
 
         currentQuality = TftUdpFrameEncoder.selectNextQuality(q, size)
         val target = frameBufferPool[poolIndex]
-        poolIndex = (poolIndex + 1) and 1
+        poolIndex = (poolIndex + 1) and 3
         System.arraycopy(jpegBuffer.rawBuffer, 0, target, 0, size)
         return target
     }

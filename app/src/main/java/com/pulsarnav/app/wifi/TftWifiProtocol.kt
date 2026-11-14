@@ -53,6 +53,7 @@ object TftWifiProtocol {
     const val UDP_MIN_CAPTURE_INTERVAL_MS = 50L
     const val UDP_TX_PACING_MS = 1L
     const val UDP_TX_BURST_PACKETS = 4
+    const val UDP_PACKET_PACE_NANOS = 550_000L // 550 microseconds inter-packet spacing
 
     const val AES_TRANSFORMATION = "AES/CBC/PKCS5Padding"
     const val AES_KEY_STRING = "Z7in5HGAGFdXXU6ZfDc8lIff4iwLY01o"

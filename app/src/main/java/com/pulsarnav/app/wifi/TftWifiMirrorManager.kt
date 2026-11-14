@@ -699,6 +699,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                     }
                     dSock = sock
                     network.bindSocket(sock)
+                    try { sock.sendBufferSize = 65536 } catch (_: Exception) {}
                     udpSocket = sock
 
                     val targetAddr = InetAddress.getByName(host)
@@ -723,9 +724,14 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                             if (!isActiveSession.get()) break
                             val packetBytes = chunks[i]
                             reusablePacket.setData(packetBytes, 0, packetBytes.size)
+                            val txStart = System.nanoTime()
                             sock.send(reusablePacket)
-                            if ((i + 1) % TftWifiProtocol.UDP_TX_BURST_PACKETS == 0 && i < chunks.lastIndex) {
-                                Thread.sleep(TftWifiProtocol.UDP_TX_PACING_MS)
+                            if (i < chunks.lastIndex) {
+                                val elapsed = System.nanoTime() - txStart
+                                val remainingNanos = TftWifiProtocol.UDP_PACKET_PACE_NANOS - elapsed
+                                if (remainingNanos > 50_000L) {
+                                    java.util.concurrent.locks.LockSupport.parkNanos(remainingNanos)
+                                }
                             }
                         }
 
@@ -1214,9 +1220,10 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
             val caps = connectivityManager.getNetworkCapabilities(net) ?: continue
             if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
             val host = resolveGatewayHostOrNull(net) ?: continue
-            // Match typical cluster SoftAP subnet (192.168.4.x) or Wi-Fi without Internet
+            // Match typical cluster SoftAP subnet (192.168.4.x / 192.168.0.x / 192.168.1.x) or private non-internet cluster link
+            val isSoftApSubnet = host.startsWith("192.168.4.") || host.startsWith("192.168.0.") || host.startsWith("192.168.1.")
             if (host == TftWifiProtocol.DEFAULT_CLUSTER_HOST ||
-                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && isSoftApSubnet)
             ) {
                 return net to host
             }
