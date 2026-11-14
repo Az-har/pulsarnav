@@ -207,7 +207,10 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         try {
             if (enable) {
                 if (!appSettings.isTftCastForceLandscapeEnabled) return
-                if (!Settings.System.canWrite(context)) return
+                if (!Settings.System.canWrite(context)) {
+                    Log.w(TAG, "Auto-landscape skipped: android.permission.WRITE_SETTINGS not granted")
+                    return
+                }
                 val resolver = context.contentResolver
                 if (!rotationModifiedByCast) {
                     savedAccelRotation = Settings.System.getInt(resolver, Settings.System.ACCELEROMETER_ROTATION, 1)
@@ -216,6 +219,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                 Settings.System.putInt(resolver, Settings.System.ACCELEROMETER_ROTATION, 0)
                 Settings.System.putInt(resolver, Settings.System.USER_ROTATION, Surface.ROTATION_90)
                 rotationModifiedByCast = true
+                Log.i(TAG, "Auto-landscape: system orientation locked to Surface.ROTATION_90")
             } else if (rotationModifiedByCast) {
                 if (Settings.System.canWrite(context)) {
                     val resolver = context.contentResolver
@@ -225,6 +229,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                     savedUserRotation?.let {
                         Settings.System.putInt(resolver, Settings.System.USER_ROTATION, it)
                     }
+                    Log.i(TAG, "Auto-landscape: system orientation restored to previous settings")
                 }
                 rotationModifiedByCast = false
                 savedAccelRotation = null

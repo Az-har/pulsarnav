@@ -153,6 +153,9 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         val data = result.data
         if (result.resultCode == android.app.Activity.RESULT_OK && data != null) {
+            if (appSettings.isTftCastForceLandscapeEnabled) {
+                requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            }
             BikeBleForegroundService.startForTftLiveCast(this, result.resultCode, data)
             if (appSettings.isTftCastAutoOpenMapsEnabled) {
                 showFeedback("Starting 800×480 live cast & opening Maps...")
@@ -1014,14 +1017,15 @@ class MainActivity : AppCompatActivity() {
                 mirrorState.status != TftMirrorStatus.ERROR
             ) {
                 BikeBleForegroundService.stopTftMirror(this)
+                requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 showFeedback("Live TFT cast stopped")
             } else {
                 val missingWifi = getMissingTftWifiPermissions()
                 if (missingWifi.isNotEmpty()) {
-                    pendingTftWifiAction = { launchTftScreenCapture() }
+                    pendingTftWifiAction = { checkLandscapeAndLaunchCast() }
                     tftWifiPermissionLauncher.launch(missingWifi.toTypedArray())
                 } else {
-                    launchTftScreenCapture()
+                    checkLandscapeAndLaunchCast()
                 }
             }
         }
@@ -4615,6 +4619,31 @@ class MainActivity : AppCompatActivity() {
         showFeedback("Connecting to TFT Wi-Fi for $mirrorModeLabel...")
     }
 
+    private fun checkLandscapeAndLaunchCast() {
+        if (appSettings.isTftCastForceLandscapeEnabled && !android.provider.Settings.System.canWrite(this)) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Allow Auto-Landscape")
+                .setMessage("To automatically rotate your screen and navigation apps into landscape during TFT Live Cast, PulsarNav needs the 'Modify system settings' permission.")
+                .setPositiveButton("Allow") { _, _ ->
+                    try {
+                        startActivity(
+                            Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                                data = Uri.parse("package:$packageName")
+                            }
+                        )
+                    } catch (_: Exception) {
+                        launchTftScreenCapture()
+                    }
+                }
+                .setNegativeButton("Continue Anyway") { _, _ ->
+                    launchTftScreenCapture()
+                }
+                .show()
+        } else {
+            launchTftScreenCapture()
+        }
+    }
+
     private fun launchTftScreenCapture() {
         val mpm = getSystemService(android.media.projection.MediaProjectionManager::class.java)
         if (mpm == null) {
@@ -5169,6 +5198,9 @@ class MainActivity : AppCompatActivity() {
                     window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 } else {
                     window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    if (requestedOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
                 }
                 }
             }
