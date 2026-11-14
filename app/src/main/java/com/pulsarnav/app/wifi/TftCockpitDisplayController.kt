@@ -71,7 +71,7 @@ class TftCockpitDisplayController(
         // Unified 800x480 interactive hitboxes placed strictly inside NS400Z unobstructed safe zones
         const val FOOTER_THEME_LEFT = TftWifiProtocol.NS400Z_POCKET_LEFT
         const val FOOTER_THEME_TOP = TftWifiProtocol.NS400Z_POCKET_TOP
-        const val FOOTER_THEME_RIGHT = 286
+        const val FOOTER_THEME_RIGHT = TftWifiProtocol.NS400Z_POCKET_RIGHT
         const val FOOTER_THEME_BOTTOM = TftWifiProtocol.NS400Z_POCKET_BOTTOM
 
         const val MEDIA_CARD_LEFT = 524
@@ -93,9 +93,9 @@ class TftCockpitDisplayController(
         fun resolveLiveMapTouchZone(touchType: Int, x: Int, y: Int): LiveMapTouchZone {
             if (touchType != 5 && touchType != 9) return LiveMapTouchZone.NONE
             return when {
-                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 56 && y in 120..168 -> LiveMapTouchZone.ZOOM_IN
-                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 56 && y in 174..222 -> LiveMapTouchZone.ZOOM_OUT
-                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 56 && y in 228..278 -> LiveMapTouchZone.TOGGLE_HEADING
+                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 76 && y in 96..166 -> LiveMapTouchZone.ZOOM_IN
+                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 76 && y in 170..240 -> LiveMapTouchZone.ZOOM_OUT
+                x >= TftWifiProtocol.NS400Z_SAFE_RIGHT - 76 && y in 244..314 -> LiveMapTouchZone.TOGGLE_HEADING
                 y in TftWifiProtocol.NS400Z_POCKET_TOP..TftWifiProtocol.NS400Z_POCKET_BOTTOM &&
                     x in TftWifiProtocol.NS400Z_POCKET_LEFT..TftWifiProtocol.NS400Z_POCKET_RIGHT -> LiveMapTouchZone.TOGGLE_DAYLIGHT
                 else -> LiveMapTouchZone.NONE
@@ -809,8 +809,8 @@ class TftCockpitDisplayController(
             val primaryText = if (highContrast) Color.rgb(15, 20, 28) else Color.rgb(246, 248, 252)
             val secondaryText = if (highContrast) Color.rgb(75, 86, 104) else Color.rgb(160, 172, 194)
             val accentColor = Color.rgb(230, 57, 70)
-            val cyanAccent = Color.rgb(56, 189, 248)
-            val greenAccent = Color.rgb(34, 197, 94)
+            val cyanAccent = if (highContrast) Color.rgb(2, 132, 199) else Color.rgb(56, 189, 248)
+            val greenAccent = if (highContrast) Color.rgb(22, 163, 74) else Color.rgb(34, 197, 94)
 
             bgPaint.color = bgColor
             canvas.drawRect(0f, 0f, w, h, bgPaint)
@@ -1197,7 +1197,7 @@ class TftCockpitDisplayController(
             val primaryText = if (highContrast) Color.rgb(15, 20, 28) else Color.rgb(246, 248, 252)
             val secondaryText = if (highContrast) Color.rgb(75, 86, 104) else Color.rgb(160, 172, 194)
             val accentColor = Color.rgb(230, 57, 70)
-            val cyanAccent = Color.rgb(56, 189, 248)
+            val cyanAccent = if (highContrast) Color.rgb(2, 132, 199) else Color.rgb(56, 189, 248)
 
             cardPaint.color = cardColor
             cardRect.set(left, top, right, bottom)

@@ -416,8 +416,14 @@ internal object TftManeuverVectorDrawer {
                 val dir = if (maneuver == Maneuver.ROUNDABOUT_LEFT) -1f else 1f
                 path.moveTo(cx, cy + s)
                 path.lineTo(cx, cy + s * 0.35f)
+                val exitX = cx + dir * s * 0.9f
+                val exitY = cy - s * 0.55f
                 path.moveTo(cx + dir * s * 0.45f, cy - s * 0.1f)
-                path.lineTo(cx + dir * s * 0.9f, cy - s * 0.55f)
+                path.lineTo(exitX, exitY)
+                // Directional chevron arrowhead on roundabout exit
+                path.moveTo(exitX - dir * s * 0.25f, exitY)
+                path.lineTo(exitX, exitY)
+                path.lineTo(exitX, exitY + s * 0.25f)
             }
             Maneuver.DESTINATION_REACHED -> {
                 val destGreen = Color.rgb(34, 197, 94)

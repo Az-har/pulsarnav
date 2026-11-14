@@ -756,8 +756,10 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         private const val COLOR_BG_DARK = 0xFF0B0F17.toInt()
         private const val COLOR_BG_DAYLIGHT = 0xFFE8ECEF.toInt()
         private const val COLOR_MAP_NIGHT_BG = 0xFF0D1117.toInt()
-        private const val COLOR_ROUTE_CASING = 0xFF0B3B8C.toInt()
-        private const val COLOR_ROUTE_FILL = 0xFF38BDF8.toInt()
+        private const val COLOR_ROUTE_CASING_DAY = 0xFF0F172A.toInt()
+        private const val COLOR_ROUTE_FILL_DAY = 0xFF0284C7.toInt()
+        private const val COLOR_ROUTE_CASING_NIGHT = 0xFF1E293B.toInt()
+        private const val COLOR_ROUTE_FILL_NIGHT = 0xFF38BDF8.toInt()
         private const val COLOR_MARKER_HALO = 0x4038BDF8.toInt()
         private const val COLOR_DEST_PIN = 0xFFEF4444.toInt()
         private const val COLOR_ALERT_CALL = 0xFFDC2626.toInt()
@@ -870,22 +872,22 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        strokeWidth = 12f
-        color = COLOR_ROUTE_CASING
+        strokeWidth = 16f
+        color = COLOR_ROUTE_CASING_NIGHT
     }
     private val routeFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        strokeWidth = 7f
-        color = COLOR_ROUTE_FILL
+        strokeWidth = 10f
+        color = COLOR_ROUTE_FILL_NIGHT
     }
     private val markerHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = COLOR_MARKER_HALO
     }
     private val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = COLOR_ROUTE_FILL
+        color = COLOR_ROUTE_FILL_NIGHT
     }
     private val markerBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -912,15 +914,15 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        strokeWidth = 5f
+        strokeWidth = 8.5f
     }
     private val rectTmp = RectF()
     private val arrowPath = Path()
     private val bikeCursorPath = Path().apply {
-        moveTo(0f, -15f)
-        lineTo(11f, 12f)
-        lineTo(0f, 6f)
-        lineTo(-11f, 12f)
+        moveTo(0f, -18f)
+        lineTo(13f, 15f)
+        lineTo(0f, 8f)
+        lineTo(-13f, 15f)
         close()
     }
 
@@ -1389,8 +1391,8 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
         // Keep map cursor centered in the open corridor between top-left turn card and right rail
         // Anchor safely above NS400Z speedometer shroud (which starts at x>=412, y>=274)
-        val anchorX = if (step != null) 460f else 400f
-        val anchorY = if (state.headingUp) 195f else 185f
+        val anchorX = if (step != null) 530f else 400f
+        val anchorY = if (state.headingUp) 175f else 185f
 
         val now = SystemClock.elapsedRealtime()
         val dtSec = ((now - lastGpsFixTimestampMs) / 1000f).coerceIn(0f, 1.2f)
@@ -1565,6 +1567,8 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
                     routePath.lineTo(sx, sy)
                 }
             }
+            routeCasingPaint.color = if (darkMode) COLOR_ROUTE_CASING_NIGHT else COLOR_ROUTE_CASING_DAY
+            routeFillPaint.color = if (darkMode) COLOR_ROUTE_FILL_NIGHT else COLOR_ROUTE_FILL_DAY
             canvas.drawPath(routePath, routeCasingPaint)
             canvas.drawPath(routePath, routeFillPaint)
 
@@ -1611,7 +1615,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     }
 
     private fun drawTbtCornerCard(canvas: Canvas, step: ParsedNavigationStep, daylight: Boolean) {
-        rectTmp.set(36f, 72f, 350f, 172f)
+        rectTmp.set(36f, 70f, 360f, 204f)
         cardPaint.color = if (daylight) COLOR_CARD_DAY else COLOR_CARD_NIGHT
         val isImminentTurn = step.distanceMeters in 1..100
         borderPaint.color = if (isImminentTurn) COLOR_BORDER_IMMINENT else COLOR_BORDER_NORMAL
@@ -1620,22 +1624,22 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         canvas.drawRoundRect(rectTmp, 18f, 18f, borderPaint)
 
         // Turn arrow badge on left in crisp white
-        drawManeuverVector(canvas, step.maneuver, 72f, 114f, 22f, Color.WHITE)
+        drawManeuverVector(canvas, step.maneuver, 76f, 126f, 28f, Color.WHITE)
 
         val distStr = step.rawDistanceText.ifBlank { TftMapMathAndParser.formatDistanceMeters(step.distanceMeters) }
         textPaint.color = Color.WHITE
-        textPaint.textSize = 28f
+        textPaint.textSize = 40f
         textPaint.typeface = boldTypeface
-        canvas.drawText(distStr, 114f, 106f, textPaint)
+        canvas.drawText(distStr, 122f, 114f, textPaint)
 
         subTextPaint.color = COLOR_SUBTEXT_LIGHT
-        subTextPaint.textSize = 15f
-        subTextPaint.typeface = normalTypeface
+        subTextPaint.textSize = 20f
+        subTextPaint.typeface = boldTypeface
         val street = step.streetName.ifBlank { step.maneuver.description }
-        val wrapped = getWrappedStreetLines(street, 20)
-        canvas.drawText(wrapped.line1, 114f, 130f, subTextPaint)
+        val wrapped = getWrappedStreetLines(street, 224f, subTextPaint)
+        canvas.drawText(wrapped.line1, 122f, 142f, subTextPaint)
         if (wrapped.line2.isNotEmpty()) {
-            canvas.drawText(wrapped.line2, 114f, 150f, subTextPaint)
+            canvas.drawText(wrapped.line2, 122f, 166f, subTextPaint)
         }
 
         // ETA badge at the bottom of the card
@@ -1647,9 +1651,10 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
                 ?: "Active Navigation"
         }
         textPaint.color = COLOR_TEXT_ACCENT
-        textPaint.textSize = 13f
+        textPaint.textSize = 16f
         textPaint.typeface = boldTypeface
-        canvas.drawText(etaBadge, 46f, 162f, textPaint)
+        val etaY = if (wrapped.line2.isNotEmpty()) 192f else 174f
+        canvas.drawText(etaBadge, 48f, etaY, textPaint)
         textPaint.typeface = normalTypeface
     }
 
@@ -1684,17 +1689,22 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
         val btnLabels = if (headingUp) CONTROLS_HDG else CONTROLS_NORTH
         val rightEdge = TftWifiProtocol.NS400Z_SAFE_RIGHT.toFloat()
+        val btnWidth = 66f
+        val btnHeight = 54f
+        val gap = 18f
+        val startTop = 104f
+
         for (i in btnLabels.indices) {
-            val top = 122f + i * 54f
-            rectTmp.set(rightEdge - 50f, top, rightEdge, top + 44f)
+            val top = startTop + i * (btnHeight + gap)
+            rectTmp.set(rightEdge - btnWidth, top, rightEdge, top + btnHeight)
             cardPaint.color = pillBg
             borderPaint.color = pillStroke
-            canvas.drawRoundRect(rectTmp, 12f, 12f, cardPaint)
-            canvas.drawRoundRect(rectTmp, 12f, 12f, borderPaint)
+            canvas.drawRoundRect(rectTmp, 14f, 14f, cardPaint)
+            canvas.drawRoundRect(rectTmp, 14f, 14f, borderPaint)
             textPaint.color = pillFg
-            textPaint.textSize = if (i == 2) 13f else 22f
+            textPaint.textSize = if (i == 2) 15f else 26f
             textPaint.textAlign = Paint.Align.CENTER
-            canvas.drawText(btnLabels[i], rectTmp.centerX(), rectTmp.centerY() + 6f, textPaint)
+            canvas.drawText(btnLabels[i], rectTmp.centerX(), rectTmp.centerY() + (if (i == 2) 5f else 8f), textPaint)
         }
         textPaint.textAlign = Paint.Align.LEFT
     }
@@ -1717,29 +1727,31 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         canvas.drawRoundRect(rectTmp, 12f, 12f, cardPaint)
         canvas.drawRoundRect(rectTmp, 12f, 12f, borderPaint)
 
-        val spd = state.speedKmh.roundToInt()
-        textPaint.color = COLOR_TELEMETRY_ACCENT
-        textPaint.textSize = 18f
-        canvas.drawText("$spd km/h", left + 14f, bottom - 17f, textPaint)
-
-        val midLabel = when {
+        // Left section: Nav trip metrics or active map status
+        val navTripLabel = when {
             state.routeActive && state.destinationLabel.isNotBlank() -> {
-                val eta = state.remainingEtaText.ifBlank { "--" }
                 val rem = state.remainingDistanceText.ifBlank { "--" }
+                val eta = state.remainingEtaText.ifBlank { "--" }
                 "$rem • $eta"
             }
-            state.hasGpsFix -> "MAPS • Z${state.zoomLevel}"
+            state.hasGpsFix -> {
+                val spd = state.speedKmh.roundToInt()
+                "Z${state.zoomLevel} • $spd km/h"
+            }
             else -> "GPS SEARCH"
         }
-        subTextPaint.color = COLOR_SUBTEXT_LIGHT
-        subTextPaint.textSize = 14f
-        canvas.drawText(midLabel, left + 106f, bottom - 18f, subTextPaint)
+        textPaint.color = COLOR_TELEMETRY_ACCENT
+        textPaint.textSize = 16f
+        textPaint.typeface = boldTypeface
+        canvas.drawText(navTripLabel, left + 14f, bottom - 17f, textPaint)
 
+        // Right section: Vehicle & system status
         textPaint.color = COLOR_TEXT_MUTED
-        textPaint.textSize = 13f
+        textPaint.textSize = 14f
+        textPaint.typeface = normalTypeface
         textPaint.textAlign = Paint.Align.RIGHT
         val parkLabel = if (isStationary) "PARK" else "RIDE"
-        canvas.drawText("$parkLabel • ${batteryPct}% • $clockText", right - 12f, bottom - 18f, textPaint)
+        canvas.drawText("$parkLabel • ${batteryPct}% • $clockText", right - 14f, bottom - 17f, textPaint)
         textPaint.textAlign = Paint.Align.LEFT
     }
 
@@ -1759,20 +1771,54 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         )
     }
 
-    private fun getWrappedStreetLines(text: String, maxCharsPerLine: Int): WrappedTwoLines {
+    private fun getWrappedStreetLines(text: String, maxWidthPx: Float, paint: Paint): WrappedTwoLines {
         cachedWrappedStreet?.let { cached ->
             if (cached.src == text) return cached
         }
         val clean = text.trim()
-        val computed = if (clean.length <= maxCharsPerLine) {
-            WrappedTwoLines(text, clean, "")
-        } else {
-            val splitIdx = clean.lastIndexOf(' ', maxCharsPerLine).takeIf { it > 4 } ?: maxCharsPerLine
-            val l1 = clean.substring(0, splitIdx).trim()
-            val l2 = clean.substring(splitIdx).trim().take(maxCharsPerLine)
-            WrappedTwoLines(text, l1, l2)
+        if (clean.isEmpty() || paint.measureText(clean) <= maxWidthPx) {
+            val res = WrappedTwoLines(text, clean, "")
+            cachedWrappedStreet = res
+            return res
         }
-        cachedWrappedStreet = computed
-        return computed
+        val words = clean.split(' ')
+        val line1 = StringBuilder()
+        val line2 = StringBuilder()
+        var inLine1 = true
+        for (w in words) {
+            if (w.isEmpty()) continue
+            if (inLine1) {
+                val candidate = if (line1.isEmpty()) w else "$line1 $w"
+                if (paint.measureText(candidate) <= maxWidthPx) {
+                    line1.append(if (line1.isEmpty()) "" else " ").append(w)
+                } else if (line1.isEmpty()) {
+                    val avail = (maxWidthPx - paint.measureText("…")).coerceAtLeast(0f)
+                    val count = paint.breakText(w, true, avail, null).coerceAtLeast(0)
+                    line1.append(w.substring(0, count)).append("…")
+                    inLine1 = false
+                } else {
+                    inLine1 = false
+                    line2.append(w)
+                }
+            } else {
+                val candidate = if (line2.isEmpty()) w else "$line2 $w"
+                if (paint.measureText("$candidate…") <= maxWidthPx) {
+                    line2.append(if (line2.isEmpty()) "" else " ").append(w)
+                } else {
+                    val avail = (maxWidthPx - paint.measureText("…")).coerceAtLeast(0f)
+                    val currentLine2 = line2.toString()
+                    val remAvail = (avail - paint.measureText(if (currentLine2.isEmpty()) "" else "$currentLine2 ")).coerceAtLeast(0f)
+                    if (remAvail > 10f) {
+                        val count = paint.breakText(w, true, remAvail, null).coerceAtLeast(0)
+                        if (count > 0) line2.append(if (currentLine2.isEmpty()) "" else " ").append(w.substring(0, count))
+                    }
+                    line2.append("…")
+                    break
+                }
+            }
+        }
+        val res = WrappedTwoLines(text, line1.toString(), line2.toString())
+        cachedWrappedStreet = res
+        return res
     }
 }
