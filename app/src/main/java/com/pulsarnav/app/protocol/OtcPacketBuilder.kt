@@ -129,7 +129,8 @@ object OtcPacketBuilder {
         etaMinute: Int = 0,
         roundaboutExit: Int = 0,
         streetText: String? = null,
-        takeMeHomeAck: Int = 0
+        takeMeHomeAck: Int = 0,
+        isTft: Boolean = false
     ): ByteArray {
         val step = formatDistance(stepMeters.coerceAtLeast(0).toDouble())
         val total = formatDistance(totalMeters.coerceAtLeast(0).toDouble())
@@ -151,9 +152,11 @@ object OtcPacketBuilder {
         b[0] = b0.toByte()
 
         // Byte 1: Maneuver Icon ID
-        // The cluster adds 32 for the blinking variant when turn is < 100m (active updates only)
+        // On monochrome LCD clusters, adding 32 activates hardware segment blinking for turns < 100m.
+        // On color TFT clusters (NS400Z), icon sheets index opcodes 66..90 directly without blinking variants,
+        // so adding 32 corrupts the sprite lookup index.
         var icon = maneuverIcon
-        if (type != 0 && stepMeters in 0..99 && icon > 0 &&
+        if (!isTft && type != 0 && stepMeters in 0..99 && icon > 0 &&
             icon != Maneuver.DESTINATION_REACHED.opcode.toInt() && icon < 98
         ) {
             icon += 32

@@ -71,6 +71,28 @@ class OtcPacketBuilderTest {
     }
 
     @Test
+    fun buildTbtFrame_tftClusterDoesNotOffsetIconUnder100m() {
+        val lcdTurn = OtcPacketBuilder.buildTbtFrame(
+            type = 1,
+            maneuverIcon = Maneuver.TURN_LEFT.opcode.toInt(),
+            stepMeters = 80,
+            totalMeters = 1200,
+            isTft = false
+        )
+        assertEquals((Maneuver.TURN_LEFT.opcode.toInt() + 32).toByte(), lcdTurn[1])
+
+        val tftTurn = OtcPacketBuilder.buildTbtFrame(
+            type = 1,
+            maneuverIcon = Maneuver.TURN_LEFT.opcode.toInt(),
+            stepMeters = 80,
+            totalMeters = 1200,
+            isTft = true
+        )
+        assertEquals(Maneuver.TURN_LEFT.opcode, tftTurn[1])
+        assertChecksumValid(tftTurn, 47)
+    }
+
+    @Test
     fun buildTbtFrame_transliteratesDiacriticsAndTruncatesWithin31Bytes() {
         val frame = OtcPacketBuilder.buildTbtFrame(
             type = 1,
@@ -399,6 +421,13 @@ class OtcPacketBuilderTest {
         val model = VehicleCatalog.getModelById("ns400z")
         assertEquals("ns400z", model.id)
         assertEquals("Pulsar NS400Z", model.name)
+        assertEquals(com.pulsarnav.app.data.ClusterHardwareType.TFT_COLOR_ONLY, model.clusterType)
+
+        val ns125 = VehicleCatalog.getModelById("ns125")
+        assertEquals(com.pulsarnav.app.data.ClusterHardwareType.LCD_MONOCHROME_ONLY, ns125.clusterType)
+
+        val ns200 = VehicleCatalog.getModelById("ns200")
+        assertEquals(com.pulsarnav.app.data.ClusterHardwareType.DUAL_LCD_OR_TFT, ns200.clusterType)
     }
 
     private fun assertChecksumValid(packet: ByteArray, checksumIndex: Int) {

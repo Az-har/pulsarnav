@@ -1,5 +1,11 @@
 package com.pulsarnav.app.data
 
+enum class ClusterHardwareType {
+    LCD_MONOCHROME_ONLY,
+    TFT_COLOR_ONLY,
+    DUAL_LCD_OR_TFT
+}
+
 data class BikeModelProfile(
     val id: String,
     val name: String,
@@ -16,7 +22,8 @@ data class BikeModelProfile(
     val engineOilSpec: String,
     val coolantSpec: String,
     val chainSlackMm: String,
-    val sparkPlugSpec: String
+    val sparkPlugSpec: String,
+    val clusterType: ClusterHardwareType = ClusterHardwareType.DUAL_LCD_OR_TFT
 )
 
 data class CountryProfile(
@@ -256,7 +263,8 @@ object VehicleCatalog {
             engineOilSpec = "10W-50 Fully Synthetic (1700 ml)",
             coolantSpec = "High-performance Glycol Coolant (1200 ml)",
             chainSlackMm = "20 - 30 mm (Lube every 500 km)",
-            sparkPlugSpec = "Bosch VR5NEU Triple Electrode"
+            sparkPlugSpec = "Bosch VR5NEU Triple Electrode",
+            clusterType = ClusterHardwareType.TFT_COLOR_ONLY
         ),
         BikeModelProfile(
             id = "ns160",
@@ -292,7 +300,8 @@ object VehicleCatalog {
             engineOilSpec = "20W-50 4T Motorcycle Oil (1000 ml)",
             coolantSpec = "Air Cooled",
             chainSlackMm = "25 - 35 mm (Lube every 500 km)",
-            sparkPlugSpec = "Champion RG4HC Single Spark"
+            sparkPlugSpec = "Champion RG4HC Single Spark",
+            clusterType = ClusterHardwareType.LCD_MONOCHROME_ONLY
         ),
         BikeModelProfile(
             id = "n250",
@@ -346,7 +355,8 @@ object VehicleCatalog {
             engineOilSpec = "20W-50 4T Motorcycle Oil (1000 ml)",
             coolantSpec = "Natural Air Cooled",
             chainSlackMm = "25 - 35 mm (Lube every 500 km)",
-            sparkPlugSpec = "Champion RG4HC Dual Spark"
+            sparkPlugSpec = "Champion RG4HC Dual Spark",
+            clusterType = ClusterHardwareType.LCD_MONOCHROME_ONLY
         ),
         BikeModelProfile(
             id = "pulsar220f",
@@ -364,7 +374,8 @@ object VehicleCatalog {
             engineOilSpec = "20W-50 4T Semi-Synthetic (1150 ml)",
             coolantSpec = "Oil Cooler Radiator",
             chainSlackMm = "25 - 35 mm (Lube every 500 km)",
-            sparkPlugSpec = "Champion RG4HC Dual Spark"
+            sparkPlugSpec = "Champion RG4HC Dual Spark",
+            clusterType = ClusterHardwareType.DUAL_LCD_OR_TFT
         ),
         BikeModelProfile(
             id = "dominar400",
@@ -382,7 +393,8 @@ object VehicleCatalog {
             engineOilSpec = "10W-50 Fully Synthetic (1700 ml)",
             coolantSpec = "Glycol Liquid Cooling (1200 ml)",
             chainSlackMm = "20 - 30 mm (Lube every 500 km)",
-            sparkPlugSpec = "Bosch VR5NEU Triple Electrode"
+            sparkPlugSpec = "Bosch VR5NEU Triple Electrode",
+            clusterType = ClusterHardwareType.DUAL_LCD_OR_TFT
         ),
         BikeModelProfile(
             id = "dominar250",
@@ -400,7 +412,8 @@ object VehicleCatalog {
             engineOilSpec = "10W-50 Semi-Synthetic (1500 ml)",
             coolantSpec = "Glycol Liquid Cooling (1100 ml)",
             chainSlackMm = "20 - 30 mm (Lube every 500 km)",
-            sparkPlugSpec = "Champion RG4HC"
+            sparkPlugSpec = "Champion RG4HC",
+            clusterType = ClusterHardwareType.LCD_MONOCHROME_ONLY
         )
     )
 

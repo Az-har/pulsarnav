@@ -448,7 +448,8 @@ class BajajBleManager private constructor(private val context: Context) {
                             etaMinute = step.etaMinute,
                             roundaboutExit = step.roundaboutExit,
                             streetText = step.streetName,
-                            takeMeHomeAck = takeMeHomeAckCount
+                            takeMeHomeAck = takeMeHomeAckCount,
+                            isTft = isTftCluster()
                         )
                         val now = SystemClock.elapsedRealtime()
                         val isSameFrame = lastSentTbtFrame?.contentEquals(frame) == true

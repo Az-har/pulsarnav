@@ -394,7 +394,7 @@ internal object TftManeuverVectorDrawer {
         path.reset()
 
         when (maneuver) {
-            Maneuver.TURN_LEFT, Maneuver.FORK_LEFT, Maneuver.KEEP_LEFT, Maneuver.TURN_SHARP_LEFT -> {
+            Maneuver.TURN_LEFT, Maneuver.FORK_LEFT, Maneuver.KEEP_LEFT -> {
                 path.moveTo(cx + s * 0.25f, cy + s)
                 path.lineTo(cx + s * 0.25f, cy - s * 0.1f)
                 path.lineTo(cx - s * 0.8f, cy - s * 0.1f)
@@ -402,13 +402,29 @@ internal object TftManeuverVectorDrawer {
                 path.lineTo(cx - s * 0.85f, cy - s * 0.1f)
                 path.lineTo(cx - s * 0.45f, cy + s * 0.25f)
             }
-            Maneuver.TURN_RIGHT, Maneuver.FORK_RIGHT, Maneuver.KEEP_RIGHT, Maneuver.TURN_SHARP_RIGHT -> {
+            Maneuver.TURN_RIGHT, Maneuver.FORK_RIGHT, Maneuver.KEEP_RIGHT -> {
                 path.moveTo(cx - s * 0.25f, cy + s)
                 path.lineTo(cx - s * 0.25f, cy - s * 0.1f)
                 path.lineTo(cx + s * 0.8f, cy - s * 0.1f)
                 path.moveTo(cx + s * 0.45f, cy - s * 0.45f)
                 path.lineTo(cx + s * 0.85f, cy - s * 0.1f)
                 path.lineTo(cx + s * 0.45f, cy + s * 0.25f)
+            }
+            Maneuver.TURN_SHARP_LEFT -> {
+                path.moveTo(cx + s * 0.35f, cy + s)
+                path.lineTo(cx + s * 0.35f, cy - s * 0.3f)
+                path.lineTo(cx - s * 0.55f, cy + s * 0.35f)
+                path.moveTo(cx - s * 0.2f, cy + s * 0.35f)
+                path.lineTo(cx - s * 0.55f, cy + s * 0.35f)
+                path.lineTo(cx - s * 0.55f, cy)
+            }
+            Maneuver.TURN_SHARP_RIGHT -> {
+                path.moveTo(cx - s * 0.35f, cy + s)
+                path.lineTo(cx - s * 0.35f, cy - s * 0.3f)
+                path.lineTo(cx + s * 0.55f, cy + s * 0.35f)
+                path.moveTo(cx + s * 0.2f, cy + s * 0.35f)
+                path.lineTo(cx + s * 0.55f, cy + s * 0.35f)
+                path.lineTo(cx + s * 0.55f, cy)
             }
             Maneuver.TURN_SLIGHT_LEFT, Maneuver.RAMP_LEFT -> {
                 path.moveTo(cx + s * 0.3f, cy + s)
