@@ -65,42 +65,64 @@ object BleProtocolSafety {
         raw?.substringBefore('\u0000')?.trim().orEmpty()
 
     /**
-     * Classifies a cluster into LCD_MONOCHROME, TFT_COLOR, or AUTO_PROBE based on the bike's
-     * Bluetooth name, the selected model profile, and discovered GATT characteristics.
+     * Proper classification for all Bajaj models (Pulsar NS200, N250, NS160, N160, N125, Dominar, NS400Z).
+     *
+     * In modern Bajaj lineups, nearly all Pulsar models now have BOTH monochrome LCD and color TFT variants.
+     * Therefore:
+     * 1. User override in AppSettings takes top priority (Auto, Force TFT, Force LCD).
+     * 2. Hardware characteristics discovered in GATT (0610 Media, 0510 Playlist, 0910/0b10 Phonebook)
+     *    provide the 100% indisputable ground truth: only TFT hardware exposes them!
+     * 3. Explicit names with "tft" or "lcd" provide secondary hints.
+     * 4. Otherwise, the model is classified as AUTO_PROBE (where the dual handshake tests OLD first
+     *    and auto-escalates to NEW upon TFT characteristics or auth errors).
      */
     fun classifyCluster(
         deviceName: String?,
         selectedModelId: String?,
-        hasMediaInfoCharacteristic: Boolean
+        hasMediaInfoCharacteristic: Boolean,
+        hasPlaylistCharacteristic: Boolean = false,
+        hasFavRecentCharacteristic: Boolean = false,
+        userOverride: String = "auto"
     ): ClusterCategory {
-        if (hasMediaInfoCharacteristic) return ClusterCategory.TFT_COLOR
+        if (userOverride == "tft") return ClusterCategory.TFT_COLOR
+        if (userOverride == "lcd") return ClusterCategory.LCD_MONOCHROME
+
+        // Hardware truth: only TFT clusters have 0610 (Media), 0510 (Playlist), or 0910/0b10 (Phonebook)
+        if (hasMediaInfoCharacteristic || hasPlaylistCharacteristic || hasFavRecentCharacteristic) {
+            return ClusterCategory.TFT_COLOR
+        }
+
         val normalized = normalizeBleName(deviceName).lowercase()
-        if (EXPLICIT_TFT_PATTERNS.any { normalized.contains(it) } || normalized.contains("1854") ||
+        if (normalized.contains("tft") || normalized.contains("ns400") || normalized.contains("1854") ||
             selectedModelId.equals("ns400z", ignoreCase = true)) {
             return ClusterCategory.TFT_COLOR
         }
-        if (EXPLICIT_LCD_PATTERNS.any { normalized.contains(it) } ||
-            (selectedModelId != null && !selectedModelId.equals("ns400z", ignoreCase = true) && selectedModelId.isNotBlank())) {
+        if (normalized.contains("lcd")) {
             return ClusterCategory.LCD_MONOCHROME
         }
+
+        // All other models (NS200, N250, NS160, N160, N125, Dominar, etc.) can be either LCD or TFT
         return ClusterCategory.AUTO_PROBE
     }
 
     /**
-     * Identifies Bajaj TFT clusters (e.g. Pulsar NS400Z / PULSAR1854).
-     * Presence of the 0610 Media Info characteristic identifies TFT hardware directly via GATT
-     * even if the advertised GAP name differs from known patterns or settings default to NS200.
+     * Identifies Bajaj TFT clusters (e.g. Pulsar NS400Z / NS200 TFT / N250 TFT).
+     * Hardware presence of 0610/0510/0910/0b10 characteristics identifies TFT hardware directly via GATT.
      */
     fun isTftCluster(
         deviceName: String?,
         selectedModelId: String?,
-        hasMediaInfoCharacteristic: Boolean
+        hasMediaInfoCharacteristic: Boolean,
+        hasPlaylistCharacteristic: Boolean = false,
+        hasFavRecentCharacteristic: Boolean = false,
+        userOverride: String = "auto"
     ): Boolean {
-        if (hasMediaInfoCharacteristic) return true
+        if (userOverride == "tft") return true
+        if (userOverride == "lcd") return false
+        if (hasMediaInfoCharacteristic || hasPlaylistCharacteristic || hasFavRecentCharacteristic) return true
         val normalized = normalizeBleName(deviceName).lowercase()
-        if (normalized.contains("1854") || EXPLICIT_TFT_PATTERNS.any { normalized.contains(it) }) return true
+        if (normalized.contains("tft") || normalized.contains("ns400") || normalized.contains("1854")) return true
         if (selectedModelId == "ns400z") return true
-        if (EXPLICIT_LCD_PATTERNS.any { normalized.contains(it) }) return false
         return false
     }
 

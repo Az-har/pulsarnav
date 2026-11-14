@@ -1163,15 +1163,19 @@ class BajajBleManager private constructor(private val context: Context) {
                     recentCallsCharacteristic = service.getCharacteristic(RECENT_CALLS_CHAR_UUID)
 
                     // Condition 1 & 2 Check:
-                    // Does the cluster expose 0610 (Media Info) or explicit TFT model profile?
+                    // Does the cluster expose 0610 (Media Info), 0510 (Playlist), or 0910/0b10 (Phonebook)?
+                    val appSettings = com.pulsarnav.app.data.AppSettings.getInstance(context)
                     val clusterCategory = BleProtocolSafety.classifyCluster(
                         deviceName = connectedDeviceName,
-                        selectedModelId = com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId,
-                        hasMediaInfoCharacteristic = mediaInfoCharacteristic != null
+                        selectedModelId = appSettings.selectedModelId,
+                        hasMediaInfoCharacteristic = mediaInfoCharacteristic != null,
+                        hasPlaylistCharacteristic = playlistInfoCharacteristic != null,
+                        hasFavRecentCharacteristic = favContactsCharacteristic != null || recentCallsCharacteristic != null,
+                        userOverride = appSettings.clusterConsoleType
                     )
 
                     if (clusterCategory == BleProtocolSafety.ClusterCategory.TFT_COLOR) {
-                        Log.i(TAG, "TFT cluster capability detected for $connectedDeviceName -> testing/switching to NEW_TFT_MODERN")
+                        Log.i(TAG, "Hardware TFT characteristic(s) or setting detected for $connectedDeviceName -> upgrading to NEW_TFT_MODERN")
                         switchToModernTftProtocol(gatt, "TFT hardware/profile detected")
                         return@runOnBle
                     }
@@ -1901,7 +1905,10 @@ class BajajBleManager private constructor(private val context: Context) {
             BleProtocolSafety.isTftCluster(
                 deviceName = deviceName,
                 selectedModelId = com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId,
-                hasMediaInfoCharacteristic = mediaInfoCharacteristic != null
+                hasMediaInfoCharacteristic = mediaInfoCharacteristic != null,
+                hasPlaylistCharacteristic = playlistInfoCharacteristic != null,
+                hasFavRecentCharacteristic = favContactsCharacteristic != null || recentCallsCharacteristic != null,
+                userOverride = com.pulsarnav.app.data.AppSettings.getInstance(context).clusterConsoleType
             ))
 
     fun isConnectedToTftCluster(): Boolean = isTftCluster()

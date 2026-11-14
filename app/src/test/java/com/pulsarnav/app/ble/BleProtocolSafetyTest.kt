@@ -41,29 +41,43 @@ class BleProtocolSafetyTest {
 
     @Test
     fun classifyCluster_correctlyCategorizesLcdVsTftModels() {
+        // Pulsar models (NS200, N250, Dominar) come in both LCD and TFT trims: default to AUTO_PROBE
         assertEquals(
-            BleProtocolSafety.ClusterCategory.LCD_MONOCHROME,
+            BleProtocolSafety.ClusterCategory.AUTO_PROBE,
             BleProtocolSafety.classifyCluster("Pulsar NS200", "ns200", false)
         )
         assertEquals(
-            BleProtocolSafety.ClusterCategory.LCD_MONOCHROME,
+            BleProtocolSafety.ClusterCategory.AUTO_PROBE,
             BleProtocolSafety.classifyCluster("Pulsar N250", "n250", false)
         )
+        // User overrides
         assertEquals(
             BleProtocolSafety.ClusterCategory.LCD_MONOCHROME,
-            BleProtocolSafety.classifyCluster("Dominar 400", "dominar400", false)
+            BleProtocolSafety.classifyCluster("Pulsar NS200", "ns200", false, userOverride = "lcd")
         )
+        assertEquals(
+            BleProtocolSafety.ClusterCategory.TFT_COLOR,
+            BleProtocolSafety.classifyCluster("Pulsar NS200", "ns200", false, userOverride = "tft")
+        )
+        // Hardware truth: media characteristic present
+        assertEquals(
+            BleProtocolSafety.ClusterCategory.TFT_COLOR,
+            BleProtocolSafety.classifyCluster("Pulsar NS200", "ns200", true)
+        )
+        // NS400Z model profile
         assertEquals(
             BleProtocolSafety.ClusterCategory.TFT_COLOR,
             BleProtocolSafety.classifyCluster("Pulsar NS400Z", "ns400z", false)
         )
+        // Name containing "tft"
         assertEquals(
             BleProtocolSafety.ClusterCategory.TFT_COLOR,
-            BleProtocolSafety.classifyCluster("UNKNOWN_CLUSTER", "ns200", true)
+            BleProtocolSafety.classifyCluster("Pulsar N250 TFT", "n250", false)
         )
+        // Name containing "lcd"
         assertEquals(
-            BleProtocolSafety.ClusterCategory.AUTO_PROBE,
-            BleProtocolSafety.classifyCluster("GENERIC_BT", "", false)
+            BleProtocolSafety.ClusterCategory.LCD_MONOCHROME,
+            BleProtocolSafety.classifyCluster("Pulsar N250 LCD", "n250", false)
         )
     }
 

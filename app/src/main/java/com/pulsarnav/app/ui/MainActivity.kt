@@ -6093,6 +6093,42 @@ class MainActivity : AppCompatActivity() {
         })
         container.addView(tvPreview)
 
+        val tvConsoleHeader = android.widget.TextView(this).apply {
+            text = "Cluster Hardware Type (LCD vs TFT):"
+            textSize = 12f
+            setPadding(0, dpToPx(12), 0, dpToPx(4))
+            setTextColor(currentTheme.textPrimaryColor)
+        }
+        container.addView(tvConsoleHeader)
+
+        val rgConsoleType = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+        }
+        val rbConsoleAuto = android.widget.RadioButton(this).apply {
+            text = "Auto-Detect (GATT Hardware Check • Any Bajaj Model)"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        val rbConsoleTft = android.widget.RadioButton(this).apply {
+            text = "Force Color TFT (NS400Z / NS200 TFT / N250 TFT)"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        val rbConsoleLcd = android.widget.RadioButton(this).apply {
+            text = "Force Monochrome LCD (NS200 LCD / N250 LCD / Dominar)"
+            setTextColor(currentTheme.textSecondaryColor)
+            textSize = 12f
+        }
+        rgConsoleType.addView(rbConsoleAuto)
+        rgConsoleType.addView(rbConsoleTft)
+        rgConsoleType.addView(rbConsoleLcd)
+        when (appSettings.clusterConsoleType) {
+            AppSettings.CLUSTER_CONSOLE_TFT -> rbConsoleTft.isChecked = true
+            AppSettings.CLUSTER_CONSOLE_LCD -> rbConsoleLcd.isChecked = true
+            else -> rbConsoleAuto.isChecked = true
+        }
+        container.addView(rgConsoleType)
+
         val tvModeHeader = android.widget.TextView(this).apply {
             text = "Mirror Mode (Screen-Off Safe):"
             textSize = 12f
@@ -6208,6 +6244,11 @@ class MainActivity : AppCompatActivity() {
                 appSettings.tftWifiSsid = etSsid.text.toString().trim()
                 appSettings.tftWifiVin = etVin.text.toString().trim()
                 appSettings.tftWifiPassphrase = etPass.text.toString().trim()
+                appSettings.clusterConsoleType = when {
+                    rbConsoleTft.isChecked -> AppSettings.CLUSTER_CONSOLE_TFT
+                    rbConsoleLcd.isChecked -> AppSettings.CLUSTER_CONSOLE_LCD
+                    else -> AppSettings.CLUSTER_CONSOLE_AUTO
+                }
                 val nextMode = if (rbLiveMap.isChecked) AppSettings.TFT_MODE_LIVE_MAP else AppSettings.TFT_MODE_HUD
                 appSettings.tftMirrorMode = nextMode
                 appSettings.tftCastLayoutMode = when {

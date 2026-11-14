@@ -90,6 +90,11 @@ class AppSettings(context: Context) {
         const val KEY_TFT_MAP_ZOOM = "tft_map_zoom"
         const val KEY_TFT_MAP_HEADING_UP = "tft_map_heading_up"
         const val KEY_AUTO_WIFI_MIRROR_ENABLED = "auto_wifi_mirror_enabled"
+        const val KEY_CLUSTER_CONSOLE_TYPE = "cluster_console_type"
+
+        const val CLUSTER_CONSOLE_AUTO = "auto"
+        const val CLUSTER_CONSOLE_TFT = "tft"
+        const val CLUSTER_CONSOLE_LCD = "lcd"
 
         const val TFT_MODE_LIVE_MAP = "live_map"
         const val TFT_MODE_HUD = "cockpit_hud"
@@ -656,6 +661,20 @@ class AppSettings(context: Context) {
         get() = getSafeBoolean(KEY_AUTO_WIFI_MIRROR_ENABLED, true)
         set(value) {
             prefs.edit().putBoolean(KEY_AUTO_WIFI_MIRROR_ENABLED, value).apply()
+        }
+
+    var clusterConsoleType: String
+        get() = when (getSafeString(KEY_CLUSTER_CONSOLE_TYPE, CLUSTER_CONSOLE_AUTO)) {
+            CLUSTER_CONSOLE_TFT -> CLUSTER_CONSOLE_TFT
+            CLUSTER_CONSOLE_LCD -> CLUSTER_CONSOLE_LCD
+            else -> CLUSTER_CONSOLE_AUTO
+        }
+        set(value) {
+            val normalized = when (value) {
+                CLUSTER_CONSOLE_TFT, CLUSTER_CONSOLE_LCD -> value
+                else -> CLUSTER_CONSOLE_AUTO
+            }
+            prefs.edit().putString(KEY_CLUSTER_CONSOLE_TYPE, normalized).apply()
         }
 
     fun cycleTftCastLayoutMode(): String {
