@@ -62,8 +62,6 @@ class AppSettings(context: Context) {
         const val KEY_FUEL_PERCENT = "fuel_level_percent"
         const val KEY_FUEL_LITERS = "fuel_level_liters"
         const val KEY_LAST_SYNC_MS = "last_synced_timestamp_ms"
-        const val KEY_DAYS_OF_OWNERSHIP = "days_of_ownership"
-        const val KEY_PURCHASE_DATE_MS = "bike_purchase_date_ms"
 
         const val KEY_RIDER_BLOOD_GROUP = "rider_blood_group"
         const val KEY_EMERGENCY_CONTACT_NAME = "ice_contact_name"
@@ -127,6 +125,7 @@ class AppSettings(context: Context) {
         const val KEY_CUSTOM_ACCENT_RED = "custom_accent_red"
         const val KEY_CUSTOM_ACCENT_GREEN = "custom_accent_green"
         const val KEY_CUSTOM_ACCENT_BLUE = "custom_accent_blue"
+        @Deprecated("Legacy key from integer tab indexing; retained to skip during backup restore")
         const val KEY_LAST_ACTIVE_TAB = "last_active_tab"
         const val KEY_ACTIVE_TAB_KEY = "active_tab_key"
 
@@ -144,6 +143,7 @@ class AppSettings(context: Context) {
             }
         }
 
+        @Suppress("DEPRECATION")
         internal fun coerceRestoreValue(
             key: String,
             value: Any,
@@ -175,14 +175,14 @@ class AppSettings(context: Context) {
             }
             return when (key) {
                 KEY_PETROL_PRICE, KEY_FUEL_LITERS -> RestoreAction.PutFloat(asFloat())
-                KEY_PROJECTED_DTE, KEY_FUEL_PERCENT, KEY_DAYS_OF_OWNERSHIP -> RestoreAction.PutInt(asInt())
+                KEY_PROJECTED_DTE, KEY_FUEL_PERCENT -> RestoreAction.PutInt(asInt())
                 KEY_CUSTOM_ACCENT_RED, KEY_CUSTOM_ACCENT_GREEN, KEY_CUSTOM_ACCENT_BLUE ->
                     RestoreAction.PutInt(asInt().coerceIn(0, 255))
                 KEY_NAV_V2_ROUTE_MODE -> RestoreAction.PutInt(asInt().coerceIn(0, 3))
                 KEY_NAV_V2_UNITS -> RestoreAction.PutInt(asInt().coerceIn(0, 1))
                 KEY_NAV_V2_AVOID_BITMASK -> RestoreAction.PutInt(asInt() and 0x0F)
                 KEY_TFT_MAP_ZOOM -> RestoreAction.PutInt(asInt().coerceIn(12, 18))
-                KEY_LAST_SYNC_MS, KEY_PURCHASE_DATE_MS -> RestoreAction.PutLong(asLong())
+                KEY_LAST_SYNC_MS -> RestoreAction.PutLong(asLong())
                 KEY_DOC_RC_PATH, KEY_DOC_INSURANCE_PATH, KEY_DOC_PUC_PATH -> {
                     val path = value.toString()
                     if (path.isNotBlank() && fileExists(path)) RestoreAction.PutString(path) else RestoreAction.Remove
@@ -399,12 +399,6 @@ class AppSettings(context: Context) {
         get() = normalizeTabKey(getSafeString(KEY_ACTIVE_TAB_KEY, TAB_HOME))
         set(value) {
             prefs.edit().putString(KEY_ACTIVE_TAB_KEY, normalizeTabKey(value)).apply()
-        }
-
-    var lastActiveTab: Int
-        get() = getSafeInt(KEY_LAST_ACTIVE_TAB, 0)
-        set(value) {
-            prefs.edit().putInt(KEY_LAST_ACTIVE_TAB, value).apply()
         }
 
     var petrolPricePerLiter: Double
@@ -838,6 +832,7 @@ class AppSettings(context: Context) {
         saveBikeIssues(current)
     }
 
+    @Suppress("DEPRECATION")
     fun getAllSettingsMap(): Map<String, *> = prefs.all
         .filterKeys { it != KEY_LAST_ACTIVE_TAB && it != KEY_ACTIVE_TAB_KEY }
 

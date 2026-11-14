@@ -926,7 +926,12 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
             }
             TftWifiProtocol.DOC_RC -> readDocumentPreviewBytes(TftWifiProtocol.DOC_RC, appSettings.docRcPath)
             TftWifiProtocol.DOC_INSURANCE -> readDocumentPreviewBytes(TftWifiProtocol.DOC_INSURANCE, appSettings.docInsurancePath)
-            else -> ByteArray(0)
+            else -> {
+                if (docNum == TftWifiProtocol.DOC_DL) {
+                    Log.d(TAG, "DOC_DL requested by cluster but driving licence storage is not configured")
+                }
+                ByteArray(0)
+            }
         }
     }
 
@@ -1073,7 +1078,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         }
     }
 
-    fun simulateClusterTouch(touchType: Int = 0, x: Int, y: Int) {
+    fun simulateClusterTouch(touchType: Int = 9, x: Int, y: Int) {
         val cx = x.coerceIn(0, TftWifiProtocol.TFT_WIDTH - 1)
         val cy = y.coerceIn(0, TftWifiProtocol.TFT_HEIGHT - 1)
         displayController.onClusterTouch(touchType, cx, cy)

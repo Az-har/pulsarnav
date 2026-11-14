@@ -117,6 +117,7 @@ class DataVaultManager private constructor(private val context: Context) {
         const val QR_MAGIC_HEADER = QrMigrationCodec.QR_MAGIC_HEADER
         const val QR_ENCRYPTED_HEADER = QrMigrationCodec.QR_ENCRYPTED_HEADER
         const val DEFAULT_EXPORT_CACHE_MAX_AGE_MS = 10L * 60L * 1000L
+        @Suppress("DEPRECATION")
         private val EXCLUDED_SETTINGS_KEYS = setOf(
             AppSettings.KEY_DOC_RC_PATH,
             AppSettings.KEY_DOC_INSURANCE_PATH,

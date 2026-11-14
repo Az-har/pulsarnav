@@ -1292,7 +1292,8 @@ class MainActivity : AppCompatActivity() {
             launchEmergencyHospitals()
         }
         binding.btnEmergencyAmbulance.setOnClickListener {
-            showEmergencyAmbulanceDialog()
+            provideHapticFeedback()
+            showEmergencyQuickActionsSheet()
         }
         binding.layoutEmergencyRiderInfo.setOnClickListener {
             showEmergencyMedicalDialog()
@@ -7105,10 +7106,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showEmergencyAmbulanceDialog() {
-        provideHapticFeedback()
-        showEmergencyQuickActionsSheet()
-    }
 
     private fun showEmergencyMedicalDialog() {
         provideHapticFeedback()

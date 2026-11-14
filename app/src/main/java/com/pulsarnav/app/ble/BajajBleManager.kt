@@ -287,14 +287,11 @@ class BajajBleManager private constructor(private val context: Context) {
         if (!isWaitingForBondCompletion) return@Runnable
         isWaitingForBondCompletion = false
         val bondState = try { gatt.device.bondState } catch (_: SecurityException) { BluetoothDevice.BOND_NONE }
-        val tft = isTftCluster()
         if (bondState == BluetoothDevice.BOND_BONDED) {
             Log.i(TAG, "Bond wait timeout resolved: device already BOND_BONDED")
             proceedAfterBondSettled(gatt)
-        } else if (tft) {
-            fallbackToLegacyLcdProtocol("TFT bonding timed out (bondState=$bondState)")
         } else {
-            proceedAfterBondSettled(gatt)
+            fallbackToLegacyLcdProtocol("TFT bonding timed out (bondState=$bondState)")
         }
     }
 

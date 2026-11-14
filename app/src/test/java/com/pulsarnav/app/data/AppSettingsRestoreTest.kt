@@ -17,6 +17,7 @@ class AppSettingsRestoreTest {
     }
 
     @Test
+    @Suppress("DEPRECATION")
     fun coerceRestoreValue_skipsTransientTabStateAndClampsCustomAndNavV2Fields() {
         assertEquals(
             RestoreAction.Skip,

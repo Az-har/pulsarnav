@@ -515,22 +515,6 @@ object TftTcpCodec {
         return out
     }
 
-    fun buildStopNavigationFrame(): ByteArray = byteArrayOf(
-        TftWifiProtocol.TYPE_PHONE_PUSH.toByte(),
-        TftWifiProtocol.GROUP_DATA.toByte(),
-        TftWifiProtocol.CMD_STOP_NAV.toByte(),
-        0x00,
-        0x00
-    )
-
-    fun buildShowPopupFrame(): ByteArray = byteArrayOf(
-        TftWifiProtocol.TYPE_PHONE_PUSH.toByte(),
-        TftWifiProtocol.GROUP_POPUP.toByte(),
-        TftWifiProtocol.CMD_SHOW_POPUP.toByte(),
-        0x00,
-        0x00
-    )
-
     fun buildNavV2AckResponse(cmd: Int, statusByte: Int = 0x00): ByteArray = byteArrayOf(
         TftWifiProtocol.TYPE_PHONE_RESPONSE.toByte(),
         TftWifiProtocol.GROUP_DATA.toByte(),
