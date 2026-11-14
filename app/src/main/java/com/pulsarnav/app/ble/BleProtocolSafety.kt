@@ -49,18 +49,6 @@ object BleProtocolSafety {
         NEW_TFT_MODERN
     }
 
-    private val EXPLICIT_TFT_PATTERNS = listOf(
-        "ns400", "ns400z", "pulsar 400", "dominar tft", "pulsar tft"
-    )
-
-    private val EXPLICIT_LCD_PATTERNS = listOf(
-        "ns200", "ns160", "ns125",
-        "n250", "f250", "n160", "n150", "n125",
-        "pulsar 150", "pulsar 220", "pulsar 125", "220f",
-        "dominar 400", "dominar 250",
-        "rouser", "chetak"
-    )
-
     fun normalizeBleName(raw: String?): String =
         raw?.substringBefore('\u0000')?.trim().orEmpty()
 
@@ -153,6 +141,7 @@ object BleProtocolSafety {
      * WRITE_TYPE_NO_RESPONSE writes whenever [packetSize] exceeds the negotiated single-PDU
      * ATT payload limit (`mtu - 3`). Matches OEM Bajaj Ride Connect's pre-write GlobalVar.isMTUIncreased gate.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun fitsSingleAttWrite(
         isTft: Boolean,
         isWriteTypeDefault: Boolean,

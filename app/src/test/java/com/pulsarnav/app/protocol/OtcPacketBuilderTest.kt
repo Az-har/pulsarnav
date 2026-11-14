@@ -152,6 +152,7 @@ class OtcPacketBuilderTest {
         assertEquals(4.toByte(), frame[5])
         assertEquals(1.toByte(), frame[6])
         assertEquals(3.toByte(), frame[13])
+        assertChecksumValid(frame, 54)
     }
 
     @Test

@@ -1235,9 +1235,13 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSyncPhonebookCalls.setOnClickListener {
             provideHapticFeedback()
-            bleManager.syncPhonebookAndCalls()
-            bleManager.dispatchPlaylistInfoOnBle()
-            showFeedback("Syncing Favs, Call Log & Playlist to cluster...")
+            if (bleManager.isConnectedToTftCluster()) {
+                bleManager.syncPhonebookAndCalls()
+                bleManager.dispatchPlaylistInfoOnBle()
+                showFeedback("Syncing Favs, Call Log & Playlist to cluster...")
+            } else {
+                showFeedback("Phonebook & Playlist sync is only available on Color TFT clusters (NS400Z)", isAlert = true)
+            }
         }
 
         binding.btnGrantTelephonyPerms.setOnClickListener {
@@ -5208,8 +5212,10 @@ class MainActivity : AppCompatActivity() {
                         stopStatusDotPulse(binding.viewStatusDot)
                         stopStatusDotPulse(binding.viewTopConnectionDot)
                         BikeBleForegroundService.start(this@MainActivity)
+                        val isTft = bleManager.isConnectedToTftCluster()
+                        val clusterTypeLabel = if (isTft) "TFT" else "LCD"
                         binding.viewStatusDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_connected)
-                        binding.tvConnectionStatus.text = "Connected • ${state.deviceName}"
+                        binding.tvConnectionStatus.text = "Connected ($clusterTypeLabel) • ${state.deviceName}"
                         binding.tvConnectionStatus.setTextColor(currentTheme.textPrimaryColor)
                         binding.tvSubStatus.text = "Cluster synced (${state.address})"
                         binding.tvSubStatus.setTextColor(currentTheme.textSecondaryColor)
@@ -5217,9 +5223,10 @@ class MainActivity : AppCompatActivity() {
                         binding.btnScan.backgroundTintList = ColorStateList.valueOf(currentTheme.subtleColor)
                         binding.btnScan.setTextColor(currentTheme.accentColor)
                         binding.layoutDeviceList.visibility = View.GONE
+                        binding.btnSyncPhonebookCalls.visibility = if (isTft) View.VISIBLE else View.GONE
 
                         binding.viewTopConnectionDot.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.status_connected)
-                        binding.tvTopConnectionStatus.text = "CONNECTED"
+                        binding.tvTopConnectionStatus.text = if (isTft) "TFT CONNECTED" else "LCD CONNECTED"
                         binding.tvTopConnectionStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.status_connected))
 
                         recordSyncTime()
@@ -5365,8 +5372,8 @@ class MainActivity : AppCompatActivity() {
                     isHeadlessActive -> "Switch to\nScreen Cast"
                     else -> "Cast Google Maps\n(Screen Mirror)"
                 }
-                binding.btnToggleTftHudMirror.isEnabled = !isHandshaking
-                binding.btnCastLiveScreen.isEnabled = !isHandshaking
+                binding.btnToggleTftHudMirror.isEnabled = !isHandshaking && !isOtcConnected
+                binding.btnCastLiveScreen.isEnabled = !isHandshaking && !isOtcConnected
 
                 val isLiveCast = active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST
                 if (isLiveCast) {

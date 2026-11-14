@@ -336,7 +336,18 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
 
     private fun startInternal(source: TftMirrorSource, projection: MediaProjection?): Boolean {
         synchronized(sessionLock) {
-            val bleName = BajajBleManager.getInstance(context).getConnectedClusterName()
+            val bleManager = BajajBleManager.getInstance(context)
+            if (bleManager.isLinkReady && !bleManager.isConnectedToTftCluster()) {
+                Log.w(TAG, "TFT Wi-Fi Mirroring blocked: Connected cluster is an OTC LCD display, not a color TFT.")
+                _mirrorState.value = TftMirrorState(
+                    status = TftMirrorStatus.ERROR,
+                    source = source,
+                    errorMessage = "Wi-Fi Mirroring is only supported on Bajaj Color TFT displays (e.g. Pulsar NS400Z)."
+                )
+                return false
+            }
+
+            val bleName = bleManager.getConnectedClusterName()
             val ssid = resolveTargetSsid(bleName)
             val password = resolveTargetPassword()
 

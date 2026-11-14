@@ -967,7 +967,27 @@ class BajajBleManager private constructor(private val context: Context) {
         isWaitingForBondCompletion = false
         bondFailedForSession = false
         bleHandler.removeCallbacks(bondTimeoutRunnable)
+        bleHandler.removeCallbacks(initialTftSyncRunnable)
+        bleHandler.removeCallbacks(delayedMediaSyncRunnable)
+
+        // Purge TFT-only operations from write queue to avoid GATT error on LCD
+        val iter = writeQueue.iterator()
+        while (iter.hasNext()) {
+            val op = iter.next()
+            if (op is QueuedGattOp.WriteCharacteristic) {
+                val uuid = op.characteristic.uuid
+                if (uuid == MEDIA_INFO_CHAR_UUID || uuid == PLAYLIST_INFO_CHAR_UUID ||
+                    uuid == FAV_CONTACTS_CHAR_UUID || uuid == RECENT_CALLS_CHAR_UUID) {
+                    iter.remove()
+                }
+            }
+        }
+
         onLinkReady("fallback-to-lcd-legacy: $reason")
+        if (isLinkReady) {
+            dispatchGeneralPacketOnBle()
+            scheduleHeartbeat()
+        }
     }
 
     private fun startMtuNegotiation(gatt: BluetoothGatt, resetRetries: Boolean) {
@@ -1221,15 +1241,18 @@ class BajajBleManager private constructor(private val context: Context) {
                     BleProtocolSafety.DEFAULT_ATT_MTU
                 }
                 when {
-                    tft && bondState == BluetoothDevice.BOND_BONDING -> {
-                        Log.i(TAG, "MTU=$negotiatedMtu negotiated, waiting for TFT bonding to complete before activating link")
+                    tft && (isWaitingForBondCompletion || bondState == BluetoothDevice.BOND_BONDING) -> {
+                        Log.i(TAG, "MTU=$negotiatedMtu negotiated, waiting for TFT bonding to complete before activating link (bondState=$bondState)")
                         isWaitingForBondCompletion = true
                         bleHandler.removeCallbacks(bondTimeoutRunnable)
                         bleHandler.postDelayed(bondTimeoutRunnable, BOND_WAIT_TIMEOUT_MS)
                     }
-                    tft && (bondFailedForSession || bondState != BluetoothDevice.BOND_BONDED) -> {
-                        bondFailedForSession = true
-                        abortHandshakeAndReconnect("TFT not bonded during MTU settlement (bondState=$bondState)", allowReconnect = false)
+                    tft && bondFailedForSession -> {
+                        abortHandshakeAndReconnect("TFT bonding failed for session", allowReconnect = false)
+                    }
+                    tft && bondState != BluetoothDevice.BOND_BONDED -> {
+                        Log.w(TAG, "TFT unbonded during MTU settlement (bondState=$bondState); initiating bonding")
+                        switchToModernTftProtocol(gatt, "Unbonded during MTU callback")
                     }
                     tft && negotiatedMtu < recommendedTftMtu && mtuRetryCount < MAX_MTU_RETRIES -> {
                         mtuRetryCount++
@@ -1919,17 +1942,18 @@ class BajajBleManager private constructor(private val context: Context) {
     private fun sanitizeBleName(raw: String?): String =
         BleProtocolSafety.normalizeBleName(raw)
 
-    private fun isTftCluster(deviceName: String = connectedDeviceName): Boolean =
-        activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.NEW_TFT_MODERN ||
-        (activeProtocolStrategy != BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY &&
-            BleProtocolSafety.isTftCluster(
-                deviceName = deviceName,
-                selectedModelId = com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId,
-                hasMediaInfoCharacteristic = mediaInfoCharacteristic != null,
-                hasPlaylistCharacteristic = playlistInfoCharacteristic != null,
-                hasFavRecentCharacteristic = favContactsCharacteristic != null || recentCallsCharacteristic != null,
-                userOverride = com.pulsarnav.app.data.AppSettings.getInstance(context).clusterConsoleType
-            ))
+    private fun isTftCluster(deviceName: String = connectedDeviceName): Boolean {
+        if (activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.NEW_TFT_MODERN) return true
+        val appSettings = com.pulsarnav.app.data.AppSettings.getInstance(context)
+        return BleProtocolSafety.isTftCluster(
+            deviceName = deviceName,
+            selectedModelId = appSettings.selectedModelId,
+            hasMediaInfoCharacteristic = mediaInfoCharacteristic != null,
+            hasPlaylistCharacteristic = playlistInfoCharacteristic != null,
+            hasFavRecentCharacteristic = favContactsCharacteristic != null || recentCallsCharacteristic != null,
+            userOverride = appSettings.clusterConsoleType
+        )
+    }
 
     fun isConnectedToTftCluster(): Boolean = isTftCluster()
 
@@ -1941,7 +1965,19 @@ class BajajBleManager private constructor(private val context: Context) {
         }
         val target = generalCharacteristic ?: return
 
-        val pkt = if (activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.OLD_LCD_LEGACY) {
+        val isTrueTftHardware = mediaInfoCharacteristic != null || playlistInfoCharacteristic != null ||
+            favContactsCharacteristic != null || recentCallsCharacteristic != null
+        val useV2 = activeProtocolStrategy == BleProtocolSafety.BleProtocolStrategy.NEW_TFT_MODERN &&
+            (isTrueTftHardware || BleProtocolSafety.isTftCluster(
+                deviceName = connectedDeviceName,
+                selectedModelId = com.pulsarnav.app.data.AppSettings.getInstance(context).selectedModelId,
+                hasMediaInfoCharacteristic = mediaInfoCharacteristic != null,
+                hasPlaylistCharacteristic = playlistInfoCharacteristic != null,
+                hasFavRecentCharacteristic = favContactsCharacteristic != null || recentCallsCharacteristic != null,
+                userOverride = com.pulsarnav.app.data.AppSettings.getInstance(context).clusterConsoleType
+            ))
+
+        val pkt = if (!useV2) {
             OtcPacketBuilder.buildGeneralPacketLegacy(
                 batteryPercent = currentBattery,
                 volumeLevel = currentVolume,
@@ -2125,10 +2161,15 @@ class BajajBleManager private constructor(private val context: Context) {
         }
 
         val tft = isTftCluster()
-        // TFT clusters (NS400Z / PULSAR1854) and 0610 media info require WRITE_TYPE_DEFAULT (ATT Write Request),
-        // while legacy LCD clusters (NS200) use WRITE_TYPE_NO_RESPONSE for real-time telemetry/alerts.
-        val useWriteDefault = (char.uuid == MEDIA_INFO_CHAR_UUID || tft) &&
-            (char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
+        // TFT clusters (NS400Z / PULSAR1854) use WRITE_TYPE_DEFAULT for media/phonebook/general telemetry,
+        // while 0110 TBT Navigation always streams via WRITE_TYPE_NO_RESPONSE for rapid low-latency updates.
+        val useWriteDefault = when (char.uuid) {
+            MEDIA_INFO_CHAR_UUID, PLAYLIST_INFO_CHAR_UUID, FAV_CONTACTS_CHAR_UUID, RECENT_CALLS_CHAR_UUID -> true
+            GENERAL_CHAR_UUID -> tft && (char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
+            TBT_NAV_CHAR_UUID -> false
+            else -> (char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0 &&
+                (char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
+        }
         val writeType = if (useWriteDefault) {
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         } else if ((char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {

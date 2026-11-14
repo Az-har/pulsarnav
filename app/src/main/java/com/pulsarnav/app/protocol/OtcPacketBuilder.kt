@@ -430,6 +430,14 @@ object OtcPacketBuilder {
         }
 
         b[53] = counter
+
+        // [54] 8-bit checksum: sum(0..53) & 0xFF
+        var sum = 0
+        for (i in 0 until 54) {
+            sum = (sum + (b[i].toInt() and 0xFF)) and 0xFF
+        }
+        b[54] = sum.toByte()
+
         return b
     }
 
