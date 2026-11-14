@@ -223,6 +223,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var pendingWifiAction: (() -> Unit)? = null
+    private val wifiSettingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        val action = pendingWifiAction
+        pendingWifiAction = null
+        if (isWifiEnabled()) {
+            showFeedback("Wi-Fi enabled")
+            action?.invoke()
+        } else {
+            showFeedback("Wi-Fi is still turned off. Wi-Fi is required to connect to cluster.", isAlert = true)
+        }
+    }
+
     private var activeDebugFilter: DebugFilter = DebugFilter.ALL
     private var isDebugLogPaused: Boolean = false
     private var fullscreenTftDialog: Dialog? = null
@@ -367,6 +381,7 @@ class MainActivity : AppCompatActivity() {
         val filter = IntentFilter().apply {
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
             addAction(LocationManager.PROVIDERS_CHANGED_ACTION)
+            addAction(android.net.wifi.WifiManager.WIFI_STATE_CHANGED_ACTION)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 addAction(LocationManager.MODE_CHANGED_ACTION)
             }
@@ -1000,12 +1015,14 @@ class MainActivity : AppCompatActivity() {
                 BikeBleForegroundService.stopTftMirror(this)
                 showFeedback("TFT Wi-Fi mirror stopped")
             } else {
-                val missingWifi = getMissingTftWifiPermissions()
-                if (missingWifi.isNotEmpty()) {
-                    pendingTftWifiAction = { startTftHudMirror() }
-                    tftWifiPermissionLauncher.launch(missingWifi.toTypedArray())
-                } else {
-                    startTftHudMirror()
+                ensureWifiEnabled {
+                    val missingWifi = getMissingTftWifiPermissions()
+                    if (missingWifi.isNotEmpty()) {
+                        pendingTftWifiAction = { startTftHudMirror() }
+                        tftWifiPermissionLauncher.launch(missingWifi.toTypedArray())
+                    } else {
+                        startTftHudMirror()
+                    }
                 }
             }
         }
@@ -1020,12 +1037,14 @@ class MainActivity : AppCompatActivity() {
                 requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 showFeedback("Live TFT cast stopped")
             } else {
-                val missingWifi = getMissingTftWifiPermissions()
-                if (missingWifi.isNotEmpty()) {
-                    pendingTftWifiAction = { checkLandscapeAndLaunchCast() }
-                    tftWifiPermissionLauncher.launch(missingWifi.toTypedArray())
-                } else {
-                    checkLandscapeAndLaunchCast()
+                ensureWifiEnabled {
+                    val missingWifi = getMissingTftWifiPermissions()
+                    if (missingWifi.isNotEmpty()) {
+                        pendingTftWifiAction = { checkLandscapeAndLaunchCast() }
+                        tftWifiPermissionLauncher.launch(missingWifi.toTypedArray())
+                    } else {
+                        checkLandscapeAndLaunchCast()
+                    }
                 }
             }
         }
@@ -4629,7 +4648,54 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun isWifiEnabled(): Boolean {
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+        return wm?.isWifiEnabled == true
+    }
+
+    private fun promptEnableWifi(onWifiReady: (() -> Unit)? = null) {
+        pendingWifiAction = onWifiReady
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Turn On Wi-Fi")
+            .setMessage("Wi-Fi is currently turned off on your phone. To cast navigation maps to your motorcycle TFT cluster, Wi-Fi must be enabled.")
+            .setPositiveButton("Turn On") { _, _ ->
+                val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        Intent(android.provider.Settings.Panel.ACTION_WIFI)
+                    } catch (_: Exception) {
+                        Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
+                    }
+                } else {
+                    Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
+                }
+                try {
+                    wifiSettingsLauncher.launch(intent)
+                } catch (e: Exception) {
+                    showFeedback("Unable to open Wi-Fi settings: ${e.message}", isAlert = true)
+                }
+            }
+            .setNegativeButton("Cancel") { _, _ ->
+                pendingWifiAction = null
+            }
+            .setOnCancelListener {
+                pendingWifiAction = null
+            }
+            .show()
+    }
+
+    private fun ensureWifiEnabled(onReady: () -> Unit) {
+        if (!isWifiEnabled()) {
+            promptEnableWifi(onReady)
+        } else {
+            onReady()
+        }
+    }
+
     private fun startTftHudMirror() {
+        if (!isWifiEnabled()) {
+            promptEnableWifi { startTftHudMirror() }
+            return
+        }
         val mirrorModeLabel = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) {
             "Cockpit HUD"
         } else {
@@ -4641,6 +4707,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkLandscapeAndLaunchCast() {
+        if (!isWifiEnabled()) {
+            promptEnableWifi { checkLandscapeAndLaunchCast() }
+            return
+        }
         if (appSettings.isTftCastForceLandscapeEnabled && !android.provider.Settings.System.canWrite(this)) {
             com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
                 .setTitle("Allow Auto-Landscape")
@@ -5860,6 +5930,44 @@ class MainActivity : AppCompatActivity() {
             setPadding(pad, dpToPx(12), pad, 0)
         }
 
+        if (!isWifiEnabled()) {
+            val wifiWarningCard = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                val padH = dpToPx(12)
+                val padV = dpToPx(8)
+                setPadding(padH, padV, padH, padV)
+                val amberColor = ContextCompat.getColor(this@MainActivity, R.color.amber_accent)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dpToPx(8).toFloat()
+                    setColor(ColorUtils.setAlphaComponent(amberColor, 35))
+                    setStroke(dpToPx(1), amberColor)
+                }
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, 0, 0, dpToPx(12)) }
+            }
+            val tvWarn = android.widget.TextView(this).apply {
+                text = "⚠️ Wi-Fi is turned off on your phone. Turn on Wi-Fi to connect and cast to your cluster."
+                textSize = 12f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.amber_accent))
+                layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            val btnEnable = com.google.android.material.button.MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+                text = "Turn On"
+                textSize = 12f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.amber_accent))
+                setOnClickListener {
+                    promptEnableWifi()
+                }
+            }
+            wifiWarningCard.addView(tvWarn)
+            wifiWarningCard.addView(btnEnable)
+            container.addView(wifiWarningCard)
+        }
+
         val infoText = android.widget.TextView(this).apply {
             text = "For Bajaj NS400Z / TFT clusters. Leave SSID blank to auto-use the connected PULSAR device name. If you enter your 17-char VIN, PulsarNav derives the OEM SoftAP WPA2 password automatically."
             textSize = 12f
@@ -6026,7 +6134,11 @@ class MainActivity : AppCompatActivity() {
                 appSettings.isTftCastAutoOpenMapsEnabled = cbAutoOpenMaps.isChecked
                 appSettings.isTftCastForceLandscapeEnabled = cbForceLandscape.isChecked
                 TftWifiMirrorManager.getInstance(this).switchHeadlessModeIfActive(nextMode)
-                showFeedback("TFT settings saved")
+                if (!isWifiEnabled()) {
+                    showFeedback("TFT settings saved • Remember to turn on Wi-Fi before casting", isAlert = true)
+                } else {
+                    showFeedback("TFT settings saved")
+                }
             }
             .setNeutralButton("Clear Wi-Fi") { _, _ ->
                 appSettings.tftWifiSsid = ""

@@ -411,6 +411,18 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
                 return true
             }
 
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            if (wm?.isWifiEnabled == false) {
+                stopMirroringLocked(preserveErrorState = true)
+                _mirrorState.value = TftMirrorState(
+                    status = TftMirrorStatus.ERROR,
+                    source = source,
+                    ssid = ssid,
+                    errorMessage = "Wi-Fi is turned off. Turn on Wi-Fi in Android Settings to connect."
+                )
+                return false
+            }
+
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                 stopMirroringLocked(preserveErrorState = true)
                 _mirrorState.value = TftMirrorState(
