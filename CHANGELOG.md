@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.18] - 2026-11-15
+
+### Added
+- **Navigation Hub Bottom Sheet & Seamless Google Maps Sharing**:
+  - Modern Material 3 bottom sheet (`bottom_sheet_navigation_hub.xml`) opens automatically upon sharing a destination, coordinates, or pin from Google Maps (`Intent.ACTION_SEND` / `ACTION_VIEW`), or tapping the persistent search bar.
+  - Live cellular destination resolver with indeterminate progress indicator, destination title, distance, and ETA preview.
+  - 5 quick destination shortcut chips (`Home`, `Work`, `Petrol Pump`, `Hospital`, `Bajaj Service Center`) for instant one-touch routing.
+  - Persistent Recent Trips history with 1-tap re-routing and automatic JSON-backed persistence (`nav_v2_recent_dests_json`).
+  - Action controls: primary "Route on TFT Cluster (Live Map)", secondary "Open in Maps", and "Stop Route".
+- **Active Navigation Dashboard Card**:
+  - Dynamic Material card on home screen showing live next-turn maneuver, distance, ETA, live status badge (`TFT LIVE` / `REROUTING`), manual "Reroute" trigger, and "Stop Route" controls.
+- **Smart Auto-Rerouting (Google Maps Parity)**:
+  - Tightened off-route deviation threshold to 35m for rapid detection in dense urban streets.
+  - Turn overshoot / missed turn detector in `computeRouteProgress()` triggers recalculation when riding past an intersection.
+  - Fast 3.5s OSRM recalculation cooldown over cellular data.
+  - Cluster visual feedback: turn card border turns amber gold (`#F59E0B`) with `"REROUTING..."` and `"Recalculating path..."`.
+
+### Fixed
+- **TFT Map Route Polyline Rendering**:
+  - Eliminated flawed diagonal bounding box clipping and point skipping that broke or omitted the blue route line across screen boundaries.
+  - Full-screen hardware-accelerated Skia path rendering with 16px contrast casing and 10px high-contrast core.
+
+---
+
 ## [1.3.17] - 2026-11-14
 
 ### Removed
