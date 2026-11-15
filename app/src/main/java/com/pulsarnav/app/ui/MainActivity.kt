@@ -61,6 +61,12 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import android.text.Editable
+import android.text.TextWatcher
+import android.text.TextUtils
+import android.view.inputmethod.EditorInfo
+import android.widget.ProgressBar
+import com.pulsarnav.app.wifi.TftMapMathAndParser
 import android.webkit.MimeTypeMap
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1116,10 +1122,26 @@ class MainActivity : AppCompatActivity() {
             requestIgnoreBatteryOptimization()
         }
 
+        // Active TFT Live Navigation Dashboard Card
+        binding.cardActiveTftNavigation.setOnClickListener {
+            provideHapticFeedback()
+            showNavigationHubBottomSheet()
+        }
+        binding.btnActiveNavReroute.setOnClickListener {
+            provideHapticFeedback()
+            TftNavigationMapEngine.getInstance(this).triggerManualReroute()
+            showFeedback("Recalculating route...")
+        }
+        binding.btnActiveNavStop.setOnClickListener {
+            provideHapticFeedback()
+            TftNavigationMapEngine.getInstance(this).clearActiveRoute()
+            showFeedback("PulsarNav Live Map route cleared")
+        }
+
         // Search Bar click -> Built-in Lock-Proof TFT Route OR Google Maps
         binding.layoutSearchBar.setOnClickListener {
             provideHapticFeedback()
-            showDestinationSearchAndRouteDialog()
+            showNavigationHubBottomSheet()
         }
 
         // Quick Nearby Fuel on Fuel Tab
@@ -3264,6 +3286,16 @@ class MainActivity : AppCompatActivity() {
         binding.tvMapsTbtFixLink.setTextColor(theme.accentColor)
         binding.tvEtaBadge.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
         binding.tvEtaBadge.setTextColor(theme.accentColor)
+
+        // Active TFT Live Navigation Dashboard Card
+        binding.cardActiveTftNavigation.setCardBackgroundColor(theme.cardColor)
+        binding.cardActiveTftNavigation.strokeColor = theme.primaryColor
+        binding.tvActiveNavNextTurn.setTextColor(theme.textPrimaryColor)
+        binding.tvActiveNavTripSummary.setTextColor(theme.textSecondaryColor)
+        binding.tvActiveNavStatusBadge.setTextColor(theme.accentColor)
+        binding.tvActiveNavStatusBadge.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
+        binding.btnActiveNavReroute.setTextColor(theme.textSecondaryColor)
+        binding.btnActiveNavStop.setTextColor(theme.primaryColor)
 
         // Emergency Assistance Card
         binding.tvEmergencyBadge.backgroundTintList = ColorStateList.valueOf(theme.subtleColor)
@@ -6306,66 +6338,247 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTftRouteFromSharedInput(rawInput: String) {
-        val mapEngine = TftNavigationMapEngine.getInstance(this)
-        val wifiMgr = TftWifiMirrorManager.getInstance(this)
-        BikeBleForegroundService.startForLocationNavigation(this)
-        if (wifiMgr.mirrorState.value.status == TftMirrorStatus.IDLE) {
-            appSettings.tftMirrorMode = AppSettings.TFT_MODE_LIVE_MAP
-            if (isAccountTabVisible.value || fullscreenTftDialog?.isShowing == true) {
-                wifiMgr.startLocalDebugPreview()
-            }
-        }
-        showFeedback("Resolving destination for PulsarNav Live Map...")
-        mapEngine.startRouteFromInput(rawInput) { ok, message ->
-            runOnUiThread {
-                showFeedback(message, isAlert = !ok)
-            }
-        }
+        showNavigationHubBottomSheet(initialInput = rawInput, autoStart = true)
     }
 
     private fun showDestinationSearchAndRouteDialog() {
+        showNavigationHubBottomSheet()
+    }
+
+    private fun showNavigationHubBottomSheet(initialInput: String? = null, autoStart: Boolean = false) {
         val mapEngine = TftNavigationMapEngine.getInstance(this)
-        val activeState = mapEngine.uiState.value
-        val layout = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            val pad = dpToPx(20)
-            setPadding(pad, dpToPx(12), pad, 0)
-        }
-        val info = android.widget.TextView(this).apply {
-            text = "Search any place, enter lat,lng, or paste a shared Google Maps link to route on the 800×480 Live Map & cluster TBT (keeps working when phone is locked)."
-            textSize = 12f
-            setTextColor(currentTheme.textSecondaryColor)
-        }
-        layout.addView(info)
+        val dialog = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_navigation_hub, null)
+        dialog.setContentView(sheetView)
 
-        val input = createThemedEditText("Place, address, or Google Maps URL").apply {
-            setPadding(0, dpToPx(10), 0, 0)
-        }
-        layout.addView(input)
+        val etInput = sheetView.findViewById<EditText>(R.id.etNavDestination)
+        val ivClear = sheetView.findViewById<ImageView>(R.id.ivNavClearInput)
+        val ivDismiss = sheetView.findViewById<ImageView>(R.id.ivDismissNavHub)
+        val cardPreview = sheetView.findViewById<View>(R.id.cardNavPreview)
+        val pbResolving = sheetView.findViewById<ProgressBar>(R.id.pbNavResolving)
+        val tvPreviewTitle = sheetView.findViewById<TextView>(R.id.tvNavPreviewTitle)
+        val tvPreviewStats = sheetView.findViewById<TextView>(R.id.tvNavPreviewStats)
+        val btnStart = sheetView.findViewById<MaterialButton>(R.id.btnStartTftRoute)
+        val btnMaps = sheetView.findViewById<MaterialButton>(R.id.btnLaunchGoogleMaps)
+        val btnStop = sheetView.findViewById<MaterialButton>(R.id.btnStopTftRoute)
+        val layoutRecentList = sheetView.findViewById<LinearLayout>(R.id.layoutRecentList)
 
-        val builder = MaterialAlertDialogBuilder(this)
-            .setTitle("Route on PulsarNav TFT Map")
-            .setView(layout)
-            .setPositiveButton("Route on TFT Map") { _, _ ->
-                val q = input.text.toString().trim()
-                if (q.isBlank()) {
-                    showFeedback("Enter a destination or share a pin from Google Maps", isAlert = true)
-                } else {
-                    startTftRouteFromSharedInput(q)
+        ivDismiss.setOnClickListener { dialog.dismiss() }
+
+        etInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                ivClear.visibility = if (s.isNullOrEmpty()) View.GONE else View.VISIBLE
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        ivClear.setOnClickListener {
+            etInput.setText("")
+        }
+
+        val currentState = mapEngine.uiState.value
+        val isAlreadyRunning = currentState.routeActive || mapEngine.hasPendingRoute()
+
+        if (isAlreadyRunning) {
+            cardPreview.visibility = View.VISIBLE
+            tvPreviewTitle.text = currentState.destinationLabel.ifBlank { "Active Route" }
+            tvPreviewStats.text = listOfNotNull(
+                currentState.remainingDistanceText.ifBlank { null },
+                currentState.remainingEtaText.ifBlank { null }
+            ).joinToString(" • ").ifBlank { "Active on TFT Cluster" }
+            btnStop.visibility = View.VISIBLE
+        }
+
+        fun performStartRoute(targetInput: String) {
+            val q = targetInput.trim()
+            if (q.isBlank()) {
+                showFeedback("Please enter a destination or address", isAlert = true)
+                return
+            }
+            cardPreview.visibility = View.VISIBLE
+            pbResolving.visibility = View.VISIBLE
+            tvPreviewTitle.text = q
+            tvPreviewStats.text = "Resolving coordinates over mobile data..."
+            btnStart.isEnabled = false
+            btnStop.visibility = View.GONE
+
+            val wifiMgr = TftWifiMirrorManager.getInstance(this@MainActivity)
+            BikeBleForegroundService.startForLocationNavigation(this@MainActivity)
+            if (wifiMgr.mirrorState.value.status == TftMirrorStatus.IDLE) {
+                appSettings.tftMirrorMode = AppSettings.TFT_MODE_LIVE_MAP
+                if (isAccountTabVisible.value || fullscreenTftDialog?.isShowing == true) {
+                    wifiMgr.startLocalDebugPreview()
                 }
             }
-            .setNeutralButton("Open Google Maps") { _, _ ->
-                launchGoogleMapsRide()
+
+            mapEngine.startRouteFromInput(q) { ok, message ->
+                runOnUiThread {
+                    pbResolving.visibility = View.GONE
+                    btnStart.isEnabled = true
+                    if (ok) {
+                        val state = mapEngine.uiState.value
+                        tvPreviewTitle.text = state.destinationLabel.ifBlank { q }
+                        tvPreviewStats.text = listOfNotNull(
+                            state.remainingDistanceText.ifBlank { null },
+                            state.remainingEtaText.ifBlank { null }
+                        ).joinToString(" • ").ifBlank { "Route ready" }
+                        btnStop.visibility = View.VISIBLE
+                        showFeedback(message)
+                        if (autoStart) {
+                            lifecycleScope.launch {
+                                kotlinx.coroutines.delay(1200)
+                                if (dialog.isShowing) dialog.dismiss()
+                            }
+                        }
+                    } else {
+                        tvPreviewStats.text = message
+                        showFeedback(message, isAlert = true)
+                    }
+                }
             }
-        if (activeState.routeActive || mapEngine.hasPendingRoute()) {
-            builder.setNegativeButton("Stop Route") { _, _ ->
-                mapEngine.clearActiveRoute()
-                showFeedback("PulsarNav Live Map route cleared")
-            }
-        } else {
-            builder.setNegativeButton("Cancel", null)
         }
-        builder.show()
+
+        fun refreshRecentList() {
+            layoutRecentList.removeAllViews()
+            val recents = TftMapMathAndParser.parseRecentDests(appSettings.navV2RecentDestsJson)
+            if (recents.isEmpty()) {
+                val emptyTv = TextView(this@MainActivity).apply {
+                    text = "No recent trips yet. Search or share from Google Maps."
+                    textSize = 12f
+                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+                    setPadding(0, dpToPx(4), 0, dpToPx(8))
+                }
+                layoutRecentList.addView(emptyTv)
+            } else {
+                for (dest in recents.take(5)) {
+                    val row = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            dpToPx(44)
+                        )
+                        isClickable = true
+                        isFocusable = true
+                        setBackgroundResource(R.drawable.rounded_box)
+                        backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.surface_card))
+                        setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
+                        setOnClickListener {
+                            etInput.setText(dest.name)
+                            etInput.setSelection(dest.name.length)
+                            performStartRoute(dest.name)
+                        }
+                    }
+                    val icon = ImageView(this@MainActivity).apply {
+                        layoutParams = LinearLayout.LayoutParams(dpToPx(20), dpToPx(20))
+                        setImageResource(R.drawable.ic_trips)
+                        imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.wine_red_light))
+                    }
+                    val label = TextView(this@MainActivity).apply {
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            marginStart = dpToPx(10)
+                        }
+                        text = dest.name
+                        textSize = 13f
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+                    }
+                    val arrow = ImageView(this@MainActivity).apply {
+                        layoutParams = LinearLayout.LayoutParams(dpToPx(16), dpToPx(16))
+                        setImageResource(R.drawable.ic_navigation)
+                        imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+                        rotation = 45f
+                    }
+                    row.addView(icon)
+                    row.addView(label)
+                    row.addView(arrow)
+                    layoutRecentList.addView(row)
+                    val space = View(this@MainActivity).apply {
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(6))
+                    }
+                    layoutRecentList.addView(space)
+                }
+            }
+        }
+        refreshRecentList()
+
+        // Quick shortcut chips
+        sheetView.findViewById<View>(R.id.chipNavHome).setOnClickListener {
+            val addr = appSettings.homeAddress.ifBlank { "Home" }
+            etInput.setText(addr)
+            etInput.setSelection(etInput.text.length)
+            if (addr != "Home") performStartRoute(addr)
+        }
+        sheetView.findViewById<View>(R.id.chipNavWork).setOnClickListener {
+            val addr = appSettings.workAddress.ifBlank { "Work" }
+            etInput.setText(addr)
+            etInput.setSelection(etInput.text.length)
+            if (addr != "Work") performStartRoute(addr)
+        }
+        sheetView.findViewById<View>(R.id.chipNavPetrol).setOnClickListener {
+            etInput.setText("Petrol Pump")
+            etInput.setSelection(etInput.text.length)
+            performStartRoute("Petrol Pump")
+        }
+        sheetView.findViewById<View>(R.id.chipNavHospital).setOnClickListener {
+            etInput.setText("Hospital")
+            etInput.setSelection(etInput.text.length)
+            performStartRoute("Hospital")
+        }
+        sheetView.findViewById<View>(R.id.chipNavService).setOnClickListener {
+            etInput.setText("Bajaj Service Center")
+            etInput.setSelection(etInput.text.length)
+            performStartRoute("Bajaj Service Center")
+        }
+
+        btnStart.setOnClickListener {
+            performStartRoute(etInput.text.toString())
+        }
+
+        etInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_SEARCH) {
+                performStartRoute(etInput.text.toString())
+                true
+            } else false
+        }
+
+        btnMaps.setOnClickListener {
+            val q = etInput.text.toString().trim()
+            if (q.isNotBlank()) {
+                val gmmIntentUri = Uri.parse("google.navigation:q=" + Uri.encode(q))
+                val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri).apply {
+                    setPackage("com.google.android.apps.maps")
+                }
+                try {
+                    startActivity(mapIntent)
+                    dialog.dismiss()
+                } catch (_: Exception) {
+                    launchGoogleMapsRide()
+                }
+            } else {
+                launchGoogleMapsRide()
+                dialog.dismiss()
+            }
+        }
+
+        btnStop.setOnClickListener {
+            mapEngine.clearActiveRoute()
+            cardPreview.visibility = View.GONE
+            btnStop.visibility = View.GONE
+            showFeedback("PulsarNav Live Map route cleared")
+        }
+
+        if (!initialInput.isNullOrBlank()) {
+            etInput.setText(initialInput)
+            etInput.setSelection(initialInput.length)
+            if (autoStart) {
+                performStartRoute(initialInput)
+            }
+        }
+
+        dialog.show()
     }
 
     private fun showMapsTbtTroubleshooterDialog() {
@@ -6483,6 +6696,45 @@ class MainActivity : AppCompatActivity() {
                             binding.tvEtaBadge.text = "-- min ETA"
                         }
                         updateNotificationAccessUi()
+
+                        // Update Active TFT Live Navigation Dashboard Card
+                        val isTftNavRunning = mapUi.routeActive || mapUi.isLoadingRoute || mapUi.isRerouting
+                        if (isTftNavRunning) {
+                            binding.cardActiveTftNavigation.visibility = View.VISIBLE
+                            when {
+                                mapUi.isRerouting -> {
+                                    binding.tvActiveNavNextTurn.text = "Rerouting..."
+                                    binding.tvActiveNavTripSummary.text = "Recalculating route to ${mapUi.destinationLabel}..."
+                                    binding.tvActiveNavStatusBadge.text = "REROUTING"
+                                    binding.btnActiveNavReroute.isEnabled = false
+                                }
+                                mapUi.isLoadingRoute -> {
+                                    binding.tvActiveNavNextTurn.text = "Calculating Route"
+                                    binding.tvActiveNavTripSummary.text = "Looking up ${mapUi.destinationLabel}..."
+                                    binding.tvActiveNavStatusBadge.text = "CALCULATING"
+                                    binding.btnActiveNavReroute.isEnabled = false
+                                }
+                                else -> {
+                                    binding.btnActiveNavReroute.isEnabled = true
+                                    val turnTitle = if (step != null) {
+                                        val dist = step.rawDistanceText.ifBlank { "${step.distanceMeters} m" }
+                                        val street = step.streetName.ifBlank { step.maneuver.description }
+                                        "$dist • $street"
+                                    } else {
+                                        mapUi.destinationLabel.ifBlank { "TFT Live Navigation" }
+                                    }
+                                    binding.tvActiveNavNextTurn.text = turnTitle
+                                    val stats = listOfNotNull(
+                                        mapUi.remainingDistanceText.ifBlank { null },
+                                        mapUi.remainingEtaText.ifBlank { null }
+                                    ).joinToString(" • ")
+                                    binding.tvActiveNavTripSummary.text = stats.ifBlank { "Active on TFT Cluster" }
+                                    binding.tvActiveNavStatusBadge.text = "TFT LIVE"
+                                }
+                            }
+                        } else {
+                            binding.cardActiveTftNavigation.visibility = View.GONE
+                        }
                     }
                 }
 

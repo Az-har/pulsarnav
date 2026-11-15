@@ -299,4 +299,93 @@ class TftNavigationMapEngineTest {
         assertEquals(destX, plan.destNormX * worldScale, 1e-6)
         assertEquals(destY, plan.destNormY * worldScale, 1e-6)
     }
+
+    @Test
+    fun recentDestinations_parsesAppendsDeduplicatesAndCaps() {
+        val json0 = "[]"
+        val d1 = RecentDestination("Ambattur Estate Rd", 13.0827, 80.2707)
+        val d2 = RecentDestination("Marina Beach", 13.0499, 80.2824)
+        val json1 = TftMapMathAndParser.appendRecentDest(json0, d1, maxCount = 3)
+        val parsed1 = TftMapMathAndParser.parseRecentDests(json1)
+        assertEquals(1, parsed1.size)
+        assertEquals("Ambattur Estate Rd", parsed1[0].name)
+
+        val json2 = TftMapMathAndParser.appendRecentDest(json1, d2, maxCount = 3)
+        val parsed2 = TftMapMathAndParser.parseRecentDests(json2)
+        assertEquals(2, parsed2.size)
+        assertEquals("Marina Beach", parsed2[0].name)
+        assertEquals("Ambattur Estate Rd", parsed2[1].name)
+
+        // Adding d1 again should bring it to the front without duplicates
+        val json3 = TftMapMathAndParser.appendRecentDest(json2, d1, maxCount = 3)
+        val parsed3 = TftMapMathAndParser.parseRecentDests(json3)
+        assertEquals(2, parsed3.size)
+        assertEquals("Ambattur Estate Rd", parsed3[0].name)
+        assertEquals("Marina Beach", parsed3[1].name)
+    }
+
+    @Test
+    fun computeRouteProgress_flagsRerouteNeededOnMissedTurnOrOffRoute() {
+        val origin = GeoPoint(12.9716, 77.5946)
+        val midTurn = GeoPoint(12.9761, 77.5946)
+        val dest = GeoPoint(12.9761, 77.5900)
+        val encoded = encodePolyline6(listOf(origin, midTurn, dest))
+
+        val leg1Dist = TftMapMathAndParser.haversineMeters(origin.lat, origin.lng, midTurn.lat, midTurn.lng)
+        val leg2Dist = TftMapMathAndParser.haversineMeters(midTurn.lat, midTurn.lng, dest.lat, dest.lng)
+        val totalDist = leg1Dist + leg2Dist
+
+        val osrmJson = """
+            {
+              "code": "Ok",
+              "routes": [{
+                "geometry": "$encoded",
+                "distance": $totalDist,
+                "duration": 120.0,
+                "legs": [{
+                  "steps": [
+                    {
+                      "distance": $leg1Dist,
+                      "duration": 60.0,
+                      "name": "Kasturba Road",
+                      "maneuver": { "type": "depart", "modifier": "straight", "location": [${origin.lng}, ${origin.lat}] }
+                    },
+                    {
+                      "distance": $leg2Dist,
+                      "duration": 60.0,
+                      "name": "Queens Road",
+                      "maneuver": { "type": "turn", "modifier": "left", "location": [${midTurn.lng}, ${midTurn.lat}] }
+                    },
+                    {
+                      "distance": 0.0,
+                      "duration": 0.0,
+                      "name": "",
+                      "maneuver": { "type": "arrive", "location": [${dest.lng}, ${dest.lat}] }
+                    }
+                  ]
+                }]
+              }]
+            }
+        """.trimIndent()
+
+        val route = TftMapMathAndParser.parseOsrmRouteResponse(osrmJson, "Cubbon Park", origin, dest)!!
+
+        // On route normal progress: isRerouteNeeded should be false
+        val snapNormal = TftMapMathAndParser.computeRouteProgress(
+            route = route,
+            lat = 12.97385,
+            lng = 77.5946,
+            speedMps = 8f
+        )
+        assertFalse(snapNormal.isRerouteNeeded)
+
+        // Off route by 40 meters: isRerouteNeeded should be true
+        val snapOffRoute = TftMapMathAndParser.computeRouteProgress(
+            route = route,
+            lat = 12.97385,
+            lng = 77.5950,
+            speedMps = 8f
+        )
+        assertTrue(snapOffRoute.isRerouteNeeded)
+    }
 }

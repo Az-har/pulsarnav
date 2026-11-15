@@ -108,6 +108,13 @@ data class PendingRouteTarget(
     val label: String
 )
 
+data class RecentDestination(
+    val name: String,
+    val lat: Double,
+    val lng: Double,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 data class ParsedMapTarget(
     val label: String,
     val lat: Double? = null,
@@ -123,7 +130,8 @@ data class RouteProgressSnapshot(
     val remainingTotalMeters: Int,
     val remainingDurationSeconds: Int,
     val offRouteMeters: Double,
-    val arrived: Boolean
+    val arrived: Boolean,
+    val isRerouteNeeded: Boolean = false
 )
 
 data class TftLiveMapUiState(
@@ -141,14 +149,15 @@ data class TftLiveMapUiState(
     val remainingDistanceText: String = "",
     val remainingEtaText: String = "",
     val isLoadingRoute: Boolean = false,
+    val isRerouting: Boolean = false,
     val statusMessage: String = ""
 )
 
 object TftMapMathAndParser {
 
     private const val EARTH_RADIUS_M = 6_371_000.0
-    private const val ARRIVAL_THRESHOLD_M = 35.0
-    const val OFF_ROUTE_REROUTE_THRESHOLD_M = 65.0
+    private const val ARRIVAL_THRESHOLD_M = 25.0
+    const val OFF_ROUTE_REROUTE_THRESHOLD_M = 35.0
 
     fun haversineMeters(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
         val dLat = Math.toRadians(lat2 - lat1)
@@ -541,6 +550,16 @@ object TftMapMathAndParser {
             roundaboutExit = upcomingStep.roundaboutExit
         )
 
+        val isOffRoute = bestSegDistM > OFF_ROUTE_REROUTE_THRESHOLD_M
+        val distToUpcomingStepM = upcomingStep.startLocation.let { st ->
+            haversineMeters(lat, lng, st.lat, st.lng)
+        }
+        val isOvershootTurn = speedMps >= 1.5f && bestSegDistM > 22.0 &&
+            distToNextTurn in 1..80 &&
+            distToUpcomingStepM > 28.0
+
+        val isRerouteNeeded = !arrived && (isOffRoute || isOvershootTurn)
+
         return RouteProgressSnapshot(
             nextStep = parsed,
             activeStepIndex = nextStepIdx,
@@ -548,7 +567,8 @@ object TftMapMathAndParser {
             remainingTotalMeters = remTotalM,
             remainingDurationSeconds = liveRemainingSec,
             offRouteMeters = bestSegDistM,
-            arrived = arrived
+            arrived = arrived,
+            isRerouteNeeded = isRerouteNeeded
         )
     }
 
@@ -565,6 +585,42 @@ object TftMapMathAndParser {
         val h = mins / 60
         val m = mins % 60
         return if (h > 0) "${h}h ${m}m" else "$mins min"
+    }
+
+    fun parseRecentDests(jsonStr: String): List<RecentDestination> {
+        if (jsonStr.isBlank() || jsonStr == "[]") return emptyList()
+        val list = mutableListOf<RecentDestination>()
+        try {
+            val arr = JSONArray(jsonStr)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val name = obj.optString("name").trim()
+                val lat = obj.optDouble("lat", Double.NaN)
+                val lng = obj.optDouble("lng", Double.NaN)
+                val ts = obj.optLong("ts", System.currentTimeMillis())
+                if (name.isNotBlank() && !lat.isNaN() && !lng.isNaN()) {
+                    list.add(RecentDestination(name, lat, lng, ts))
+                }
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    fun appendRecentDest(jsonStr: String, dest: RecentDestination, maxCount: Int = 8): String {
+        val existing = parseRecentDests(jsonStr).toMutableList()
+        existing.removeAll { it.name.equals(dest.name, ignoreCase = true) }
+        existing.add(0, dest)
+        val trimmed = existing.take(maxCount)
+        val arr = JSONArray()
+        for (d in trimmed) {
+            arr.put(JSONObject().apply {
+                put("name", d.name)
+                put("lat", d.lat)
+                put("lng", d.lng)
+                put("ts", d.timestamp)
+            })
+        }
+        return arr.toString()
     }
 
     private fun extractLabelAroundUrl(fullText: String, url: String): String? {
@@ -747,7 +803,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
 
     companion object {
         private const val TAG = "TftNavMapEngine"
-        private const val REROUTE_COOLDOWN_MS = 12_000L
+        private const val REROUTE_COOLDOWN_MS = 3_500L
         private const val ARRIVAL_CLEAR_DELAY_MS = 8_000L
         private val CONTROLS_HDG = arrayOf("+", "-", "HDG")
         private val CONTROLS_NORTH = arrayOf("+", "-", "N↑")
@@ -760,6 +816,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         private const val COLOR_ROUTE_FILL_DAY = 0xFF0284C7.toInt()
         private const val COLOR_ROUTE_CASING_NIGHT = 0xFF1E293B.toInt()
         private const val COLOR_ROUTE_FILL_NIGHT = 0xFF38BDF8.toInt()
+        private const val COLOR_BORDER_REROUTING = 0xFFF59E0B.toInt()
         private const val COLOR_MARKER_HALO = 0x4038BDF8.toInt()
         private const val COLOR_DEST_PIN = 0xFFEF4444.toInt()
         private const val COLOR_ALERT_CALL = 0xFFDC2626.toInt()
@@ -1078,17 +1135,63 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             if (snap.arrived) {
                 activeRoutePlan = null
                 scheduleArrivalClear()
-            } else if (snap.offRouteMeters > TftMapMathAndParser.OFF_ROUTE_REROUTE_THRESHOLD_M) {
+            } else if (snap.offRouteMeters > TftMapMathAndParser.OFF_ROUTE_REROUTE_THRESHOLD_M || snap.isRerouteNeeded) {
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastRerouteAttemptMs > REROUTE_COOLDOWN_MS) {
                     lastRerouteAttemptMs = now
+                    _uiState.update { it.copy(isRerouting = true, statusMessage = "Rerouting...") }
+                    onMapInvalidated?.invoke()
                     scope.launch {
-                        computeOsrmRoute(GeoPoint(loc.latitude, loc.longitude), route.destination, route.destinationLabel)
+                        val newRoute = computeOsrmRoute(GeoPoint(loc.latitude, loc.longitude), route.destination, route.destinationLabel)
+                        if (newRoute != null) {
+                            val newSnap = TftMapMathAndParser.computeRouteProgress(
+                                route = newRoute,
+                                lat = loc.latitude,
+                                lng = loc.longitude,
+                                speedMps = if (loc.hasSpeed()) loc.speed else 0f
+                            )
+                            lastRouteSnapshot = newSnap
+                            pushInternalTbtIfPreferred(newSnap.nextStep)
+                            _uiState.update { it.copy(isRerouting = false, statusMessage = "") }
+                            onMapInvalidated?.invoke()
+                            DebugLogRepository.maps("LiveMap", "Rerouted to ${route.destinationLabel}")
+                        } else {
+                            _uiState.update { it.copy(isRerouting = false) }
+                            onMapInvalidated?.invoke()
+                        }
                     }
                 }
             }
         }
         onMapInvalidated?.invoke()
+    }
+
+    fun triggerManualReroute() {
+        val route = activeRoutePlan ?: return
+        val currentState = _uiState.value
+        if (!currentState.hasGpsFix || !NavigationIntentLauncher.hasValidCoordinates(currentState.lat, currentState.lng)) return
+        val now = SystemClock.elapsedRealtime()
+        lastRerouteAttemptMs = now
+        _uiState.update { it.copy(isRerouting = true, statusMessage = "Rerouting...") }
+        onMapInvalidated?.invoke()
+        scope.launch {
+            val newRoute = computeOsrmRoute(GeoPoint(currentState.lat, currentState.lng), route.destination, route.destinationLabel)
+            if (newRoute != null) {
+                val newSnap = TftMapMathAndParser.computeRouteProgress(
+                    route = newRoute,
+                    lat = currentState.lat,
+                    lng = currentState.lng,
+                    speedMps = 0f
+                )
+                lastRouteSnapshot = newSnap
+                pushInternalTbtIfPreferred(newSnap.nextStep)
+                _uiState.update { it.copy(isRerouting = false, statusMessage = "") }
+                onMapInvalidated?.invoke()
+            } else {
+                _uiState.update { it.copy(isRerouting = false) }
+                onMapInvalidated?.invoke()
+            }
+        }
     }
 
     private fun scheduleArrivalClear() {
@@ -1227,6 +1330,15 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
                     onMapInvalidated?.invoke()
                     onResult?.invoke(false, "Could not find coordinates for \"$destLabel\"")
                     return@launch
+                }
+
+                try {
+                    val settings = com.pulsarnav.app.data.AppSettings.getInstance(context)
+                    settings.navV2RecentDestsJson = TftMapMathAndParser.appendRecentDest(
+                        settings.navV2RecentDestsJson,
+                        RecentDestination(destLabel, destLat, destLng)
+                    )
+                } catch (_: Exception) {
                 }
 
                 val currentState = _uiState.value
@@ -1549,20 +1661,11 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             routePath.reset()
             val normX = route.normMercatorX
             val normY = route.normMercatorY
-            val boundLimit = halfDiag * 1.5f
-            var pathStarted = false
             for (i in normX.indices) {
                 val sx = (normX[i] * worldScale - centerWx).toFloat()
                 val sy = (normY[i] * worldScale - centerWy).toFloat()
-                val isNear = abs(sx) <= boundLimit && abs(sy) <= boundLimit
-                if (!isNear && pathStarted) {
-                    routePath.lineTo(sx, sy)
-                    pathStarted = false
-                    continue
-                }
-                if (!pathStarted) {
+                if (i == 0) {
                     routePath.moveTo(sx, sy)
-                    pathStarted = true
                 } else {
                     routePath.lineTo(sx, sy)
                 }
@@ -1615,45 +1718,64 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     }
 
     private fun drawTbtCornerCard(canvas: Canvas, step: ParsedNavigationStep, daylight: Boolean) {
+        val isRerouting = _uiState.value.isRerouting
         rectTmp.set(36f, 70f, 360f, 204f)
         cardPaint.color = if (daylight) COLOR_CARD_DAY else COLOR_CARD_NIGHT
         val isImminentTurn = step.distanceMeters in 1..100
-        borderPaint.color = if (isImminentTurn) COLOR_BORDER_IMMINENT else COLOR_BORDER_NORMAL
-        borderPaint.strokeWidth = if (isImminentTurn) 3.5f else 2f
+        borderPaint.color = when {
+            isRerouting -> COLOR_BORDER_REROUTING
+            isImminentTurn -> COLOR_BORDER_IMMINENT
+            else -> COLOR_BORDER_NORMAL
+        }
+        borderPaint.strokeWidth = if (isImminentTurn || isRerouting) 3.5f else 2f
         canvas.drawRoundRect(rectTmp, 18f, 18f, cardPaint)
         canvas.drawRoundRect(rectTmp, 18f, 18f, borderPaint)
 
-        // Turn arrow badge on left in crisp white
-        drawManeuverVector(canvas, step.maneuver, 76f, 126f, 28f, Color.WHITE, step.roundaboutExit)
+        // Turn arrow badge on left in crisp white (or amber when rerouting)
+        drawManeuverVector(canvas, if (isRerouting) Maneuver.STRAIGHT else step.maneuver, 76f, 126f, 28f, if (isRerouting) COLOR_BORDER_REROUTING else Color.WHITE, step.roundaboutExit)
 
-        val distStr = step.rawDistanceText.ifBlank { TftMapMathAndParser.formatDistanceMeters(step.distanceMeters) }
-        textPaint.color = Color.WHITE
-        textPaint.textSize = 40f
-        textPaint.typeface = boldTypeface
-        canvas.drawText(distStr, 122f, 114f, textPaint)
+        if (isRerouting) {
+            textPaint.color = COLOR_BORDER_REROUTING
+            textPaint.textSize = 28f
+            textPaint.typeface = boldTypeface
+            canvas.drawText("REROUTING...", 122f, 114f, textPaint)
 
-        subTextPaint.color = COLOR_SUBTEXT_LIGHT
-        subTextPaint.textSize = 20f
-        subTextPaint.typeface = boldTypeface
-        val street = step.streetName.ifBlank { step.maneuver.description }
-        val wrapped = getWrappedStreetLines(street, 224f, subTextPaint)
-        canvas.drawText(wrapped.line1, 122f, 142f, subTextPaint)
-        if (wrapped.line2.isNotEmpty()) {
-            canvas.drawText(wrapped.line2, 122f, 166f, subTextPaint)
+            subTextPaint.color = COLOR_SUBTEXT_LIGHT
+            subTextPaint.textSize = 18f
+            subTextPaint.typeface = boldTypeface
+            canvas.drawText("Recalculating path...", 122f, 142f, subTextPaint)
+        } else {
+            val distStr = step.rawDistanceText.ifBlank { TftMapMathAndParser.formatDistanceMeters(step.distanceMeters) }
+            textPaint.color = Color.WHITE
+            textPaint.textSize = 40f
+            textPaint.typeface = boldTypeface
+            canvas.drawText(distStr, 122f, 114f, textPaint)
+
+            subTextPaint.color = COLOR_SUBTEXT_LIGHT
+            subTextPaint.textSize = 20f
+            subTextPaint.typeface = boldTypeface
+            val street = step.streetName.ifBlank { step.maneuver.description }
+            val wrapped = getWrappedStreetLines(street, 224f, subTextPaint)
+            canvas.drawText(wrapped.line1, 122f, 142f, subTextPaint)
+            if (wrapped.line2.isNotEmpty()) {
+                canvas.drawText(wrapped.line2, 122f, 166f, subTextPaint)
+            }
         }
 
         // ETA badge at the bottom of the card
-        val etaBadge = if (step.etaHour > 0) {
+        val etaBadge = if (isRerouting) {
+            "Updating ETA..."
+        } else if (step.etaHour > 0) {
             val ampm = if (step.etaIsAm) "AM" else "PM"
             String.format(Locale.US, "ETA %d:%02d %s", step.etaHour, step.etaMinute, ampm)
         } else {
             lastRouteSnapshot?.let { TftMapMathAndParser.formatEtaDuration(it.remainingDurationSeconds) }
                 ?: "Active Navigation"
         }
-        textPaint.color = COLOR_TEXT_ACCENT
+        textPaint.color = if (isRerouting) COLOR_BORDER_REROUTING else COLOR_TEXT_ACCENT
         textPaint.textSize = 16f
         textPaint.typeface = boldTypeface
-        val etaY = if (wrapped.line2.isNotEmpty()) 192f else 174f
+        val etaY = if (!isRerouting && getWrappedStreetLines(step.streetName.ifBlank { step.maneuver.description }, 224f, subTextPaint).line2.isNotEmpty()) 192f else 174f
         canvas.drawText(etaBadge, 48f, etaY, textPaint)
         textPaint.typeface = normalTypeface
     }
