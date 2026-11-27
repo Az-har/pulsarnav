@@ -1106,7 +1106,10 @@ class TftCockpitDisplayController(
         }
 
         private fun formatDistanceShort(meters: Int, rawText: String): String {
-            if (meters <= 0) return rawText.ifBlank { "--" }
+            if (meters <= 0) {
+                if (rawText.isNotBlank() && rawText != "0 m" && rawText != "0m") return rawText
+                return "NOW"
+            }
             return if (meters >= 1000) {
                 val tenths = meters / 100
                 "${tenths / 10}.${tenths % 10} km"

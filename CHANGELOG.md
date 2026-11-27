@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.20] - 2026-11-28
+
+### Fixed
+- **Screen-Off Headless TFT Mirroring & Continuous GPS Tracking**:
+  - Migrated `TftNavigationMapEngine` location listener registration from `Looper.getMainLooper()` to a dedicated background `HandlerThread("TftGpsLocationThread")`, preventing aggressive OEM power managers (OriginOS/FuntouchOS/HyperOS) from freezing GPS coordinate callbacks when the phone screen turns off or locks.
+  - Implemented direct `PowerManager.PARTIAL_WAKE_LOCK` and `WifiManager.WIFI_MODE_FULL_HIGH_PERF` lock management directly inside `TftWifiMirrorManager`, keeping the CPU and Wi-Fi chip fully active and preventing DTIM sleep/packet drops when the phone is locked in the rider's pocket.
+  - Decoupled SoftAP Wi-Fi network requests and reconnection timers from the main UI looper using a dedicated `HandlerThread("TftWifiWorkerThread")`.
+- **TFT Turn Card "0 m" Display Resolution**:
+  - Replaced ambiguous "0 m" turn card and HUD distance text with intuitive "NOW" / "ARRIVED" maneuvers when reaching intersection junctions or when third-party navigation feeds report zero remaining step meters.
+- **UI Clarification for Mirroring Modes**:
+  - Clarified action button labels: "Live Map / HUD (Screen Off OK)" for headless pocket-friendly navigation vs "Cast Phone Screen (Screen On Only)" for full display mirroring.
+
+---
+
 ## [1.3.19] - 2026-11-27
 
 ### Added

@@ -5410,7 +5410,7 @@ class MainActivity : AppCompatActivity() {
                 val isScreenCastActive = active && mirror.source == TftMirrorSource.LIVE_SCREEN_CAST
                 val isHeadlessActive = active && mirror.source != TftMirrorSource.LIVE_SCREEN_CAST
 
-                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "HUD Mirror\n(Screen Off)" else "Live Map (800×480)\n(Google Maps Sync)"
+                val prefIdleBtn = if (appSettings.tftMirrorMode == AppSettings.TFT_MODE_HUD) "HUD Mirror\n(Screen Off OK)" else "Live Map\n(Screen Off OK)"
                 binding.btnToggleTftHudMirror.text = when {
                     isHeadlessActive -> "Stop Mirror"
                     isScreenCastActive -> "Switch to\nLive Map"
@@ -5419,7 +5419,7 @@ class MainActivity : AppCompatActivity() {
                 binding.btnCastLiveScreen.text = when {
                     isScreenCastActive -> "Stop Cast"
                     isHeadlessActive -> "Switch to\nScreen Cast"
-                    else -> "Cast Google Maps\n(Screen Mirror)"
+                    else -> "Cast Phone Screen\n(Screen On Only)"
                 }
                 binding.btnToggleTftHudMirror.isEnabled = !isHandshaking && !isOtcConnected
                 binding.btnCastLiveScreen.isEnabled = !isHandshaking && !isOtcConnected

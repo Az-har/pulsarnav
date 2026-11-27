@@ -18,6 +18,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
@@ -918,6 +920,8 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     private var ownsBleTbtStream = false
     @Volatile
     private var gpsListening = false
+    private var locationThread: HandlerThread? = null
+    private var locationHandler: Handler? = null
     @Volatile
     private var arrivalClearJob: Job? = null
     @Volatile
@@ -1047,13 +1051,20 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         }
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
         try {
+            val thread = locationThread ?: HandlerThread("TftGpsLocationThread").apply { start() }.also {
+                locationThread = it
+                locationHandler = Handler(it.looper)
+            }
+            val looper = thread.looper
+
             if (hasFine && lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 2f, locationListener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 2f, locationListener, looper)
             }
             if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2500L, 10f, locationListener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2500L, 10f, locationListener, looper)
             }
             gpsListening = true
+            Log.i(TAG, "Started lock-proof GPS location tracking on dedicated background HandlerThread")
         } catch (e: Exception) {
             Log.w(TAG, "Unable to start GPS updates: ${e.message}")
         }
@@ -1067,6 +1078,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             lm.removeUpdates(locationListener)
         } catch (_: Exception) {
         }
+        locationThread?.quitSafely()
+        locationThread = null
+        locationHandler = null
     }
 
     @SuppressLint("MissingPermission")
@@ -1795,9 +1809,11 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             canvas.drawText("Recalculating path...", 122f, 142f, subTextPaint)
         } else {
             val distStr = when {
-                step.rawDistanceText.isNotBlank() -> step.rawDistanceText
                 step.distanceMeters > 0 -> TftMapMathAndParser.formatDistanceMeters(step.distanceMeters)
-                else -> step.maneuver.description
+                step.rawDistanceText.isNotBlank() && step.rawDistanceText != "0 m" && step.rawDistanceText != "0m" -> step.rawDistanceText
+                step.maneuver == Maneuver.DESTINATION_REACHED -> "ARRIVED"
+                step.totalDistanceMeters > 0 -> TftMapMathAndParser.formatDistanceMeters(step.totalDistanceMeters)
+                else -> "NOW"
             }
             textPaint.color = Color.WHITE
             textPaint.textSize = if (distStr.length > 8) 28f else 40f

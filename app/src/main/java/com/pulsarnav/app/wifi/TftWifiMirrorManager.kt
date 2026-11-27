@@ -16,8 +16,10 @@ import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -120,6 +122,11 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private val appSettings = AppSettings.getInstance(context)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val workerThread = HandlerThread("TftWifiWorkerThread").apply { start() }
+    private val workerHandler = Handler(workerThread.looper)
+
+    private var mirrorWakeLock: PowerManager.WakeLock? = null
+    private var mirrorWifiLock: WifiManager.WifiLock? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val udpDispatcherExecutor = Executors.newSingleThreadExecutor { r ->
@@ -293,6 +300,62 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         return ok
     }
 
+    @Suppress("DEPRECATION")
+    private fun acquireMirrorLocks() {
+        try {
+            if (mirrorWakeLock == null) {
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                mirrorWakeLock = pm?.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "PulsarNav:TftMirrorWakeLock"
+                )?.apply { setReferenceCounted(false) }
+            }
+            if (mirrorWakeLock?.isHeld == false) {
+                mirrorWakeLock?.acquire(12 * 60 * 60 * 1000L) // 12-hour safe upper bound
+                Log.d(TAG, "Dedicated screen-off WakeLock acquired for TFT Wi-Fi Mirror")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire mirror WakeLock: ${e.message}")
+        }
+
+        try {
+            if (mirrorWifiLock == null) {
+                val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                // WIFI_MODE_FULL_HIGH_PERF prevents Android OS from putting Wi-Fi chip into DTIM sleep when screen locks
+                mirrorWifiLock = wm?.createWifiLock(
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                    "PulsarNav:TftMirrorWifiLock"
+                )?.apply { setReferenceCounted(false) }
+            }
+            if (mirrorWifiLock?.isHeld == false) {
+                mirrorWifiLock?.acquire()
+                Log.d(TAG, "High-perf screen-off WifiLock acquired directly by TftWifiMirrorManager")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire mirror WifiLock: ${e.message}")
+        }
+    }
+
+    private fun releaseMirrorLocks() {
+        try {
+            mirrorWakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+            mirrorWakeLock = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to release mirror WakeLock: ${e.message}")
+        }
+
+        try {
+            mirrorWifiLock?.let {
+                if (it.isHeld) it.release()
+            }
+            mirrorWifiLock = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to release mirror WifiLock: ${e.message}")
+        }
+    }
+
     fun stopMirroring() {
         synchronized(sessionLock) {
             stopMirroringLocked()
@@ -300,8 +363,9 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
     }
 
     private fun stopMirroringLocked(preserveErrorState: Boolean = false) {
-        reconnectRunnable?.let { mainHandler.removeCallbacks(it) }
+        reconnectRunnable?.let { workerHandler.removeCallbacks(it) }
         reconnectRunnable = null
+        releaseMirrorLocks()
         isActiveSession.set(false)
         clusterStreamingEnabled.set(false)
         isLocalPreviewActive.set(false)
@@ -411,6 +475,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
 
             isActiveSession.set(true)
             clusterStreamingEnabled.set(true)
+            acquireMirrorLocks()
 
             val existing = findAlreadyConnectedClusterWifi()
             if (existing != null) {
@@ -530,7 +595,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
             }
 
             registeredNetworkCallback = callback
-            connectivityManager.requestNetwork(request, callback, mainHandler, WIFI_REQUEST_TIMEOUT_MS)
+            connectivityManager.requestNetwork(request, callback, workerHandler, WIFI_REQUEST_TIMEOUT_MS)
         } catch (e: SecurityException) {
             registeredNetworkCallback = null
             Log.e(TAG, "Missing Wi-Fi permission for SoftAP request: ${e.message}")
@@ -551,7 +616,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
     }
 
     private fun scheduleSoftApRecovery() {
-        reconnectRunnable?.let { mainHandler.removeCallbacks(it) }
+        reconnectRunnable?.let { workerHandler.removeCallbacks(it) }
         val r = Runnable {
             synchronized(sessionLock) {
                 if (!isActiveSession.get() || activeNetwork != null) return@synchronized
@@ -565,7 +630,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
             }
         }
         reconnectRunnable = r
-        mainHandler.postDelayed(r, SOFTAP_RECONNECT_DELAY_MS)
+        workerHandler.postDelayed(r, SOFTAP_RECONNECT_DELAY_MS)
     }
 
     private fun onClusterWifiReady(
@@ -574,6 +639,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         ssid: String,
         source: TftMirrorSource
     ) {
+        acquireMirrorLocks()
         activeNetwork = network
         framesSentCounter.set(0L)
         fpsWindowStartMs = SystemClock.elapsedRealtime()
