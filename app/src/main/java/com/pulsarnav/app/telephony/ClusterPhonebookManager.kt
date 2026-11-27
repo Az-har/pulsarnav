@@ -42,6 +42,7 @@ class ClusterPhonebookManager private constructor(private val context: Context) 
         const val DIAL_SOURCE_RECENTS = 2
         const val DIAL_SOURCE_MISSED = 3
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: ClusterPhonebookManager? = null
 

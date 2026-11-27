@@ -1,5 +1,6 @@
 package com.pulsarnav.app.maintenance
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -209,6 +210,7 @@ class MaintenanceManager private constructor(private val context: Context) {
         private const val KEY_NEXT_SERVICE_TARGET_ODO = "next_service_target_odo_km"
         private const val KEY_SERVICE_HISTORY_JSON = "service_history_json"
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: MaintenanceManager? = null
 

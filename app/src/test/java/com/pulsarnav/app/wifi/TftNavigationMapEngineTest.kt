@@ -73,6 +73,31 @@ class TftNavigationMapEngineTest {
         assertNotNull(plainQuery)
         assertNull(plainQuery?.lat)
         assertEquals("MG Road Bengaluru", plainQuery?.query)
+
+        val sharedRouteText = TftMapMathAndParser.parseSharedMapInput(
+            "Shared route\nFrom Current Location to Ambattur Industrial Estate via NH48.\n\n35 min (24 km)\nhttps://maps.app.goo.gl/xyz123abc"
+        )
+        assertNotNull(sharedRouteText)
+        assertEquals("https://maps.app.goo.gl/xyz123abc", sharedRouteText?.urlToResolve)
+        assertEquals("Ambattur Industrial Estate", sharedRouteText?.label)
+
+        val dirPathTarget = TftMapMathAndParser.parseGoogleMapsUrl("https://www.google.com/maps/dir/Current+Location/Ambattur+Estate,+Chennai")
+        assertNotNull(dirPathTarget)
+        assertEquals("Ambattur Estate, Chennai", dirPathTarget?.query)
+
+        val dirCoordsTarget = TftMapMathAndParser.parseGoogleMapsUrl("https://www.google.com/maps/dir/13.0827,80.2707/13.0900,80.1600")
+        assertNotNull(dirCoordsTarget)
+        assertEquals(13.0900, dirCoordsTarget?.lat ?: 0.0, 1e-4)
+        assertEquals(80.1600, dirCoordsTarget?.lng ?: 0.0, 1e-4)
+
+        val daddrTarget = TftMapMathAndParser.parseGoogleMapsUrl("https://maps.google.com/?daddr=Ambattur+Estate")
+        assertNotNull(daddrTarget)
+        assertEquals("Ambattur Estate", daddrTarget?.query)
+
+        val destParamTarget = TftMapMathAndParser.parseGoogleMapsUrl("https://www.google.com/maps/dir/?api=1&destination=13.0827,80.2707")
+        assertNotNull(destParamTarget)
+        assertEquals(13.0827, destParamTarget?.lat ?: 0.0, 1e-4)
+        assertEquals(80.2707, destParamTarget?.lng ?: 0.0, 1e-4)
     }
 
     @Test

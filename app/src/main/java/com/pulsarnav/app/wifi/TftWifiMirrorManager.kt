@@ -1,5 +1,6 @@
 package com.pulsarnav.app.wifi
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -100,6 +101,7 @@ class TftWifiMirrorManager private constructor(private val context: Context) {
         private const val MAX_DOC_PREVIEW_BYTES = 60_000
 
         @Volatile
+        @SuppressLint("StaticFieldLeak")
         private var instance: TftWifiMirrorManager? = null
 
         fun getInstance(context: Context): TftWifiMirrorManager {

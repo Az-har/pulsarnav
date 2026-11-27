@@ -1,5 +1,6 @@
 package com.pulsarnav.app.parser
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.Bitmap
@@ -7,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
 import android.util.Log
+import androidx.core.content.res.ResourcesCompat
 import com.pulsarnav.app.model.Maneuver
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -107,6 +109,7 @@ object ManeuverMatcher {
         }
     }
 
+    @SuppressLint("DiscouragedApi")
     @Synchronized
     private fun ensureBuilt() {
         if (templateBank != null) return
@@ -129,7 +132,7 @@ object ManeuverMatcher {
                 if (id == 0) continue
 
                 val drawable: Drawable? = try {
-                    res.getDrawable(id, null)
+                    ResourcesCompat.getDrawable(res, id, null)
                 } catch (_: Exception) {
                     null
                 } ?: continue

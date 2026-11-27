@@ -34,6 +34,7 @@ class PhoneTelemetryManager private constructor(private val context: Context) {
         private const val TAG = "PhoneTelemetry"
         private const val HEARTBEAT_INTERVAL_MS = 20_000L
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var INSTANCE: PhoneTelemetryManager? = null
 

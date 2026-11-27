@@ -912,8 +912,10 @@ class MainActivity : AppCompatActivity() {
         updateBikeInvestmentDisplay()
     }
 
+    @SuppressLint("InflateParams")
     private fun showClusterRecalibrateBottomSheet() {
         val dialog = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
+        @Suppress("DEPRECATION")
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_recalibrate_cluster, null)
         dialog.setContentView(sheetView)
@@ -2216,11 +2218,13 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Cancel", null)
             .create()
             .apply {
+                @Suppress("DEPRECATION")
                 window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
                 show()
             }
     }
 
+    @SuppressLint("InflateParams")
     private fun showDocumentsDialog() {
         val sheet = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_digital_glovebox, null)
@@ -3767,6 +3771,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("InflateParams")
     private fun showEmergencyQuickActionsSheet() {
         val dialog = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_emergency, null)
@@ -3858,6 +3863,7 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    @SuppressLint("InflateParams")
     private fun showDataVaultBottomSheet(openQrDirectly: Boolean = false) {
         val dialog = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_data_vault, null)
@@ -4325,6 +4331,7 @@ class MainActivity : AppCompatActivity() {
         return pm?.isIgnoringBatteryOptimizations(packageName) ?: true
     }
 
+    @SuppressLint("BatteryLife")
     private fun requestIgnoreBatteryOptimization() {
         val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
         if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
@@ -4373,6 +4380,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    @SuppressLint("InflateParams")
     private fun showSetAddressDialog(label: String, slot: Int) {
         val sheet = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_set_destination, null)
@@ -5061,6 +5069,7 @@ class MainActivity : AppCompatActivity() {
         bleManager.startAutoConnect(force = !silent)
     }
 
+    @SuppressLint("InflateParams")
     private fun showVehicleSetupBottomSheet() {
         val sheet = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_vehicle_setup, null)
@@ -6345,9 +6354,12 @@ class MainActivity : AppCompatActivity() {
         showNavigationHubBottomSheet()
     }
 
+    @SuppressLint("InflateParams")
     private fun showNavigationHubBottomSheet(initialInput: String? = null, autoStart: Boolean = false) {
         val mapEngine = TftNavigationMapEngine.getInstance(this)
+        mapEngine.startLocationTracking()
         val dialog = BottomSheetDialog(this, R.style.ObsidianBottomSheetDialog)
+        @Suppress("DEPRECATION")
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_navigation_hub, null)
         dialog.setContentView(sheetView)

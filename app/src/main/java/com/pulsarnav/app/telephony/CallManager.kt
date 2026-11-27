@@ -33,6 +33,7 @@ class CallManager private constructor(private val context: Context) {
     companion object {
         private const val TAG = "PulsarCallManager"
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var INSTANCE: CallManager? = null
 

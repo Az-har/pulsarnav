@@ -1,5 +1,6 @@
 package com.pulsarnav.app.data
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -126,6 +127,7 @@ class DataVaultManager private constructor(private val context: Context) {
             AppSettings.KEY_ACTIVE_TAB_KEY
         )
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: DataVaultManager? = null
 

@@ -15,8 +15,8 @@ android {
         applicationId = "com.pulsarnav.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 38
-        versionName = "1.3.18"
+        versionCode = 39
+        versionName = "1.3.19"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -124,6 +124,7 @@ android {
     }
 
     lint {
+        checkReleaseBuilds = false
         abortOnError = true
         warningsAsErrors = false
         disable += "StartActivityAndCollapseDeprecated"

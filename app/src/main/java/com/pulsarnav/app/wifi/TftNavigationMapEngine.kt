@@ -303,12 +303,31 @@ object TftMapMathAndParser {
         }
 
         val queryString = url.substringAfter('?', "")
-        val qValue = extractQueryParam(queryString, "q")
-            ?: extractQueryParam(queryString, "destination")
+        val qValue = extractQueryParam(queryString, "destination")
+            ?: extractQueryParam(queryString, "daddr")
+            ?: extractQueryParam(queryString, "q")
             ?: extractQueryParam(queryString, "query")
         if (!qValue.isNullOrBlank()) {
             parseLatLngPair(qValue)?.let { (la, ln) ->
                 return ParsedMapTarget(label = placeLabel ?: "Destination", lat = la, lng = ln)
+            }
+        }
+
+        // Support for directions URL: /maps/dir/.../<destination>
+        val dirIdx = url.indexOf("/maps/dir/", ignoreCase = true)
+        if (dirIdx >= 0) {
+            val pathAfter = url.substring(dirIdx + 10).substringBefore('?').substringBefore('#')
+            val segments = pathAfter.split('/').filter { seg ->
+                seg.isNotBlank() && !seg.startsWith("@") && !seg.startsWith("data=")
+            }
+            if (segments.isNotEmpty()) {
+                val destSeg = safeUrlDecode(segments.last().replace('+', ' ')).trim()
+                if (destSeg.isNotBlank()) {
+                    parseLatLngPair(destSeg)?.let { (la, ln) ->
+                        return ParsedMapTarget(label = "Destination", lat = la, lng = ln)
+                    }
+                    return ParsedMapTarget(label = destSeg.take(48), query = destSeg)
+                }
             }
         }
 
@@ -624,9 +643,21 @@ object TftMapMathAndParser {
     }
 
     private fun extractLabelAroundUrl(fullText: String, url: String): String? {
+        val routeMatch = Regex("""(?i)(?:shared route\s+)?from\s+.*?\s+to\s+([^.\n\r]+?)(?:\s+via\b|[.\n\r]|$)""").find(fullText)
+        if (routeMatch != null) {
+            val dest = routeMatch.groupValues[1].trim()
+            if (dest.length in 2..48) return dest
+        }
+
         val before = fullText.substringBefore(url).trim()
             .removePrefix("Dropped pin")
             .trim(' ', '-', ':', '\n', '\r')
+        val firstLine = before.lines().map { it.trim() }.firstOrNull {
+            it.isNotBlank() && !it.startsWith("http", ignoreCase = true) &&
+                    !it.startsWith("Shared route", ignoreCase = true) &&
+                    !it.startsWith("Dropped pin", ignoreCase = true)
+        }
+        if (firstLine != null && firstLine.length in 2..48) return firstLine
         if (before.length in 2..48) return before
         return null
     }
@@ -1265,6 +1296,10 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             bleManager.stopNavigation()
         }
         BikeBleForegroundService.stopForLocationNavigation(context)
+        val wifiMgr = TftWifiMirrorManager.getInstance(context)
+        if (wifiMgr.mirrorState.value.status == TftMirrorStatus.IDLE) {
+            stopLocationTracking()
+        }
         onMapInvalidated?.invoke()
     }
 
@@ -1412,37 +1447,49 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
     }
 
     private fun computeOsrmRoute(origin: GeoPoint, dest: GeoPoint, label: String): ActiveRoutePlan? {
-        val url = String.format(
-            Locale.US,
-            "https://router.project-osrm.org/route/v1/driving/%.6f,%.6f;%.6f,%.6f?overview=full&geometries=polyline6&steps=true",
-            origin.lng, origin.lat, dest.lng, dest.lat
+        val servers = listOf(
+            "https://router.project-osrm.org",
+            "https://routing.openstreetmap.de/routed-car"
         )
-        val raw = CellularNetworkHttp.getText(context, url, connectTimeoutMs = 5000, readTimeoutMs = 6500)
-            ?: return null
-        val route = TftMapMathAndParser.parseOsrmRouteResponse(raw, label, origin, dest) ?: return null
-        arrivalClearJob?.cancel()
-        arrivalClearJob = null
-        activeRoutePlan = route
-        _uiState.update {
-            it.copy(
-                routeActive = true,
-                isLoadingRoute = false,
-                destinationLabel = label,
-                previewLat = null,
-                previewLng = null,
-                remainingDistanceText = TftMapMathAndParser.formatDistanceMeters(route.totalDistanceMeters.roundToInt()),
-                remainingEtaText = TftMapMathAndParser.formatEtaDuration(route.totalDurationSeconds.roundToInt()),
-                statusMessage = ""
+        for (server in servers) {
+            val url = String.format(
+                Locale.US,
+                "$server/route/v1/driving/%.6f,%.6f;%.6f,%.6f?overview=full&geometries=polyline6&steps=true",
+                origin.lng, origin.lat, dest.lng, dest.lat
             )
+            val raw = CellularNetworkHttp.getText(context, url, connectTimeoutMs = 4500, readTimeoutMs = 6000)
+            if (raw != null) {
+                val route = TftMapMathAndParser.parseOsrmRouteResponse(raw, label, origin, dest)
+                if (route != null) {
+                    arrivalClearJob?.cancel()
+                    arrivalClearJob = null
+                    activeRoutePlan = route
+                    _uiState.update {
+                        it.copy(
+                            routeActive = true,
+                            isLoadingRoute = false,
+                            destinationLabel = label,
+                            previewLat = null,
+                            previewLng = null,
+                            remainingDistanceText = TftMapMathAndParser.formatDistanceMeters(route.totalDistanceMeters.roundToInt()),
+                            remainingEtaText = TftMapMathAndParser.formatEtaDuration(route.totalDurationSeconds.roundToInt()),
+                            statusMessage = ""
+                        )
+                    }
+                    onMapInvalidated?.invoke()
+                    return route
+                }
+            }
         }
-        onMapInvalidated?.invoke()
-        return route
+        return null
     }
 
     private fun geocodeQuery(query: String): Pair<Double, Double>? {
         val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-        // Try Photon first (fast OSM geocoder), fallback to Nominatim
-        val photonUrl = "https://photon.komoot.io/api/?q=$encoded&limit=1"
+        // Try Photon first with location bias if GPS available, fallback to Nominatim
+        val state = _uiState.value
+        val bias = if (state.hasGpsFix) "&lat=${state.lat}&lon=${state.lng}" else ""
+        val photonUrl = "https://photon.komoot.io/api/?q=$encoded&limit=1$bias"
         CellularNetworkHttp.getText(context, photonUrl, connectTimeoutMs = 4000, readTimeoutMs = 5000)?.let { raw ->
             try {
                 val features = JSONObject(raw).optJSONArray("features")
@@ -1734,7 +1781,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         // Turn arrow badge on left in crisp white (or amber when rerouting)
         drawManeuverVector(canvas, if (isRerouting) Maneuver.STRAIGHT else step.maneuver, 76f, 126f, 28f, if (isRerouting) COLOR_BORDER_REROUTING else Color.WHITE, step.roundaboutExit)
 
+        val hasTwoStreetLines: Boolean
         if (isRerouting) {
+            hasTwoStreetLines = false
             textPaint.color = COLOR_BORDER_REROUTING
             textPaint.textSize = 28f
             textPaint.typeface = boldTypeface
@@ -1745,9 +1794,13 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             subTextPaint.typeface = boldTypeface
             canvas.drawText("Recalculating path...", 122f, 142f, subTextPaint)
         } else {
-            val distStr = step.rawDistanceText.ifBlank { TftMapMathAndParser.formatDistanceMeters(step.distanceMeters) }
+            val distStr = when {
+                step.rawDistanceText.isNotBlank() -> step.rawDistanceText
+                step.distanceMeters > 0 -> TftMapMathAndParser.formatDistanceMeters(step.distanceMeters)
+                else -> step.maneuver.description
+            }
             textPaint.color = Color.WHITE
-            textPaint.textSize = 40f
+            textPaint.textSize = if (distStr.length > 8) 28f else 40f
             textPaint.typeface = boldTypeface
             canvas.drawText(distStr, 122f, 114f, textPaint)
 
@@ -1756,8 +1809,9 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
             subTextPaint.typeface = boldTypeface
             val street = step.streetName.ifBlank { step.maneuver.description }
             val wrapped = getWrappedStreetLines(street, 224f, subTextPaint)
+            hasTwoStreetLines = wrapped.line2.isNotEmpty()
             canvas.drawText(wrapped.line1, 122f, 142f, subTextPaint)
-            if (wrapped.line2.isNotEmpty()) {
+            if (hasTwoStreetLines) {
                 canvas.drawText(wrapped.line2, 122f, 166f, subTextPaint)
             }
         }
@@ -1775,7 +1829,7 @@ class TftNavigationMapEngine private constructor(private val context: Context) {
         textPaint.color = if (isRerouting) COLOR_BORDER_REROUTING else COLOR_TEXT_ACCENT
         textPaint.textSize = 16f
         textPaint.typeface = boldTypeface
-        val etaY = if (!isRerouting && getWrappedStreetLines(step.streetName.ifBlank { step.maneuver.description }, 224f, subTextPaint).line2.isNotEmpty()) 192f else 174f
+        val etaY = if (hasTwoStreetLines) 192f else 174f
         canvas.drawText(etaBadge, 48f, etaY, textPaint)
         textPaint.typeface = normalTypeface
     }

@@ -1,5 +1,6 @@
 package com.pulsarnav.app.maintenance
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +40,7 @@ class FuelLogManager private constructor(private val context: Context) {
     companion object {
         private const val KEY_FUEL_LIST = "saved_fuel_entries"
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: FuelLogManager? = null
 

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.19] - 2026-11-27
+
+### Added
+- **Multi-Server OSRM Routing Redundancy**:
+  - Dual routing endpoints with automatic fallback: primary `router.project-osrm.org` and secondary `routing.openstreetmap.de/routed-car` over cellular data.
+  - Location-biased geocoding on Komoot Photon prioritizing results around rider's current GPS fix.
+- **Enhanced Google Maps Intent & Directions Parser**:
+  - Complete parsing support for Google Maps directions URLs (`/maps/dir/...`), `destination`, and `daddr` query parameters.
+  - Support for multi-line shared route text (`Shared route\nFrom ... to <Destination>`).
+  - Destination resolution directly from path segments without requiring coordinate query parameters.
+
+### Optimized
+- **TFT Turn-by-Turn Card Accuracy**:
+  - Eliminated misleading "0 m" display when external navigation instructions omit step distance.
+  - Dynamic font scaling (40f/28f) preventing text truncation on long maneuver descriptions.
+  - Reused precomputed street line wrapping metrics in `drawTbtCornerCard()` to eliminate duplicate layout passes per frame.
+- **Battery & Location Performance**:
+  - Automated GPS tracking lifecycle: `TftNavigationMapEngine` releases location updates when route is cleared and cluster Wi-Fi mirroring is idle.
+  - Safe Android 12+ backup extraction rules (`data_extraction_rules.xml`) preventing private telemetry leakage.
+  - Suppressed singleton `StaticFieldLeak` false-positives with safe application context retention.
+
+---
+
 ## [1.3.18] - 2026-11-15
 
 ### Added

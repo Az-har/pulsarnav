@@ -57,6 +57,7 @@ class RideTracker private constructor(private val context: Context) {
         private const val KEY_TRIP_LIST = "saved_trip_list"
 
         @Volatile
+        @SuppressLint("StaticFieldLeak")
         private var instance: RideTracker? = null
 
         fun getInstance(context: Context): RideTracker {

@@ -63,6 +63,7 @@ class ParkingManager private constructor(private val context: Context) {
         private const val KEY_ADDRESS = "park_address"
         private const val KEY_TIMESTAMP = "park_timestamp"
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: ParkingManager? = null
 

@@ -137,10 +137,11 @@ object GoogleMapsNotificationParser {
         }
 
         val rawDist = when {
-            sPrimaryInfo.isNotBlank() -> sPrimaryInfo
+            sPrimaryInfo.isNotBlank() && parseDistanceMeters(sPrimaryInfo) >= 0 -> sPrimaryInfo
             DIST_REGEX.matcher(sTitle).find() -> sTitle
             DIST_REGEX.matcher(sText).find() -> sText
-            else -> "${stepDist} m"
+            parsedStepDist >= 0 -> "${stepDist} m"
+            else -> ""
         }
 
         return ParsedNavigationStep(

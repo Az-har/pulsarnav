@@ -1,5 +1,6 @@
 package com.pulsarnav.app.media
 
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.media.AudioManager
@@ -42,6 +43,7 @@ class MediaControlManager private constructor(private val context: Context) {
     companion object {
         private const val TAG = "PulsarMedia"
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: MediaControlManager? = null
 
